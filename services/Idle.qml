@@ -1,4 +1,6 @@
 pragma Singleton
+import qs
+import qs.services
 import qs.modules.common
 import QtQuick
 import Quickshell
@@ -6,13 +8,39 @@ import Quickshell.Io
 import Quickshell.Wayland
 
 /**
- * A nice wrapper for date and time strings.
+ * What keeps the screen from going idle, and so from being locked, darkened and suspended.
+ *
+ * The manual toggle is the notch's coffee and the Quick toggle. A film keeps the screen awake on
+ * its own as well: a player asks the compositor for that and most do, but the browser does not
+ * (Chromium requests no idle inhibitor), so the lock, the dark screen and the suspend used to
+ * arrive in the middle of a video, fullscreen too.
  */
 Singleton {
     id: root
 
-    property alias inhibit: idleInhibitor.enabled
-    inhibit: false
+    // The manual toggle, until it is turned off.
+    property bool inhibit: false
+
+    // The window holding the keyboard, as the compositor's window list knows it.
+    readonly property var focusedWindow: {
+        const toplevel = ToplevelManager.activeToplevel;
+        return toplevel?.activated ? HyprlandData.clientForToplevel(toplevel) : null;
+    }
+
+    // Something playing in the window in front of you: the one holding the keyboard, or a
+    // fullscreen one. Music left playing behind other work is not watching a film, and must not
+    // keep the machine up all night. Not while locked either: the lock, the dark and the suspend
+    // are then what the person asked for, and a video still playing behind the lock is no reason
+    // to hold them off.
+    readonly property bool watching: {
+        if (GlobalStates.screenLocked)
+            return false;
+        const focused = root.focusedWindow;
+        const windows = HyprlandData.windowList;
+        return MprisController.players.some(player => player.isPlaying && windows.some(win =>
+            ((win.fullscreen & 2) !== 0 || (focused !== null && win.address === focused.address))
+            && MprisController.playsIn(win, player)));
+    }
 
     // Whether readyChanged is still to come depends on which of the two was built first: this
     // is a lazy singleton, and a Persistent that loaded before it would never signal again.
@@ -53,6 +81,8 @@ Singleton {
 
     IdleInhibitor {
         id: idleInhibitor
+        // Either one holds it: turning Caffeine off does not cut a video short.
+        enabled: root.inhibit || root.watching
         window: PanelWindow {
             // Inhibitor requires a "visible" surface
             // Actually not lol

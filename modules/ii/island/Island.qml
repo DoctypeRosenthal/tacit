@@ -57,20 +57,8 @@ Scope {
                 readonly property var fullscreenWindow: HyprlandData.trueFullscreenWindow(thisMonitorData?.activeWorkspace?.id)
                 readonly property bool overFullscreen: fullscreenWindow !== null && Config.options.island.showInFullscreenWhilePlaying
                     && IslandController.mediaPresent && MprisController.isPlaying
-                    && !playsIn(fullscreenWindow, MprisController.activePlayer)
+                    && !MprisController.playsIn(fullscreenWindow, MprisController.activePlayer)
                 WlrLayershell.layer: overFullscreen ? WlrLayer.Overlay : WlrLayer.Top
-                // The player belongs to the window: its desktop entry or name is the window's app, or its
-                // bus name carries the window's process (Chromium's and Firefox's instance names do).
-                function playsIn(win, player) {
-                    if (!win || !player)
-                        return false;
-                    const app = String(win.class || win.initialClass || "").toLowerCase();
-                    const entry = String(player.desktopEntry || "").toLowerCase();
-                    const name = String(player.identity || "").toLowerCase();
-                    if (app && (entry === app || entry.endsWith("." + app) || (name && name.includes(app))))
-                        return true;
-                    return win.pid > 0 && new RegExp(`\\D${win.pid}$`).test(String(player.dbusName || ""));
-                }
                 color: "transparent"
 
                 // Window-aware means honest: the reserve is exactly the resting header (34px)

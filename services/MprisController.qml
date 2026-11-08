@@ -21,6 +21,21 @@ Singleton {
 	property MprisPlayer activePlayer: trackedPlayer ?? root.players[0] ?? null;
 	signal trackChanged(reverse: bool);
 
+	// Whether this player plays in this window. The player belongs to the window: its desktop entry
+	// or name is the window's app, or its bus name carries the window's process (Chromium's and
+	// Firefox's instance names do). The notch asks it to stay under a film's own fullscreen window,
+	// and Idle asks it to know which window a film is playing in.
+	function playsIn(win, player) {
+		if (!win || !player)
+			return false;
+		const app = String(win.class || win.initialClass || "").toLowerCase();
+		const entry = String(player.desktopEntry || "").toLowerCase();
+		const name = String(player.identity || "").toLowerCase();
+		if (app && (entry === app || entry.endsWith("." + app) || (name && name.includes(app))))
+			return true;
+		return win.pid > 0 && new RegExp(`\\D${win.pid}$`).test(String(player.dbusName || ""));
+	}
+
 	property bool __reverse: false;
 
 	property var activeTrack;
