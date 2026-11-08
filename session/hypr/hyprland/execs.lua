@@ -39,7 +39,14 @@ hl.on("hyprland.start", function ()
     -- Core components (authentication, lock screen, notification daemon)
     -- not on Tacit's live system (/run/archiso): its idle lock would shut Setup behind a lock its user has no password
     -- for, and its sleep stopped installs (the VM test, 2026-10-16: asleep at 15 minutes on Setup's last page)
-    hl.exec_cmd("bash -c '[ -d /run/archiso ] || exec hypridle'")
+    -- Through hypridle's unit, never a copy beside it: hypridle.service is enabled and started with
+    -- graphical-session.target, so `exec hypridle` ran a SECOND daemon next to it and the two disagreed. Only the
+    -- one holding org.freedesktop.ScreenSaver hears an app's D-Bus inhibit (a browser's, while a video plays), so
+    -- the other locked, darkened and suspended in the middle of a film; the lock, the dark and the suspend each ran
+    -- twice besides. `systemctl start` is a no-op on a unit already up, and starts it here when nothing else did.
+    -- WAYLAND_DISPLAY is imported first because the unit's ConditionEnvironment asks for it: this line runs before
+    -- the session has exported it, and a skipped unit would leave the desktop with no idle daemon at all.
+    hl.exec_cmd("bash -c '[ -d /run/archiso ] || { systemctl --user import-environment WAYLAND_DISPLAY; exec systemctl --user start hypridle; }'")
     -- Documents, Pictures, Downloads, Music, Videos in the person's language, made if missing: xdg-user-dirs.service
     -- waits on graphical-session-pre.target, which this session never starts, so a new account had none of them
     hl.exec_cmd("xdg-user-dirs-update")
