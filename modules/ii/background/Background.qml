@@ -120,7 +120,17 @@ Variants {
 
         property list<HyprlandWorkspace> workspacesForMonitor: Hyprland.workspaces.values.filter(workspace => workspace.monitor && workspace.monitor.name == monitor.name)
         property var activeWorkspaceWithFullscreen: workspacesForMonitor.filter(workspace => ((workspace.toplevels.values.filter(window => window.wayland?.fullscreen)[0] != undefined) && workspace.active))[0]
-        visible: true
+        // The wallpaper is this window, and while the session is locked the compositor paints the lock
+        // surface over black instead of the layers under it (misc:session_lock_xray is off), so this window
+        // gets no frame callback for as long as the lock is up. Qt hides a Wayland window whose frame
+        // callback is later than QT_WAYLAND_FRAME_CALLBACK_TIMEOUT (qs-supervise sets 2 s) and shows it
+        // again only when that callback arrives; a callback the compositor drops instead (on 0.56+ a
+        // pending one is lost across a resume - hyprwm/Hyprland#16105) leaves the window unmapped for the
+        // rest of the session. The boot still swaybg holds under this one is what shows then, and no
+        // wallpaper change can appear on it until Tacit is restarted. Shown again on unlock, without
+        // waiting for any callback to come back.
+        property bool windowShown: true
+        visible: bgRoot.windowShown
 
         readonly property bool hiddenForFullscreen: !GlobalStates.screenLocked
             && (activeWorkspaceWithFullscreen != undefined)
@@ -325,8 +335,26 @@ Variants {
             function onScreenLockedChanged() {
                 if (!GlobalStates.screenLocked) {
                     bgRoot.videoRevealed = bgRoot.wallpaperIsVideo
+                    // A crossfade that was under way when the screen locked holds its animation (animations
+                    // run on the window's frame clock, which stops with it) and keeps the picture hidden
+                    // behind it meanwhile: the change it was showing is finished here instead of resumed.
+                    if (bgRoot.transitionProgress < 1.0) {
+                        transitionAnim.stop()
+                        previousWallpaper.target = ""
+                        bgRoot.previousWallpaperSource = ""
+                        bgRoot.transitionProgress = 1.0
+                    }
+                    // Off and on again a turn apart: off and on inside one turn is not a show. A window that
+                    // was never hidden only blinks for that one frame.
+                    bgRoot.windowShown = false
+                    showWindowTimer.start()
                 }
             }
+        }
+        Timer {
+            id: showWindowTimer
+            interval: 0
+            onTriggered: bgRoot.windowShown = true
         }
 
         Item {
