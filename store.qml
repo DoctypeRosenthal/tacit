@@ -1169,7 +1169,11 @@ ApplicationWindow {
             contentWidth: width; contentHeight: root.issue.length * root.height
             clip: true
             boundsBehavior: Flickable.StopAtBounds
-            GlideWheel { id: issueGlide; view: issueView; gain: 1.6; gainPerSpeed: 3; gainMax: 6 }
+            // a scroll takes over from the snap where it is: snapAnim writes contentY every frame, so the moves made
+            // while it ran were undone on the next frame and the wheel seemed to stop until the snap finished
+            GlideWheel { id: issueGlide; view: issueView; gain: 1.6; gainPerSpeed: 3; gainMax: 6
+                onActiveChanged: if (active) snapAnim.stop() }
+            onMovementStarted: snapAnim.stop()
             HoverHandler { onPointChanged: { root.ptrX = point.position.x / Math.max(1, issueView.width); root.ptrY = point.position.y / Math.max(1, issueView.height); } }
             onContentYChanged: if (!snapAnim.running) settle.restart()
             // a window of another height keeps the spread in view: contentY follows the page it was on, not the old height
