@@ -353,7 +353,11 @@ hl.config({
         zoom_factor = 1,
         zoom_rigid = false,
         zoom_disable_aa = true,
-        hotspot_padding = 1
+        hotspot_padding = 1,
+        -- Focusing a window does not move the pointer: Hyprland warps it to the middle of the window it focuses
+        -- (a picture or a video opened in the viewer, a window picked in the overview), and the jump takes the
+        -- pointer away from the person. Tacit draws its surfaces over windows, so nothing here wanted the warp.
+        no_warps = true
     },
 
     xwayland = {
