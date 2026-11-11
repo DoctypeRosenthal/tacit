@@ -3,8 +3,10 @@
 .qtcreator/
 .idea/
 
-# Local macOS mail preview
-/mocks/mail/mac-preview/
+# Generated macOS mail preview
+/mocks/mail/mac-preview/build*/
+/mocks/mail/mac-preview/cmake-build*/
+/mocks/mail/mac-preview/__pycache__/
 
 # Local QML language server paths
 /mocks/mail/.qmlls.ini
