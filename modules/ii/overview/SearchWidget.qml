@@ -1085,7 +1085,11 @@ Item {
             width: parent.width
             // the best result nearest the field; the list grows up out of it
             verticalLayoutDirection: ListView.BottomToTop
-            readonly property real wanted: root.rows.length > 0 && root.offsetScale < 1 && !root.dockMode && !root.morphing ? Math.min(root.maxListHeight, root.rows.length * root.rowHeight) : 0
+            // While the shape slides away it keeps what it showed: a search rides down with its rows, and a
+            // dock leaves as a dock. The list used to grow in under the departing dock, so the recent apps'
+            // icons and ages (the rows nothing typed shows) rose through the bottom edge. travel is let go
+            // of when out and still says which of the two the palette left as.
+            readonly property real wanted: root.rows.length > 0 && root.offsetScale < 1 && !root.morphing && (root.out ? root.travel > 0 : !root.dockMode) ? Math.min(root.maxListHeight, root.rows.length * root.rowHeight) : 0
             height: resultsList.wanted
             // the palette's list: Emphasized, no overshoot; the first rise on the full curve, the
             // changes while typing on the short one so the list keeps up with the letters
