@@ -161,13 +161,23 @@ hl.bind("SUPER + ALT + M", hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_SOURCE@ togg
 --#!
 --##! Window
 --# Focusing
-hl.bind("SUPER + mouse:272", hl.dsp.window.drag(), { mouse = true, description = "Window: Move" })
+-- Moving or resizing also cancels the palette's release: Hyprland's drag action shadows every bind made
+-- after the drag bind on the same chord, so a separate interrupt bind is never reached once the drag
+-- starts. Without it Super raised the dock when it was let go after a move or a resize
+-- (session/hypr/tacit/keybinds.lua says what the interrupt is for).
+local function drag_and_interrupt(dispatcher)
+    return function()
+        hl.dispatch(hl.dsp.global("quickshell:searchToggleReleaseInterrupt"))
+        hl.dispatch(dispatcher)
+    end
+end
+hl.bind("SUPER + mouse:272", drag_and_interrupt(hl.dsp.window.drag()), { mouse = true, description = "Window: Move" })
 -- the press that begins a drag: a maximised Files window floats under the hand first
 hl.bind("SUPER + mouse:272", hl.dsp.exec_cmd("qs -p $TACIT_SHELL ipc call files dragstart")) -- # [hidden]
 -- letting go of a dragged window: Files judges the drop (edge -> tile there, top -> maximise)
 hl.bind("SUPER + mouse:272", hl.dsp.exec_cmd("qs -p $TACIT_SHELL ipc call files drop"), { release = true }) -- # [hidden]
-hl.bind("SUPER + mouse:274", hl.dsp.window.drag(), { mouse = true })
-hl.bind("SUPER + mouse:273", hl.dsp.window.resize(), { mouse = true, description = "Window: Resize" })
+hl.bind("SUPER + mouse:274", drag_and_interrupt(hl.dsp.window.drag()), { mouse = true })
+hl.bind("SUPER + mouse:273", drag_and_interrupt(hl.dsp.window.resize()), { mouse = true, description = "Window: Resize" })
 --#/# bind = SUPER + ←/↑/→/↓,, -- Focus in direction
 for i = 1, 4 do
     local arrowkey = { "Left", "Right", "Up", "Down" }

@@ -54,11 +54,12 @@ if not TACIT_SUPER_RELEASE_WATCH then
     end)
 end
 
--- The same for Super with the mouse: dragging, resizing, the scratchpad button and Super + wheel produce no
--- key event, so the watcher above never sees them. Extra binds on these combinations send the interrupt;
--- Hyprland runs every bind on a combination, so the drag, resize and workspace binds still fire.
-for _, combo in ipairs({ "SUPER + mouse:272", "SUPER + mouse:273", "SUPER + mouse:274", "SUPER + mouse:275",
-                         "SUPER + mouse_up", "SUPER + mouse_down", "CTRL + SUPER + mouse_up", "CTRL + SUPER + mouse_down" }) do
+-- The same for Super with the mouse: the scratchpad button and Super + wheel produce no key event, so the
+-- watcher above never sees them; these binds send the interrupt. The drag and resize binds send it
+-- themselves (hyprland/keybinds.lua): once a drag starts Hyprland shadows every bind made after it on the
+-- same chord, so an extra bind here would never run.
+for _, combo in ipairs({ "SUPER + mouse:275", "SUPER + mouse_up", "SUPER + mouse_down",
+                         "CTRL + SUPER + mouse_up", "CTRL + SUPER + mouse_down" }) do
     hl.bind(combo, hl.dsp.global("quickshell:searchToggleReleaseInterrupt"))
 end
 
