@@ -27,20 +27,35 @@ Item {
     property var problems: ({})             // path -> [diagnostic]
     property int problemsTick: 0
     property var versions: ({})             // path -> version sent
+    property var broken: ({})               // kind -> true: its server died before it answered, so it is not tried again
     signal serversKnown()                   // files opened before this are announced again
+    signal serverLost(string kind)          // a server died: its files are announced again on their next edit
 
     function kindOf(path) { return lsp.table.find(t => t.match.test(path)) ?? null; }
     function serverFor(path) {
         const t = lsp.kindOf(path);
-        if (!t || !lsp.installed[t.kind] || !lsp.root.length) return null;
+        if (!t || !lsp.installed[t.kind] || lsp.broken[t.kind] || !lsp.root.length) return null;
         if (!lsp.servers[t.kind]) {
             const s = serverComp.createObject(lsp, { command: lsp.installed[t.kind], root: lsp.root });
             s.diagnostics.connect((uri, list) => {
                 const p = Object.assign({}, lsp.problems); p[s.pathOf(uri)] = list; lsp.problems = p; lsp.problemsTick++;
             });
+            s.deadChanged.connect(() => { if (s.dead) lsp.lose(t.kind, s); });
             const m = Object.assign({}, lsp.servers); m[t.kind] = s; lsp.servers = m;
         }
         return lsp.servers[t.kind];
+    }
+    // A server that died (a crash, the OOM killer) is let go with what it said: its problems would else stay on
+    // screen for good, and a new one starts when one of its files next changes.
+    function lose(kind, s) {
+        const m = Object.assign({}, lsp.servers); delete m[kind]; lsp.servers = m;
+        const p = {}, v = {};
+        for (const f in lsp.problems) if (lsp.kindOf(f)?.kind !== kind) p[f] = lsp.problems[f];
+        for (const f in lsp.versions) if (lsp.kindOf(f)?.kind !== kind) v[f] = lsp.versions[f];
+        lsp.problems = p; lsp.versions = v; lsp.problemsTick++;
+        if (!s.ready) { const b = Object.assign({}, lsp.broken); b[kind] = true; lsp.broken = b; }
+        s.destroy();
+        lsp.serverLost(kind);
     }
     function speaks(path) { const t = lsp.kindOf(path); return !!t && !!lsp.installed[t.kind]; }
 
@@ -88,7 +103,7 @@ Item {
     // a new project: the old servers go, the new project's start as its files open
     onRootChanged: {
         for (const k in lsp.servers) lsp.servers[k].destroy();
-        lsp.servers = ({}); lsp.problems = ({}); lsp.versions = ({}); lsp.problemsTick++;
+        lsp.servers = ({}); lsp.problems = ({}); lsp.versions = ({}); lsp.broken = ({}); lsp.problemsTick++;
     }
 
     // which servers are on this computer: asked once, at start

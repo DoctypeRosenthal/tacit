@@ -21,7 +21,8 @@ Singleton {
         readonly property int minutes: date.getMinutes()
         readonly property int seconds: date.getSeconds()
         readonly property int unit: (Config.options.time.secondPrecision || GlobalStates.screenLocked) ? 1000 : 60000
-        onUnitChanged: { clock.date = new Date(); tick.restart(); }
+        // the timer's interval is a plain value after its first tick, so it is set again for the new unit
+        onUnitChanged: { clock.date = new Date(); tick.interval = clock.unit - (Date.now() % clock.unit) + 5; tick.restart(); }
     }
     Timer {
         id: tick

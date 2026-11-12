@@ -37,6 +37,9 @@ Singleton {
     property int countdownDuration: Persistent.states.timer.countdown.duration // seconds, total
     property int countdownStart: Persistent.states.timer.countdown.start
     property int countdownSecondsLeft: countdownDuration
+    // Paused with time already counted: still a timer to resume or stop, not a timer that is gone.
+    readonly property bool pomodoroPaused: !pomodoroRunning && pomodoroSecondsLeft < pomodoroLapDuration
+    readonly property bool countdownPaused: !countdownRunning && countdownDuration > 0 && countdownSecondsLeft < countdownDuration
 
     // General
     // A paused reading survives a restart; a running one is rebuilt from its start time.
@@ -107,8 +110,9 @@ Singleton {
         if (Persistent.states.timer.pomodoro.running) {
             // Start/Resume
             Persistent.states.timer.pomodoro.start = getCurrentTimeInSeconds() + pomodoroSecondsLeft - pomodoroLapDuration;
+            Persistent.states.timer.pomodoro.left = 0;
         } else {
-            Persistent.states.timer.pomodoro.left = pomodoroSecondsLeft;
+            Persistent.states.timer.pomodoro.left = Math.max(0, pomodoroSecondsLeft);
         }
     }
 
@@ -146,12 +150,14 @@ Singleton {
     }
 
     function stopwatchPause() {
-        Persistent.states.timer.stopwatch.running = false;
+        refreshStopwatch();
         Persistent.states.timer.stopwatch.elapsed = stopwatchTime;
+        Persistent.states.timer.stopwatch.running = false;
     }
 
     function stopwatchResume() {
         if (stopwatchTime === 0) Persistent.states.timer.stopwatch.laps = [];
+        Persistent.states.timer.stopwatch.elapsed = 0;
         Persistent.states.timer.stopwatch.running = true;
         Persistent.states.timer.stopwatch.start = getCurrentTimeIn10ms() - stopwatchTime;
     }
@@ -159,8 +165,8 @@ Singleton {
     function stopwatchReset() {
         stopwatchTime = 0;
         Persistent.states.timer.stopwatch.laps = [];
-        Persistent.states.timer.stopwatch.running = false;
         Persistent.states.timer.stopwatch.elapsed = 0;
+        Persistent.states.timer.stopwatch.running = false;
     }
 
     function stopwatchRecordLap() {
@@ -180,6 +186,7 @@ Singleton {
             left = 0;
             Persistent.states.timer.countdown.running = false;
             Persistent.states.timer.countdown.duration = 0;
+            Persistent.states.timer.countdown.left = 0;
         }
 
         countdownSecondsLeft = left;
@@ -199,9 +206,12 @@ Singleton {
         if (root.countdownRunning) {
             Persistent.states.timer.countdown.duration += addSeconds;
         } else {
+            const left = countdownSecondsLeft;
             Persistent.states.timer.countdown.duration = (Persistent.states.timer.countdown.duration ?? 0) + addSeconds;
-            countdownSecondsLeft = Persistent.states.timer.countdown.duration;
-            Persistent.states.timer.countdown.left = countdownSecondsLeft;
+            // paused: the time left grows by the same, what was already counted stays counted
+            countdownSecondsLeft = left + addSeconds;
+            if (Persistent.states.timer.countdown.left > 0)
+                Persistent.states.timer.countdown.left = countdownSecondsLeft;
         }
     }
 
@@ -210,8 +220,9 @@ Singleton {
         Persistent.states.timer.countdown.running = !countdownRunning;
         if (Persistent.states.timer.countdown.running) {
             Persistent.states.timer.countdown.start = getCurrentTimeInSeconds() - (countdownDuration - countdownSecondsLeft);
+            Persistent.states.timer.countdown.left = 0;
         } else {
-            Persistent.states.timer.countdown.left = countdownSecondsLeft;
+            Persistent.states.timer.countdown.left = Math.max(0, countdownSecondsLeft);
         }
     }
 

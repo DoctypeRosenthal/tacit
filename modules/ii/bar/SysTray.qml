@@ -37,6 +37,13 @@ Item {
     }
     function releaseFocus() { root.activeMenu = null }
     function closeOverflowMenu() { root.trayOverflowOpen = false }
+    function closeMenus() {
+        root.trayOverflowOpen = false
+        if (root.activeMenu) {
+            root.activeMenu.close()
+            root.activeMenu = null
+        }
+    }
 
     HyprlandFocusGrab {
         id: focusGrab
@@ -44,13 +51,20 @@ Item {
         // menu down without closing it, and an armed grab would then swallow the next click.
         active: root.trayOverflowOpen || root.activeMenu !== null
         windows: [trayOverflowLayout.QsWindow?.window, root.activeMenu]
-        onCleared: {
-            root.trayOverflowOpen = false
-            if (root.activeMenu) {
-                root.activeMenu.close()
-                root.activeMenu = null
-            }
-        }
+        onCleared: root.closeMenus()
+    }
+
+    // The menus hang off the bar: an auto-hide bar stays shown while one is open
+    BarHold {
+        holding: root.trayOverflowOpen || root.activeMenu !== null
+        screenName: root.QsWindow.window?.screen?.name ?? ""
+    }
+
+    // Esc, the compositor's, closes what a click elsewhere closes
+    Connections {
+        target: IslandController
+        enabled: focusGrab.active
+        function onCollapseExpansion() { root.closeMenus() }
     }
 
     Rectangle {

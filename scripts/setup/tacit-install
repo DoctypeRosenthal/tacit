@@ -87,6 +87,15 @@ def boot_entry(disk, efi, suffix):
     order = re.search(r"(?im)^BootOrder:\s*([0-9A-Fa-f,]+)", sh("efibootmgr", "-v"))
     if order and order.group(1).split(",")[0].lower() != boot:
         sh("efibootmgr", "--bootorder", ",".join([boot] + [n for n in order.group(1).split(",") if n.lower() != boot]))
+    # The first start is also asked for outright (BootNext, used once): some firmware puts its own entry for the other
+    # system back at the head of the order, and a computer installed beside another Linux went to that system's GRUB.
+    # BootNext is followed where the order is not, and is gone after that start. It is best effort, and the order is
+    # read back so a firmware that did not keep it is in the record (/tmp/tacit-install.log) rather than unseen.
+    subprocess.run(["efibootmgr", "--bootnext", boot], capture_output=True)
+    kept = re.search(r"(?im)^BootOrder:\s*([0-9A-Fa-f,]+)", sh("efibootmgr", "-v"))
+    if not kept or kept.group(1).split(",")[0].lower() != boot:
+        print(f"the firmware did not keep Tacit first in its boot order (BootOrder: {kept.group(1) if kept else 'none'}); "
+              f"Boot{boot.upper()} is set for the next start only", file=sys.stderr)
 
 
 def partitions(disk):
@@ -234,7 +243,7 @@ def windows_shrink(t, keep):
         i = subprocess.run(["ntfsresize", "--info", "--no-action", p["node"]], input="", capture_output=True, text=True)
         h = subprocess.run(["sh", "-c", 'ntfscat "$1" hiberfil.sys 2>/dev/null | head -c 4', "sh", p["node"]], capture_output=True).stdout.lower()
         if i.returncode != 0 or h == b"hibr":
-            raise Refused("Windows did not shut down fully")
+            raise Refused("Windows did not shut down fully, or has a disk check waiting")
         if p is win:
             info = i
     m = re.search(r"You might resize at (\d+) bytes", info.stdout)
@@ -482,6 +491,10 @@ def install(disk, place, keep, manual=None):
     args = ["bootctl", f"--root={TARGET}", f"--esp-path={esp}"]
     if split:
         args.append("--boot-path=/boot")
+    # the firmware's entry and boot order are made by make_default, as the last step after the account, so bootctl is kept
+    # from touching them here (--variables=no since systemd 258, --no-variables before; none if neither is listed)
+    helptext = subprocess.run(["bootctl", "--help"], capture_output=True, text=True).stdout
+    args += ["--variables=no"] if "--variables=" in helptext else ["--no-variables"] if "--no-variables" in helptext else []
     args.append("install")
     sh(*args)
     suffix = {"x86_64": "x64", "aarch64": "aa64"}.get(os.uname().machine)
@@ -490,18 +503,11 @@ def install(disk, place, keep, manual=None):
     for path in (f"{TARGET}{esp}/EFI/systemd/systemd-boot{suffix}.efi", f"{TARGET}{esp}/EFI/BOOT/BOOT{suffix.upper()}.EFI"):
         if not os.path.isfile(path) or os.path.getsize(path) == 0:
             raise Refused(f"bootctl did not install the UEFI loader at {path}")
-    boot_entry(efi_disk, efi, suffix)
     partuuid = sh("blkid", "-s", "PARTUUID", "-o", "value", root).strip()
     resume = f" resume=PARTUUID={partuuid} resume_offset={offset}" if offset is not None else ""
     os.makedirs(f"{TARGET}/boot/loader/entries", exist_ok=True)
     with open(f"{TARGET}/boot/loader/entries/tacit.conf", "w") as f:
         f.write(f"title Tacit\nlinux /vmlinuz-linux\ninitrd /initramfs-linux.img\noptions root=PARTUUID={partuuid} rw quiet splash loglevel=1 rd.udev.log_level=0 udev.log_level=0 systemd.show_status=false rd.systemd.show_status=false vt.global_cursor_default=0{resume}\n")
-    # loader.conf is read from the EFI partition only; another Linux's on a shared one is kept beside it
-    loader = f"{TARGET}{esp}/loader/loader.conf"
-    if place != "instead" and os.path.isfile(loader) and not os.path.exists(loader + ".bak"):
-        shutil.copy2(loader, loader + ".bak")
-    with open(loader, "w") as f:
-        f.write("default tacit.conf\ntimeout 0\neditor no\n")
     # next to another Linux: systemd-boot finds Windows by itself, not GRUB, so each other system's loader on the EFI
     # partition gets an entry (shown with Space, as Windows is)
     if place != "instead":
@@ -537,10 +543,14 @@ def install(disk, place, keep, manual=None):
                 "Server = https://mirror.tacitos.co/$repo/os/$arch\n")
     # today's package lists, when online: without them Apps had nothing to offer until the first background update,
     # 20 minutes after the first start (the VM install test, 2026-10-17); offline, that update brings them
+    # timeout runs inside the chroot, so pacman itself is stopped (arch-chroot's own timeout would leave it running there)
     try:
-        subprocess.run(["arch-chroot", TARGET, "pacman", "-Sy", "--noconfirm"], capture_output=True, timeout=180)
+        subprocess.run(["arch-chroot", TARGET, "timeout", "-k", "10", "180", "pacman", "-Sy", "--noconfirm"], capture_output=True, timeout=200)
     except subprocess.TimeoutExpired:
         pass
+    # a pacman stopped part way leaves its lock, which would fail the new system's first update
+    if os.path.exists(f"{TARGET}/var/lib/pacman/db.lck"):
+        os.remove(f"{TARGET}/var/lib/pacman/db.lck")
     # the Wi-Fi network joined in Setup, so the new system is online at once
     live_nm = "/etc/NetworkManager/system-connections"
     if os.path.isdir(live_nm):
@@ -549,6 +559,20 @@ def install(disk, place, keep, manual=None):
             shutil.copy2(c, f"{TARGET}{live_nm}/")
             os.chmod(f"{TARGET}{live_nm}/{os.path.basename(c)}", 0o600)
     progress(0.95, "account")
+    return efi_disk, esp, efi, suffix
+
+
+def make_default(place, disk, esp, efi, suffix):
+    """Tacit as what the computer starts: loader.conf (read from the EFI partition only, with no wait), then the firmware's
+    entry first in its boot order. The last step, after the account: with them first, a failure at the keys, the packages or
+    the account left the computer starting a Tacit with no one in it, while the failed page said Windows starts as before."""
+    # another Linux's loader.conf on a shared EFI partition is kept beside it
+    loader = f"{TARGET}{esp}/loader/loader.conf"
+    if place != "instead" and os.path.isfile(loader) and not os.path.exists(loader + ".bak"):
+        shutil.copy2(loader, loader + ".bak")
+    with open(loader, "w") as f:
+        f.write("default tacit.conf\ntimeout 0\neditor no\n")
+    boot_entry(disk, efi, suffix)
 
 
 def nvidia_present():
@@ -561,10 +585,10 @@ def nvidia_present():
     return False
 
 
-def username(name):
+def username(name, taken=()):
     base = re.sub(r"[^a-z0-9]", "", (name.split() or ["user"])[0].lower())
-    # names already in the new system (mail, games, http, ...) would make useradd fail at the last step
-    taken = {l.split(":")[0] for l in open(f"{TARGET}/etc/passwd").read().splitlines()}
+    # names already in the new system, as an account or a group (mail, games, http, ...), would make useradd fail at the
+    # last step
     if not base or not base[0].isalpha() or base in taken or base in ("root", "tacit", "sddm", "nobody", "bin", "daemon"):
         base = "user" + base
     out, n = base[:32], 1
@@ -579,7 +603,8 @@ def account(answers):
     password = answers.get("password") or ""
     if not name or not password:
         raise Refused("no name or password")
-    user = username(name)
+    taken = {l.split(":")[0] for f in ("passwd", "group") for l in open(f"{TARGET}/etc/{f}").read().splitlines()}
+    user = username(name, taken)
     lang = answers.get("language") or "en_GB"
     if not re.fullmatch(r"[a-z]{2,3}_[A-Z]{2}", lang):
         lang = "en_GB"
@@ -600,13 +625,17 @@ def account(answers):
             os.remove(f"{TARGET}/etc/localtime")
         os.symlink(f"/usr/share/zoneinfo/{tz}", f"{TARGET}/etc/localtime")
     chroot("systemctl", "enable", "systemd-timesyncd.service")
+    # one layout, or two ("us,ru": Setup puts US before a layout that cannot type Latin letters) switched with Alt + Shift;
+    # Hyprland reads both from vconsole.conf (session/hypr/hyprland/general.lua)
     layout = answers.get("layout") or "us"
-    if re.fullmatch(r"[a-z]{2,8}", layout):
+    if re.fullmatch(r"[a-z]{2,8}(,[a-z]{2,8})?", layout):
+        options = "grp:alt_shift_toggle" if "," in layout else ""
         os.makedirs(f"{TARGET}/etc/X11/xorg.conf.d", exist_ok=True)
         with open(f"{TARGET}/etc/X11/xorg.conf.d/00-keyboard.conf", "w") as f:
-            f.write(f'Section "InputClass"\n    Identifier "system-keyboard"\n    MatchIsKeyboard "on"\n    Option "XkbLayout" "{layout}"\nEndSection\n')
+            f.write(f'Section "InputClass"\n    Identifier "system-keyboard"\n    MatchIsKeyboard "on"\n    Option "XkbLayout" "{layout}"\n'
+                    + (f'    Option "XkbOptions" "{options}"\n' if options else "") + 'EndSection\n')
         with open(f"{TARGET}/etc/vconsole.conf", "w") as f:
-            f.write(f"XKBLAYOUT={layout}\n")
+            f.write(f"XKBLAYOUT={layout}\n" + (f"XKBOPTIONS={options}\n" if options else ""))
     # the live system's root has no password: locked on the installed one
     chroot("passwd", "-l", "root")
     # fish, as the owner's (the terminal's prompt and colours are set up for it: tacit-session's fish config)
@@ -662,7 +691,7 @@ def finish():
 def main():
     first = json.loads(sys.stdin.readline() or "{}")
     try:
-        install(first.get("disk"), first.get("place", "instead"), first.get("keep"), first)
+        boot = install(first.get("disk"), first.get("place", "instead"), first.get("keep"), first)
         answers = None
         while answers is None:
             line = sys.stdin.readline()
@@ -670,12 +699,13 @@ def main():
                 raise Refused("Setup went away before the account was made")
             answers = json.loads(line).get("answers")
         account(answers)
+        make_default(first.get("place", "instead"), *boot)
         finish()
         say(dict({"state": "done", "done": 1.0}, **({"other": state["other"]} if state.get("other") else {})))
     except Exception as e:
         # an unexpected error is plumbing: Setup shows only "didn't finish", and the traceback is in the log (stderr).
         # Every failure goes to the log with the step it stopped at: Setup shows a tool's failure ("bootctl failed: ...")
-        # as no more than "didn't finish", and the log was its only record, empty (issue #36)
+        # as its last line only, and the log was its only record, empty (issue #36)
         reason = str(e) if isinstance(e, Refused) else ""
         print(f"failed at {state['step']}: {reason}" if reason else f"failed at {state['step']}:", file=sys.stderr, flush=True)
         if not isinstance(e, Refused):

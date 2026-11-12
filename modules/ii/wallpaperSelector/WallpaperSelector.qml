@@ -14,12 +14,16 @@ Scope {
     id: root
 
     property bool reallyOpen: false
+    // The screen the picker opened on: it stays there when the focus moves to another screen
+    property var pickerScreen: null
 
     Connections {
         target: GlobalStates
         function onWallpaperSelectorOpenChanged() {
             if (GlobalStates.wallpaperSelectorOpen) {
                 closeAnimTimer.stop();
+                if (!root.reallyOpen)
+                    root.pickerScreen = Quickshell.screens.find(s => s.name === Hyprland.focusedMonitor?.name) ?? Quickshell.screens[0];
                 root.reallyOpen = true;
             } else {
                 // a cancelled lock-screen pick must not aim the next pick at the lock
@@ -43,7 +47,7 @@ Scope {
         // The whole screen: behind the strip it shows the picture pointed at (WallpaperStrip.qml).
         sourceComponent: PanelWindow {
             id: panelWindow
-            screen: Quickshell.screens.find(s => s.name === Hyprland.focusedMonitor?.name) ?? Quickshell.screens[0]
+            screen: root.pickerScreen
             exclusionMode: ExclusionMode.Ignore
             WlrLayershell.namespace: "quickshell:wallpaperSelector"
             WlrLayershell.layer: WlrLayer.Overlay

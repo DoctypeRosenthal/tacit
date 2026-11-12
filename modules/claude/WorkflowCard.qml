@@ -18,12 +18,15 @@ Rectangle {
     property bool open: false
     property bool canStop: false
     property real now: Date.now()
+    property bool pending: false      // the host may still say how it stands (see AgentsGroup)
     signal opened()
     signal stopRequested(string task)
 
-    // before the host has read it, the call stands in; a launch answers at once ("Workflow launched")
+    // before the host has read it, the call stands in; a launch answers at once ("Workflow launched").
+    // A call the host has no record of, in an idle session it has answered about, has ended.
+    readonly property bool waiting: card.pending || ((card.item?.ts ?? 0) > 0 && card.now - card.item.ts < 30000)
     readonly property string status: card.run?.state
-        ?? (card.item && (card.item.result === undefined || /^(Async agent launched|Workflow launched)/.test(String(card.item.result))) ? "running" : "done")
+        ?? (card.item && (card.item.result === undefined || /^(Async agent launched|Workflow launched)/.test(String(card.item.result))) ? (card.waiting ? "running" : "ended") : "done")
     readonly property var members: card.run?.agents ?? []
     // the phases the script declares, else the ones its agents report, in order of appearance
     readonly property var phases: {
@@ -57,7 +60,12 @@ Rectangle {
     implicitHeight: col.implicitHeight + 28
     radius: 22
     color: card.open ? ColorUtils.transparentize(Appearance.colors.colPrimary, 0.84)
-         : ColorUtils.transparentize(Appearance.m3colors.m3onSurface, area.containsMouse ? 0.93 : 0.955)
+         : ColorUtils.transparentize(Appearance.m3colors.m3onSurface, area.containsMouse || card.activeFocus ? 0.93 : 0.955)
+    // Tab reaches the card once the host has read the run; Enter or Space opens it, as a click does
+    activeFocusOnTab: card.run !== null
+    Keys.onReturnPressed: card.opened()
+    Keys.onEnterPressed: card.opened()
+    Keys.onSpacePressed: card.opened()
     Behavior on color { ColorAnimation { duration: 160 } }
 
     MouseArea {

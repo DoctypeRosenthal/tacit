@@ -20,11 +20,11 @@ case "$class" in
             c=$(readlink "/proc/$p/cwd" 2>/dev/null) && [ -d "$c" ] && { d=$c; break; }
         done ;;
     graphis)
-        d=$(qs -p "$TACIT_SHELL/code.qml" ipc call code root 2>/dev/null) ;;
+        d=$(timeout 2 qs -p "$TACIT_SHELL/code.qml" ipc call code root 2>/dev/null) ;;
     org.quickshell)
         # the shell's own windows share its class; Files is the one with a folder
         if [ "$title" = "Files" ]; then
-            d=$(jq -r '.lastFolder // empty' "$HOME/.local/state/quickshell/user/files/state.json" 2>/dev/null)
+            d=$(jq -r '.lastFolder // empty' "${XDG_STATE_HOME:-$HOME/.local/state}/quickshell/user/files/state.json" 2>/dev/null)
         fi ;;
 esac
 if [ -n "$d" ] && [ -d "$d" ]; then echo "$d"; else echo "$HOME"; fi

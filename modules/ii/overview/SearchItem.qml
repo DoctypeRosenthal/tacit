@@ -138,7 +138,7 @@ MouseArea {
                 Image {
                     visible: root.isPicture
                     anchors.fill: parent
-                    source: root.isPicture ? `file://${root.cliphistRawString}` : ""
+                    source: root.isPicture ? "file://" + root.cliphistRawString.split("/").map(encodeURIComponent).join("/") : ""
                     sourceSize: Qt.size(68, 68)
                     fillMode: Image.PreserveAspectCrop
                     asynchronous: true
@@ -191,6 +191,7 @@ MouseArea {
         width: parent.width - 72 - root.endRoom
         elide: Text.ElideRight
         text: root.titleText
+        textFormat: Text.PlainText
         font.pixelSize: Tacit.size.body
         font.family: root.entry?.fontType === LauncherSearchResult.FontType.Monospace ? Appearance.font.family.monospace : Appearance.font.family.main
         font.weight: root.current ? Font.Medium : Font.Normal
@@ -207,6 +208,7 @@ MouseArea {
         horizontalAlignment: Text.AlignRight
         elide: Text.ElideMiddle
         text: root.word
+        textFormat: Text.PlainText
         font.pixelSize: 14
         color: Tacit.inkMeta
     }

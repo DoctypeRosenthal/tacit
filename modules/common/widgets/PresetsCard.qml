@@ -98,6 +98,9 @@ Rectangle {
                 }
                 PresetPopup {
                     id: menuPopup
+                    // a press on the more_vert button is not outside: the button's own click then closes the menu,
+                    // where a press outside the popup closed it first and the click opened it again
+                    closePolicy: Popup.CloseOnPressOutsideParent | Popup.CloseOnEscape
                     y: menuBtn.height + 4
                     x: menuBtn.width - width + 8
                     onOverwrite: root.onOverwrite

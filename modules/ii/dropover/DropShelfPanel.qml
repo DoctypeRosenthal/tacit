@@ -17,10 +17,11 @@ PanelWindow {
     WlrLayershell.namespace: "quickshell:dropshelf"
     color: "transparent"
 
+    // x and y are the shelf's screen's own; the panel is kept 20 px inside every edge of it
     anchors { top: true; left: true }
     margins {
-        left: Math.max(20, GlobalStates.dropShelfX - implicitWidth / 2)
-        top: Math.max(20, GlobalStates.dropShelfY - implicitHeight - 30)
+        left: Math.max(20, Math.min(GlobalStates.dropShelfX - implicitWidth / 2, (shelfRoot.screen?.width ?? 0) - implicitWidth - 20))
+        top: Math.max(20, Math.min(GlobalStates.dropShelfY - implicitHeight - 30, (shelfRoot.screen?.height ?? 0) - implicitHeight - 20))
     }
 
     implicitWidth: 360
@@ -89,6 +90,8 @@ PanelWindow {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 140
                 showCurrentIndicator: false
+                // the list's own flick would take a tile's drag
+                dragEnabled: false
                 model: DropShelf.items
                 largeItemWidthRatio: 0.42
                 mediumItemWidthRatio: 0.28
@@ -167,7 +170,7 @@ PanelWindow {
                                         Layout.alignment: Qt.AlignHCenter
                                         Layout.maximumWidth: 90
                                         elide: Text.ElideMiddle
-                                        text: shelfItemLoader.entryPath.split("/").pop()
+                                        text: shelfItemLoader.entryPath.replace(/\/$/, "").split("/").pop()
                                         font.pixelSize: Appearance.font.pixelSize.smaller
                                         color: Appearance.colors.colOnLayer1
                                     }

@@ -77,8 +77,11 @@ MouseArea {
         root.context.resetClearTimer();
         if (event.key === Qt.Key_Control)
             root.ctrlHeld = true;
-        if (event.key === Qt.Key_Escape)
+        // Esc backs out of everything typed or armed: a Shut down or Restart armed by its disc goes back to Unlock
+        if (event.key === Qt.Key_Escape) {
             root.context.currentText = "";
+            root.context.resetTargetAction();
+        }
         forceFieldFocus();
     }
     Keys.onReleased: event => {
@@ -367,7 +370,14 @@ MouseArea {
                 placeholderText: {
                     if (root.context.authUnavailable)
                         return Translation.tr("Authentication unavailable");
-                    return GlobalStates.screenUnlockFailed ? Translation.tr("Incorrect password") : Translation.tr("Password");
+                    if (GlobalStates.screenUnlockFailed)
+                        return Translation.tr("Incorrect password");
+                    // what the password will do once armed: it no longer only unlocks
+                    if (root.context.targetAction === LockContext.ActionEnum.Poweroff)
+                        return Translation.tr("Password to shut down");
+                    if (root.context.targetAction === LockContext.ActionEnum.Reboot)
+                        return Translation.tr("Password to restart");
+                    return Translation.tr("Password");
                 }
                 clip: true
                 font.pixelSize: Appearance.font.pixelSize.large
@@ -386,7 +396,11 @@ MouseArea {
                         passwordBox.text = root.context.currentText;
                     }
                 }
-                Keys.onPressed: event => root.context.resetClearTimer()
+                Keys.onPressed: event => {
+                    root.context.resetClearTimer();
+                    if (event.key === Qt.Key_CapsLock)
+                        capsNote.refresh();
+                }
 
                 ErrorShakeAnimation {
                     id: wrongPasswordShakeAnim
@@ -418,6 +432,10 @@ MouseArea {
                         color: Appearance.colors.colOnSurface
                     }
                 }
+            }
+
+            CapsLockNote {
+                id: capsNote
             }
 
             // Confirm: the session's disc, filled. Coffee while Ctrl is held (unlock + caffeine).
@@ -496,8 +514,15 @@ MouseArea {
 
     // Shut down and restart honour lock.security.requirePasswordToPower: the disc arms the
     // confirm button's action and the password does the rest.
+    // The armed disc pressed again, or Esc, disarms it: once armed, the password used to shut down or restart with
+    // no way back to unlocking until the next lock.
     function power(action, run) {
         if (root.requirePasswordToPower) {
+            if (root.context.targetAction === action) {
+                root.context.resetTargetAction();
+                root.forceFieldFocus();
+                return;
+            }
             root.context.targetAction = action;
             root.forceFieldFocus();
             return;

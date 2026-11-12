@@ -3,7 +3,6 @@
 //@ pragma Env QS_NO_RELOAD_POPUP=1
 //@ pragma Env QT_QUICK_CONTROLS_STYLE=Basic
 //@ pragma Env QT_QUICK_FLICKABLE_WHEEL_DECELERATION=10000
-//@ pragma Env QML_IMPORT_PATH=/home/abdul/.local/lib/qml
 
 // The code editor: an ordinary tiled window on the shell's own design language.
 // Run as its own instance (`qs -p ~/.config/quickshell/tacit/code.qml`), so a
@@ -31,6 +30,20 @@ ApplicationWindow {
     // Praxis's 300 on a wide window; a narrow one (tiled beside another) keeps more for the text
     readonly property int railWidth: Math.round(Math.max(232, Math.min(300, root.width * 0.28)))
     property var ask: null         // { text, buttons: [{ label, run, accent }] }
+    // a file's own question (changed on disk, couldn't save, gone from disk) arriving while another is asked waits here:
+    // it used to replace the one showing, and that file stayed in conflict with no question and a Save that did nothing
+    property var waitingAsks: []
+    function askLater(q) {
+        if (root.ask === null) { root.ask = q; return; }
+        if (root.ask.text === q.text || root.waitingAsks.some(w => w.text === q.text)) return;
+        root.waitingAsks = root.waitingAsks.concat([q]);
+    }
+    function nextAsk() {
+        if (root.ask !== null || root.waitingAsks.length === 0) return;
+        const q = root.waitingAsks[0];
+        root.waitingAsks = root.waitingAsks.slice(1);
+        root.ask = q;
+    }
     property int askAt: 0          // the button the keyboard is on
     // what is true of the open file besides its name, in one line
     readonly property string curState: !root.cur ? ""
@@ -181,12 +194,13 @@ ApplicationWindow {
     // ── projects and files ──────────────────────────────────────────────────
     // A tab restored from the last session has no doc until it is shown (materialize): opening a project with
     // twenty tabs builds one editor, not twenty.
-    function unsavedDocs() { return root.docs.filter(d => d.doc && d.doc.dirty && !d.doc.session); }
+    // `within`, when given, narrows it to the tabs it accepts
+    function unsavedDocs(within) { return root.docs.filter(d => d.doc && d.doc.dirty && !d.doc.session && (!within || within(d))); }
 
     // Nothing that throws away every open buffer happens without asking first. The answer
     // arrives later, so `then` carries the rest of the work.
-    function guardUnsaved(then) {
-        const unsaved = root.unsavedDocs();
+    function guardUnsaved(then, within) {
+        const unsaved = root.unsavedDocs(within);
         if (unsaved.length === 0) { then(); return; }
         root.ask = { text: unsaved.length === 1 ? `Save changes to ${unsaved[0].rel.split("/").pop()}?`
             : `${Voice.count(unsaved.length, "file")} have unsaved changes.`, buttons: [
@@ -211,6 +225,7 @@ ApplicationWindow {
     }
     function setProject(dir) {
         dir = dir.replace(/\/+$/, "");
+        root.picking = false;      // the picker would stay over the project that was just opened (code-open)
         root.saveSession();
         for (const d of root.docs) if (d.doc) d.doc.destroy();
         root.docs = []; root.current = -1;
@@ -235,6 +250,7 @@ ApplicationWindow {
     }
 
     function openFile(rel, watch) {
+        root.picking = false;      // a file opened from outside (code-file) is not left behind the picker
         let i = root.docs.findIndex(d => d.rel === rel);
         if (i >= 0 && watch) { if (root.docs[i].doc) root.docs[i].doc.destroy(); root.docs = root.docs.filter((_, j) => j !== i); i = -1; }
         if (i < 0) {
@@ -272,19 +288,23 @@ ApplicationWindow {
             return;
         }
         if (d.doc) { root.dropKept(d.doc.abs); d.doc.destroy(); }
+        const was = root.current;
         root.docs = root.docs.filter((_, j) => j !== i);
         sessionLater.restart();
-        root.show(Math.min(i, root.docs.length - 1));
+        // closing a tab behind the one being edited keeps that one: only its number moves down
+        if (i === was) root.show(Math.min(i, root.docs.length - 1));
+        else if (i < was) root.current = was - 1;
         if (root.docs.length === 0) { root.current = -1; project.active = ""; tree.forceActiveFocus(); }
     }
 
     function answer(i) {
         if (!root.ask) return;
-        if (i < 0) { root.ask = null; return; }      // Esc on a question that can wait
+        if (i < 0) { root.ask = null; root.nextAsk(); return; }      // Esc on a question that can wait
         const b = root.ask.buttons[i];
         if (!b) return;
         root.ask = null;
         b.run();
+        root.nextAsk();
     }
     onAskChanged: {
         if (root.ask === null) root.refocus();
@@ -449,16 +469,15 @@ ApplicationWindow {
     }
     function trash(row) {
         const abs = project.root + "/" + row.path, name = row.path.split("/").pop();
-        project.exec(["gio", "trash", "--", abs], code => {
+        const under = d => d.rel === row.path || d.rel.startsWith(row.path + "/");
+        // edits in a tab under it are saved or let go on purpose: closing it below drops the kept copy too
+        root.guardUnsaved(() => project.exec(["gio", "trash", "--", abs], code => {
             if (code !== 0) { root.tell(Voice.cant(`move ${name} to the Trash`)); return; }
-            for (let i = root.docs.length - 1; i >= 0; i--) {
-                const r = root.docs[i].rel;
-                if (r === row.path || r.startsWith(row.path + "/")) root.closeDoc(i, true);
-            }
+            for (let i = root.docs.length - 1; i >= 0; i--) if (under(root.docs[i])) root.closeDoc(i, true);
             project.made = project.made.filter(m => m !== row.path && !m.startsWith(row.path + "/"));
             project.quicken();
             root.tell(`${name} is in the Trash.`, "Put back", () => root.putBack(abs, name));
-        });
+        }), under);
     }
     // the newest thing in the Trash that came from `abs` goes back where it was
     function putBack(abs, name) {
@@ -486,7 +505,10 @@ ApplicationWindow {
         const at = tree.mapToItem(menu, x, y);
         menu.open(at.x, at.y, items);
     }
-    onClosing: close => { root.rememberShape(); root.saveSession(); if (root.unsavedDocs().length > 0) { close.accepted = false; root.quit(); } }
+    // Closing ends the app, asking about unsaved files first (the window stays for the question): it used to hide and
+    // keep its language servers and file watchers running with nothing on screen (Discord, Axy). The session is saved
+    // by quit(), so the next start opens the same files.
+    onClosing: close => { if (root.unsavedDocs().length > 0) close.accepted = false; root.quit(); }
 
     Component {
         id: docComp
@@ -500,14 +522,14 @@ ApplicationWindow {
             onMenuAt: (x, y) => root.textMenu(docItem, x, y)
             lsp: lspClient
             onOpenAt: (path, line, ch) => root.openAt(path, line, ch)
-            onConflict: root.ask = { text: `${docItem.rel.split("/").pop()} changed on disk.`, buttons: [
+            onConflict: root.askLater({ text: `${docItem.rel.split("/").pop()} changed on disk.`, buttons: [
                 { label: "Reload", accent: true, run: () => docItem.reloadFromDisk() },
-                { label: "Keep mine", run: () => docItem.keepMine() }] }
-            onWriteFailed: reason => root.ask = { text: Voice.cant(`save ${docItem.rel.split("/").pop()} — ${reason}`), buttons: [
-                { label: "OK", accent: true, run: () => {} }] }
-            onMissingOnSave: root.ask = { text: `${docItem.rel.split("/").pop()} is no longer on disk.`, buttons: [
+                { label: "Keep mine", run: () => docItem.keepMine() }] })
+            onWriteFailed: reason => root.askLater({ text: Voice.cant(`save ${docItem.rel.split("/").pop()} — ${reason}`), buttons: [
+                { label: "OK", accent: true, run: () => {} }] })
+            onMissingOnSave: root.askLater({ text: `${docItem.rel.split("/").pop()} is no longer on disk.`, buttons: [
                 { label: "Save anyway", accent: true, run: () => docItem.save(true) },
-                { label: "Cancel", run: () => {} }] }
+                { label: "Cancel", run: () => {} }] })
         }
     }
 
@@ -527,8 +549,9 @@ ApplicationWindow {
             root.openFile(rel, false);
             if (line > 0 && root.cur) root.cur.goToLine(line);
         }
-        // closing the window hides it; every way in shows it again (code-file)
         function present(): void { root.visible = true; }
+        // the dock's Quit: the process ends, asking about unsaved files first, in the window, which is shown for it
+        function quit(): void { if (root.unsavedDocs().length > 0) root.visible = true; root.quit(); }
         function setTyping(on: bool): void { root.setTyping(on); }
         // the open file as JSON, for scripts and checks
         function state(): string { return JSON.stringify(root.cur ? root.cur.snapshot() : { rel: "" }); }
@@ -773,7 +796,11 @@ ApplicationWindow {
                     StyledText {
                         x: 44
                         anchors.verticalCenter: parent.verticalCenter
-                        text: liveLine.plain ? "A folder · no change tracking" : `${liveLine.changed} changed`
+                        text: !liveLine.plain ? `${liveLine.changed} changed`
+                            : project.plainFailed ? "Can't list this folder · is fd installed?"
+                            : project.plainCut ? `A big folder · first ${project.files.length} files`
+                            : project.plainDepth < 6 ? `A big folder · top ${project.plainDepth} ${project.plainDepth === 1 ? "level" : "levels"}`
+                            : "A folder · no change tracking"
                         font.family: Appearance.font.family.compact
                         font.pixelSize: 14
                         color: Tacit.inkSec
@@ -976,6 +1003,7 @@ ApplicationWindow {
             anchors.fill: parent
             project: project
             glyphFor: tree.glyphFor
+            typing: root.typing
             typed: root.typed
             onChosen: (rel, line) => { root.openFile(rel, false); if (line > 0 && root.cur) root.cur.goToLine(line); }
             onClosed: root.refocus()

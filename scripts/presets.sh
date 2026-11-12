@@ -4,7 +4,7 @@
 #   presets.sh --save <name> [description]
 #   presets.sh --remove <name> [--online]
 #   presets.sh --apply <name> [--online]
-#   presets.sh --export-zip <name>
+#   presets.sh --export-zip <name> [--online|--imported]
 #   presets.sh --import-zip <zip_path>
 
 CONFIG_DIR="$HOME/.config/illogical-impulse"
@@ -117,6 +117,10 @@ fi
 
 case "$action" in
     --save)
+        # saving over a preset without a description (Overwrite) keeps the one it had
+        if [ -z "$description" ] && [ -f "$PRESETS_DIR/${name}.json" ]; then
+            description=$(jq -r '._presetMeta.description // empty' "$PRESETS_DIR/${name}.json")
+        fi
         jq "$BLACKLIST_FILTER" "$CONFIG_FILE" > "$PRESETS_DIR/${name}.json"
         if [ -n "$description" ]; then
             jq --arg desc "$description" '._presetMeta = {"description": $desc}' \

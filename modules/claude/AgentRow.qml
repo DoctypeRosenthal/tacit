@@ -49,20 +49,26 @@ Item {
     readonly property bool kindFits: row.kind.length > 0 && name.implicitWidth + 8 + kindText.implicitWidth + row.fixed + fit0.implicitWidth <= row.width
     readonly property bool showStep: row.running && row.last !== null && (row.last?.tool ?? "").length > 0
     readonly property string stepKind: row.showStep ? Words.kind(row.last) : ""
-    // a file step names its file in the words; the rest show what the agent says it is doing, or the
-    // step's own line
-    readonly property string stepSays: !row.showStep ? ""
-        : Words.says(row.stepKind, [row.stepKind === "edit" && !row.last.files ? Object.assign({}, row.last, { files: [{ path: row.last.summary ?? "" }] }) : row.last])
+    // the newest step is still going, so it reads as happening ("Running a command"), not done; a file
+    // step names its file in the words, the rest show what the agent says it is doing, or the step's
+    // own line
+    readonly property string stepSays: !row.showStep ? "" : Words.doing(row.stepKind, [row.last])
     readonly property string stepDetail: !row.showStep ? ""
         : row.last.desc ?? (row.stepKind === "read" || row.stepKind === "edit" ? "" : row.last.summary ?? "")
 
     implicitHeight: row.showStep ? 56 : 38
 
+    // Tab reaches a row that opens; Enter or Space opens it
+    activeFocusOnTab: row.chevron
+    Keys.onReturnPressed: row.clicked()
+    Keys.onEnterPressed: row.clicked()
+    Keys.onSpacePressed: row.clicked()
+
     Rectangle {
         anchors { fill: parent; leftMargin: row.indent - row.bleed; rightMargin: -row.bleed }
         radius: 10
         color: row.open ? ColorUtils.transparentize(Appearance.colors.colPrimary, 0.84)
-             : area.containsMouse || row.cursor ? ColorUtils.transparentize(Appearance.m3colors.m3onSurface, 0.95) : "transparent"
+             : area.containsMouse || row.cursor || row.activeFocus ? ColorUtils.transparentize(Appearance.m3colors.m3onSurface, 0.95) : "transparent"
         Behavior on color { ColorAnimation { duration: 160 } }
     }
 

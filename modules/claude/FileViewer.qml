@@ -54,6 +54,32 @@ Item {
     onPathChanged: {
         codeLoader.active = false;
         viewer.loaded = false; viewer.text = ""; viewer.problem = ""; viewer.marks = {}; viewer.showSource = false;
+        viewer.readPath = "";
+        Qt.callLater(viewer.check);   // after `ext` and `isImage` have followed the new path
+    }
+    // The size is asked before the file is read: a FileView loads all of a file (and again on each change), so a
+    // log of hundreds of MB stalled the app before take() could say it was too large. 8 MB of bytes is the most
+    // 2 million characters can be; take() still counts characters.
+    property string readPath: ""
+    function check() {
+        if (viewer.isImage || !viewer.path.length) return;
+        sizeProc.forPath = viewer.path;
+        sizeProc.running = false;
+        sizeProc.command = ["stat", "-Lc", "%s", "--", viewer.path];
+        sizeProc.running = true;
+    }
+    Process {
+        id: sizeProc
+        property string forPath: ""
+        stdout: StdioCollector {
+            onStreamFinished: {
+                if (sizeProc.forPath !== viewer.path) return;
+                // a stat that fails says nothing: the read below finds the file gone
+                if (Number(this.text.trim()) > 8000000) { viewer.problem = "Too large to show here."; viewer.loaded = true; viewer.readPath = ""; return; }
+                if (viewer.readPath === viewer.path) disk.reload();
+                else viewer.readPath = viewer.path;
+            }
+        }
     }
     // An image is read by the Image below, not here, but it is still watched: Image caches by URL,
     // so a re-render at the same path needs a URL that changes with the file.
@@ -67,10 +93,10 @@ Item {
     }
     FileView {
         id: disk
-        path: viewer.isImage || !viewer.path.length ? "" : viewer.path
+        path: viewer.isImage ? "" : viewer.readPath
         watchChanges: true
         printErrors: false
-        onFileChanged: reload()
+        onFileChanged: viewer.check()
         onLoaded: viewer.take(disk.text())
         onLoadFailed: { viewer.problem = "This file is gone."; viewer.loaded = true; }
     }
@@ -291,7 +317,7 @@ Item {
     Image {
         visible: viewer.isImage
         anchors { fill: parent; margins: 16 }
-        source: viewer.isImage && viewer.path.length ? `file://${viewer.path}?${viewer.rev}` : ""
+        source: viewer.isImage && viewer.path.length ? `${FileUtils.fileUrl(viewer.path)}?${viewer.rev}` : ""
         fillMode: Image.PreserveAspectFit
         asynchronous: true
         smooth: true

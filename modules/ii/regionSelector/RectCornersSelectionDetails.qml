@@ -17,7 +17,7 @@ Item {
 
     // a recording runs: only its frame stays, a red hairline with two corners, outside the box so not in the video
     property bool breathingBorderOnly: false
-    readonly property color recordRed: "#e8705e"
+    readonly property color recordRed: Tacit.risk
 
     // The dimmed screen, with a hole where the picture stays lit
     property rect lit: Qt.rect(root.regionX, root.regionY, root.regionWidth, root.regionHeight)

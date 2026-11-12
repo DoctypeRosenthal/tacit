@@ -50,14 +50,14 @@ Singleton {
 			target: modelData;
 
 			Component.onCompleted: {
-				if (root.trackedPlayer == null || modelData.isPlaying) {
+				if (root.isRealPlayer(modelData) && (root.trackedPlayer == null || modelData.isPlaying)) {
 					root.trackedPlayer = modelData;
 				}
 			}
 
 			Component.onDestruction: {
 				if (root.trackedPlayer == null || !root.trackedPlayer.isPlaying) {
-					for (const player of Mpris.players.values) {
+					for (const player of root.players) {
 						if (player.isPlaying) {
 							root.trackedPlayer = player;
 							break;
@@ -71,8 +71,8 @@ Singleton {
 			}
 
 			function onPlaybackStateChanged() {
-				// A player that pauses or stops must not take over from one still playing.
-				if (root.trackedPlayer !== modelData && (modelData.isPlaying || !root.trackedPlayer?.isPlaying)) root.trackedPlayer = modelData;
+				// A player that pauses or stops must not take over from one still playing, and the duplicate-player filter holds here too.
+				if (root.isRealPlayer(modelData) && root.trackedPlayer !== modelData && (modelData.isPlaying || !root.trackedPlayer?.isPlaying)) root.trackedPlayer = modelData;
 			}
 		}
 	}

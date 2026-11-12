@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import sys
 import urllib.parse
 import urllib.request
@@ -40,21 +41,20 @@ def _write_cache(path: pathlib.Path, lines: list) -> None:
     except Exception:
         pass
 
+# A line can lead with several timestamps, "[00:50.10][01:30.20] chorus": one entry per timestamp.
+_LRC_LINE = re.compile(r"((?:\[\d+:\d+(?:\.\d+)?\])+)(.*)")
+_LRC_TAG = re.compile(r"\[(\d+):(\d+(?:\.\d+)?)\]")
+
+
 def _parse_lrc(lrc_text: str) -> list:
     lines = []
     for raw in lrc_text.splitlines():
-        raw = raw.strip()
-        if not raw:
+        match = _LRC_LINE.match(raw.strip())
+        if not match:
             continue
-        try:
-            tag_end = raw.index("]")
-            time_str = raw[1:tag_end]
-            text = raw[tag_end + 1:].strip()
-            mins, secs = time_str.split(":")
-            timestamp = int(mins) * 60 + float(secs)
-            lines.append({"time": timestamp, "text": text})
-        except Exception:
-            continue
+        text = match.group(2).strip()
+        for mins, secs in _LRC_TAG.findall(match.group(1)):
+            lines.append({"time": int(mins) * 60 + float(secs), "text": text})
     return sorted(lines, key=lambda x: x["time"])
 
 def _is_match(d: dict, title: str, artist: str) -> bool:

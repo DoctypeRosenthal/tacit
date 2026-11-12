@@ -412,7 +412,7 @@ Item { // Notification item area
                                     tip: copyIcon.text === "inventory" ? Translation.tr("Copied") : Translation.tr("Copy text")
 
                                     onClicked: {
-                                        Quickshell.clipboardText = notificationObject?.body ?? ""
+                                        Quickshell.clipboardText = NotificationUtils.plainBody(notificationObject?.body, notificationObject?.appName || notificationObject?.summary)
                                         copyIcon.text = "inventory"
                                         copyIconTimer.restart()
                                     }

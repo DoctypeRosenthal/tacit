@@ -282,7 +282,7 @@ Singleton {
                     // Prevent sudden bangs
                     property bool enable: true
                     property real maxAllowedIncrease: 10
-                    property real maxAllowed: 99
+                    property real maxAllowed: 100
                 }
             }
 
@@ -325,7 +325,7 @@ Singleton {
                     property string layout: "dwindle"
                 }
                 property JsonObject input: JsonObject {
-                    property string kbLayout: "us"
+                    property string kbLayout: ""   // empty: the layout the system was installed with (/etc/vconsole.conf), until one is chosen
                     property bool numlock: true
                     property int repeatDelay: 250
                     property int repeatRate: 35
@@ -641,6 +641,8 @@ Singleton {
                 property list<string> screenList: [] // List of names, like "eDP-1", find out with 'hyprctl monitors' command
                 property int notificationQueueDepth: 3
                 property bool hoverExpand: true
+                // A wheel turn over the notch changes the volume; off, it does nothing there.
+                property bool scrollVolume: true
                 // boring.notch hideNotchOption = nowPlayingOnly: stay visible over a fullscreen
                 // window only while something plays in another app (Overlay layer), hide otherwise.
                 property bool showInFullscreenWhilePlaying: true

@@ -34,7 +34,8 @@ Item {
     property var catalogs: ({})        // "agent|account|cwd" -> the host's catalog reply
 
     readonly property var agentOrder: ["claude", "codex", "pi", "opencode"]
-    readonly property var readyAgents: acc.agentOrder.filter(a => acc.agents[a]?.installed && acc.defaultAccount(a)?.state === "ready")
+    // an agent is ready when any of its accounts is, not only the default one
+    readonly property var readyAgents: acc.agentOrder.filter(a => acc.agents[a]?.installed && acc.accountsOf(a).some(x => x.state === "ready"))
     readonly property bool anyReady: acc.readyAgents.length > 0
     // every account (or agent with none) that needs a step before it can start a session
     readonly property var needs: {
@@ -377,6 +378,12 @@ Item {
         acc.installSeen = false;
         const req = { op: "install", agent: agent };
         if (withNode) req.node = true;
+        acc.send(req, cb);
+    }
+    // Ask the host to look at an account again (the keyring is read at the same time); "" asks for all of them.
+    function check(account, cb) {
+        const req = { op: "account_check" };
+        if (account) req.account = account;
         acc.send(req, cb);
     }
     function cancelInstall(agent, cb) { acc.send({ op: "install_cancel", agent: agent }, cb); }

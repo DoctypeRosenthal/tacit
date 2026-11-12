@@ -106,24 +106,25 @@ Singleton {
     // is on the other side of that `cat`. The t of a record is its first key; awk reads it
     // without parsing the line, so the NUL-prefixed records a freeze left behind survive to be
     // cleaned up here the way parse() cleans them.
-    Process {
-        id: tailProc
-        property var deliver: null
-        stdout: StdioCollector {
-            onStreamFinished: {
-                const deliver = tailProc.deliver;
-                tailProc.deliver = null;
-                if (!deliver)
-                    return;
+    // One process per call, as Devices.qml's actProc: a second call used to stop the first, whose
+    // callback was then lost or handed the stopped run's partial text.
+    Component {
+        id: tailComp
+        Process {
+            id: tail
+            property var deliver: null
+            stdout: StdioCollector { id: tailOut }
+            onExited: {
                 const out = [];
-                for (const line of (text + "").split("\n")) {
+                for (const line of (tailOut.text + "").split("\n")) {
                     if (!line.trim())
                         continue;
                     try {
                         out.push(JSON.parse(line.replace(/^[\x00-\x1f]+/, "")));
                     } catch (err) {}
                 }
-                deliver(out);
+                tail.deliver(out);
+                tail.destroy();
             }
         }
     }
@@ -132,13 +133,11 @@ Singleton {
             deliver(root.events.filter(e => e.t >= t));
             return;
         }
-        tailProc.running = false;
-        tailProc.deliver = deliver;
-        tailProc.command = ["bash", "-c",
+        const p = tailComp.createObject(root, { "deliver": deliver, "command": ["bash", "-c",
             'cat $(ls -1 "$1"/events-*.jsonl 2>/dev/null) "$1/events.jsonl" 2>/dev/null'
             + ' | awk -v s="$2" \'match($0, /"t":[0-9]+/) && substr($0, RSTART + 4, RLENGTH - 4) + 0 >= s\'',
-            "_", root.dir, String(Math.floor(t))];
-        tailProc.running = true;
+            "_", root.dir, String(Math.floor(t))] });
+        p.running = true;
     }
 
     // ------------------------------------------------------------------ how an event reads

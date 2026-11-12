@@ -14,12 +14,13 @@ Singleton {
     id: root
     property var filePath: Directories.desktopNotesPath ?? (Directories.config + "/notes.json")
     property var list: []
-    // A file that did not parse may still hold notes: it is never written over.
+    // A file that did not parse or could not be read still holds the notes: it is never written
+    // over, or the first note added after a crash mid-write would replace them all.
     property bool broken: false
 
     function save() {
         if (root.broken) {
-            console.log("[Notes] Not saving: " + root.filePath + " did not parse")
+            console.log("[Notes] Not saving: " + root.filePath + " could not be read")
             return
         }
         notesFileView.setText(JSON.stringify(root.list))
@@ -93,7 +94,8 @@ Singleton {
                 root.list = []
                 notesFileView.setText(JSON.stringify(root.list))
             } else {
-                console.log("[Notes] Error loading file: " + error)
+                root.broken = true
+                console.log("[Notes] Error loading file, keeping the notes in memory: " + error)
             }
         }
     }

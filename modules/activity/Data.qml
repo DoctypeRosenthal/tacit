@@ -63,30 +63,51 @@ Item {
                 d.apply();
         } else if (m.ev === "disk") {
             d.disk = m.disk;
-        } else if (m.ev === "done" && m.ok === false) {
-            d.failed(m);
+        } else if (m.ev === "done") {
+            if (m.ok === false)
+                d.failed(m);
+            else
+                d.finished(m);
+        } else if (m.ev === "error") {
+            d.say("That could not be finished.", "");
         }
     }
-    // an action the sampler could not carry out: say so in a line on the page, which goes after a while
+    // an action the sampler could not carry out: say so in a line on the page, which goes after a while; one that
+    // finished with nothing else on the page to show it (a cleared cache, files moved) says so in the same line
     property string problem: ""
+    property string notice: ""
     Timer {
         id: problemGone
         interval: 8000
-        onTriggered: d.problem = ""
+        onTriggered: { d.problem = ""; d.notice = ""; }
+    }
+    function say(problem, notice) {
+        d.problem = problem;
+        d.notice = notice;
+        problemGone.restart();
     }
     function failed(m) {
         if (m.op === "quit") {
-            const name = d.quit?.name ?? "That app";
-            d.quit = null;
-            d.problem = `${name} could not be closed from here.`;
+            // only the app being closed leaves the closing page: a refusal for another must not end it
+            const g = m.key ? d.group(m.key) : null;
+            const mine = d.quit !== null && d.quit.key === m.key;
+            const name = mine ? d.quit.name : g ? d.itemOf(g).n : "That app";
+            if (mine)
+                d.quit = null;
+            d.say(`${name} could not be closed from here.`, "");
         } else if (m.op === "trashOld") {
-            d.problem = "The old downloads could not be moved to the trash.";
+            d.say("The old downloads could not be moved to the trash.", "");
+        } else if (m.op === "clearCaches") {
+            d.say("The caches could not be cleared. Another clean-up may still be running.", "");
         } else if (m.op === "interrupt" || m.op === "close") {
-            d.problem = "The session could not be stopped. Praxis may not be running.";
-        } else {
-            return;
+            d.say("The session could not be stopped. Praxis may not be running.", "");
         }
-        problemGone.restart();
+    }
+    function finished(m) {
+        if (m.op === "trashOld" && m.n > 0)
+            d.say("", m.n === 1 ? "Moved 1 file to the trash." : `Moved ${m.n} files to the trash.`);
+        else if (m.op === "clearCaches")
+            d.say("", "Caches cleared.");
     }
     property var wattsSeen: []
     function smooth(m) {
@@ -338,7 +359,7 @@ Item {
     readonly property var appNames: ({ zen: "Zen", foot: "Terminal", chromium: "Chromium", praxis: "Praxis", graphis: "Graphis",
                                        viewer: "Viewer", settings: "Settings", opsis: "Thyris", activity: "Activity", welcome: "Welcome" })
     readonly property var toolNames: ({ claude: "Claude", codex: "Codex", opencode: "OpenCode", pi: "pi" })
-    readonly property string tiles: `file://${d.home}/dev/tacit-icons/sketch/`
+    readonly property string tiles: Qt.resolvedUrl(Quickshell.shellPath("assets/tiles")) + "/"
     // app-scope turns "google-chrome" into "google_chrome"; the desktop entry knows the real name
     function entryOf(id) {
         return DesktopEntries.heuristicLookup(id) ?? DesktopEntries.heuristicLookup(id.replace(/_/g, "-"));
@@ -413,8 +434,10 @@ Item {
         // them here so the page is made again when they arrive
         const entries = DesktopEntries.applications.values.length;
         const total = s.mem.total, used = total - s.mem.avail;
-        const totalWord = `${Math.round(total / d.gib)} GB`;
-        const usedWord = `${(used / d.gib).toFixed(1)} of ${Math.round(total / d.gib)} GB`;
+        // MemTotal is what the kernel can use (7.4 GB of an 8 GB computer): the size is the installed one, as Settings > About says
+        const installed = Math.ceil(total / d.gib);
+        const totalWord = `${installed} GB`;
+        const usedWord = `${(used / d.gib).toFixed(1)} of ${installed} GB`;
         const apps = d.apps();
         const agents = d.agents();
         const tacitG = s.groups.find(g => g.kind === "tacit");

@@ -33,8 +33,13 @@ Singleton {
     property bool wifiRadioWanted: false
     // The last thing a command said when it failed, for the panel's one error line
     property string wifiActionError: ""
+    // The switch was flipped from the palette or a pill, with no Wi-Fi list open to show an error line: a failure is
+    // said in the notch instead of being left in wifiActionError for the next time the list opens
+    property bool wifiRadioFromNotch: false
     // The wifi interface, from the device list: what `device disconnect` needs
     property string wifiDevice: ""
+    // The device list has been read once, so an empty wifiDevice means no adapter and not "not asked yet"
+    property bool devicesKnown: false
     property string connectivity: ""
     // nmcli's own words are parsed here, so every call that reads them is pinned to C
     readonly property var cLocale: ({
@@ -89,7 +94,14 @@ Singleton {
                         : "signal_wifi_bad"
 
     // Control
-    function enableWifi(enabled = true): void {
+    function radioFailed(text: string): void {
+        if (root.wifiRadioFromNotch)
+            IslandController.request("note", { "icon": "signal_wifi_off", "text": text }, 65);
+        else
+            root.wifiActionError = text;
+    }
+    function enableWifi(enabled = true, fromNotch = false): void {
+        root.wifiRadioFromNotch = fromNotch;
         root.wifiRadioWanted = enabled;
         root.wifiRadioPending = true;
         root.wifiActionError = "";
@@ -98,14 +110,14 @@ Singleton {
             if (!r.success) {
                 root.wifiRadioPending = false;
                 radioTimeout.stop();
-                root.wifiActionError = root.failureText(Translation.tr("Wi-Fi did not change"), r.error);
+                root.radioFailed(root.failureText(Translation.tr("Wi-Fi did not change"), r.error));
             }
             root.update();
         }, root.cLocale);
     }
 
     function toggleWifi(): void {
-        enableWifi(!wifiEnabled);
+        enableWifi(!wifiEnabled, true);
     }
 
     // Without a deadline, a radio change the hardware refused (an rfkill block) would latch the
@@ -115,7 +127,7 @@ Singleton {
         interval: 8000
         onTriggered: {
             root.wifiRadioPending = false;
-            root.wifiActionError = root.wifiRadioWanted ? Translation.tr("Wi-Fi did not turn on") : Translation.tr("Wi-Fi did not turn off");
+            root.radioFailed(root.wifiRadioWanted ? Translation.tr("Wi-Fi did not turn on") : Translation.tr("Wi-Fi did not turn off"));
         }
     }
 
@@ -126,15 +138,22 @@ Singleton {
         scanStart.running = true;
     }
 
-    // Names of saved connection profiles: a network with one connects straight away; a
+    // The SSIDs of the saved connection profiles: a network with one connects straight away; a
     // secure one without asks for its password FIRST. Before, the connect ran at once, which
     // made NetworkManager drop the current link, fail for want of a password, and only then ask.
+    // A profile's name is not always its SSID ("MyWifi 1" for a second one, or what an installer or another tool
+    // called it), so the SSID is read from the profile itself and commands that act on a profile use its name.
     property var savedProfiles: []
-    // [{name, lastUsed}] with lastUsed in ms, 0 = never joined (a profile that never got a
+    // [{name, uuid, ssid, lastUsed}] with lastUsed in ms, 0 = never joined (a profile that never got a
     // password, from the old connect flow, or one made elsewhere)
     property var savedConnections: []
     function isKnown(ssid: string): bool {
         return root.savedProfiles.includes(ssid);
+    }
+    // the saved profile for an SSID: the one named for it when there is one, else the one joined last
+    function profileFor(ssid: string): string {
+        const mine = root.savedConnections.filter(c => c.ssid === ssid);
+        return (mine.find(c => c.name === ssid) ?? mine.sort((a, b) => b.lastUsed - a.lastUsed)[0])?.name ?? ssid;
     }
     function connectToWifiNetwork(accessPoint: WifiAccessPoint): void {
         if (accessPoint.active)
@@ -144,6 +163,12 @@ Singleton {
             return;
         }
         accessPoint.askingPassword = false;
+        // a saved profile under another name is brought up by that name: `dev wifi connect` would make a second one
+        const profile = root.profileFor(accessPoint.ssid);
+        if (profile !== accessPoint.ssid) {
+            root.startJoin(accessPoint, ["nmcli", "--wait", "20", "connection", "up", "id", profile], false, root.cLocale);
+            return;
+        }
         // We use this instead of `nmcli connection up SSID` because this also creates a connection profile
         root.startJoin(accessPoint, ["nmcli", "--wait", "20", "dev", "wifi", "connect", accessPoint.ssid], false, root.cLocale);
     }
@@ -208,19 +233,20 @@ Singleton {
         root.disconnectDevice(r => root.update());
     }
 
-    function forgetWifiNetwork(ssid: string): void {
+    // A network row forgets the network: every profile saved for the SSID, whatever it is called, or it would still
+    // read as known. A row of the saved list names its own profile and only that one goes.
+    function forgetWifiNetwork(ssid: string, profile = ""): void {
         // Deleting the profile you are on drops the link and NetworkManager then auto-activates
         // another saved one, so the device goes down first when it is the network in use.
-        const onIt = (root.active?.ssid ?? "") === ssid && root.wifiDevice.length > 0;
-        const cmd = onIt
-            ? ["bash", "-c", 'nmcli device disconnect "$DEV" >/dev/null 2>&1; nmcli connection delete "$NAME"']
-            : ["nmcli", "connection", "delete", ssid];
-        root.run(cmd, r => {
+        const onIt = root.wifiDevice.length > 0 && (profile.length > 0 ? root.networkName === profile : (root.active?.ssid ?? "") === ssid);
+        const names = profile.length > 0 ? [profile] : root.savedConnections.filter(c => c.ssid === ssid).map(c => c.name);
+        root.run(["bash", "-c", (onIt ? 'nmcli device disconnect "$DEV" >/dev/null 2>&1; ' : "")
+            + 'rc=0; while IFS= read -r n; do nmcli connection delete id "$n" || rc=1; done <<< "$NAMES"; exit $rc'], r => {
             if (!r.success)
                 root.wifiActionError = root.failureText(Translation.tr("Could not forget %1").arg(ssid), r.error);
             root.update();
             getNetworks.running = true;
-        }, { "DEV": root.wifiDevice, "NAME": ssid, "LANG": "C", "LC_ALL": "C" });
+        }, { "DEV": root.wifiDevice, "NAMES": (names.length > 0 ? names : [ssid]).join("\n"), "LANG": "C", "LC_ALL": "C" });
     }
 
     // ---- one-shot commands with a result (caelestia Nmcli.executeCommand, in our Process style)
@@ -321,10 +347,10 @@ Singleton {
         // An 802.1X profile that already exists may carry certificates, a CA file or a phase-2
         // method set up elsewhere: change only the credentials on it and never replace it.
         const known = root.isKnown(ssid);
-        const modify = 'nmcli connection modify "$SSID" 802-1x.identity "$IDENT" 802-1x.password "$PASSWORD" && nmcli --wait 20 connection up "$SSID"';
+        const modify = 'nmcli connection modify id "$PROFILE" 802-1x.identity "$IDENT" 802-1x.password "$PASSWORD" && nmcli --wait 20 connection up id "$PROFILE"';
         const create = 'nmcli connection add type wifi ifname "*" con-name "$SSID" ssid "$SSID" wifi-sec.key-mgmt wpa-eap 802-1x.eap "$EAP" 802-1x.phase2-auth "$P2" 802-1x.identity "$IDENT" 802-1x.password "$PASSWORD" && nmcli --wait 20 connection up "$SSID" || { nmcli connection delete "$SSID" >/dev/null 2>&1; exit 1; }';
         root.startJoin(ap, ["bash", "-c", known ? modify : create], false,
-            { "SSID": ssid, "EAP": eap, "P2": phase2, "IDENT": identity, "PASSWORD": password, "LANG": "C", "LC_ALL": "C" });
+            { "SSID": ssid, "PROFILE": root.profileFor(ssid), "EAP": eap, "P2": phase2, "IDENT": identity, "PASSWORD": password, "LANG": "C", "LC_ALL": "C" });
     }
 
     // ---- a hidden network: a profile with hidden=yes so NetworkManager probes for it
@@ -341,7 +367,7 @@ Singleton {
         const secure = (password ?? "").length > 0;
         // A profile with the name typed here may already exist and be someone's working
         // configuration: set the hidden flag and the key on it rather than replacing it.
-        const modify = 'if [ -n "$PASSWORD" ]; then nmcli connection modify "$SSID" 802-11-wireless.hidden yes wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$PASSWORD"; else nmcli connection modify "$SSID" 802-11-wireless.hidden yes; fi && nmcli --wait 20 connection up "$SSID"';
+        const modify = 'if [ -n "$PASSWORD" ]; then nmcli connection modify id "$PROFILE" 802-11-wireless.hidden yes wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$PASSWORD"; else nmcli connection modify id "$PROFILE" 802-11-wireless.hidden yes; fi && nmcli --wait 20 connection up id "$PROFILE"';
         const create = 'if [ -n "$PASSWORD" ]; then nmcli connection add type wifi ifname "*" con-name "$SSID" ssid "$SSID" 802-11-wireless.hidden yes wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$PASSWORD"; else nmcli connection add type wifi ifname "*" con-name "$SSID" ssid "$SSID" 802-11-wireless.hidden yes; fi && nmcli --wait 20 connection up "$SSID" || { nmcli connection delete "$SSID" >/dev/null 2>&1; exit 1; }';
         root.run(["bash", "-c", root.isKnown(ssid) ? modify : create],
             r => {
@@ -351,7 +377,7 @@ Singleton {
                 root.update();
                 getNetworks.running = true;
             },
-            { "SSID": ssid, "PASSWORD": secure ? password : "", "LANG": "C", "LC_ALL": "C" });
+            { "SSID": ssid, "PROFILE": root.profileFor(ssid), "PASSWORD": secure ? password : "", "LANG": "C", "LC_ALL": "C" });
     }
 
     // ---- hotspot: share this connection. NetworkManager names the profile "Hotspot".
@@ -480,8 +506,8 @@ Singleton {
         if (root.isKnown(network.ssid)) {
             // a saved profile with a stale key: store the key and bring it up in one command, so
             // one exit code says whether the new key was both stored and used
-            root.startJoin(network, ["bash", "-c", 'nmcli connection modify "$SSID" wifi-sec.psk "$PASSWORD" && nmcli --wait 20 connection up "$SSID"'], false,
-                { "PASSWORD": password, "SSID": network.ssid, "LANG": "C", "LC_ALL": "C" });
+            root.startJoin(network, ["bash", "-c", 'nmcli connection modify id "$PROFILE" wifi-sec.psk "$PASSWORD" && nmcli --wait 20 connection up id "$PROFILE"'], false,
+                { "PASSWORD": password, "PROFILE": root.profileFor(network.ssid), "LANG": "C", "LC_ALL": "C" });
             return;
         }
         // new network: one command creates the profile and connects; the current link is only
@@ -489,20 +515,60 @@ Singleton {
         root.startJoin(network, ["bash", "-c", 'nmcli --wait 20 dev wifi connect "$SSID" password "$PASSWORD"'], true,
             { "PASSWORD": password, "SSID": network.ssid, "LANG": "C", "LC_ALL": "C" });
     }
+    // The profile list, then the SSID of each profile it has not read yet (`connection show` lists no SSID column):
+    // a profile's SSID does not change, so each is read once.
+    property var profileSsids: ({})   // uuid -> ssid
+    property var listedProfiles: []
+    function publishProfiles(): void {
+        const list = root.listedProfiles.map(c => ({ name: c.name, uuid: c.uuid, ssid: root.profileSsids[c.uuid] || c.name, lastUsed: c.lastUsed }));
+        root.savedConnections = list;
+        root.savedProfiles = list.map(c => c.ssid);
+    }
+    function readProfileSsids(): void {
+        if (ssidProc.running)
+            return;   // its end looks again
+        const missing = root.listedProfiles.filter(c => !(c.uuid in root.profileSsids)).map(c => c.uuid);
+        if (missing.length === 0) {
+            root.publishProfiles();
+            return;
+        }
+        ssidProc.uuids = missing;
+        ssidProc.command = ["bash", "-c", 'for u in "$@"; do printf "%s\\t%s\\n" "$u" "$(nmcli -e no -g 802-11-wireless.ssid connection show uuid "$u" 2>/dev/null)"; done', "_"].concat(missing);
+        ssidProc.running = true;
+    }
     Process {
         id: savedProfilesProc
         running: true
-        command: ["nmcli", "-t", "-f", "NAME,TYPE,TIMESTAMP", "connection", "show"]
+        command: ["nmcli", "-t", "-f", "NAME,UUID,TYPE,TIMESTAMP", "connection", "show"]
         stdout: StdioCollector {
             onStreamFinished: {
                 const list = [];
                 for (const line of text.split("\n")) {
                     const f = root.splitTerse(line);
-                    if (f.length === 3 && f[1] === "802-11-wireless")
-                        list.push({ name: f[0], lastUsed: Number(f[2]) * 1000 });
+                    if (f.length === 4 && f[2] === "802-11-wireless")
+                        list.push({ name: f[0], uuid: f[1], lastUsed: Number(f[3]) * 1000 });
                 }
-                root.savedConnections = list;
-                root.savedProfiles = list.map(c => c.name);
+                root.listedProfiles = list;
+                root.readProfileSsids();
+            }
+        }
+    }
+    Process {
+        id: ssidProc
+        property var uuids: []
+        environment: root.cLocale
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const read = Object.assign({}, root.profileSsids);
+                for (const u of ssidProc.uuids)
+                    read[u] = "";   // one that cannot be read is not asked again; its name stands for it
+                for (const line of text.split("\n")) {
+                    const t = line.indexOf("\t");
+                    if (t > 0)
+                        read[line.slice(0, t)] = line.slice(t + 1);
+                }
+                root.profileSsids = read;
+                root.publishProfiles();
             }
         }
     }
@@ -632,6 +698,7 @@ Singleton {
                 }
                 root.connectivity = connectivity;
                 root.wifiDevice = wifiDevice;
+                root.devicesKnown = true;
                 root.wifiStatus = wifiStatus;
                 root.ethernet = hasEthernet;
                 root.wifi = hasWifi;

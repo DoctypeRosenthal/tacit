@@ -17,7 +17,7 @@ Singleton {
     property PwNode source: Pipewire.defaultAudioSource
     readonly property real hardMaxValue: 2.00 // People keep joking about setting volume to 5172% so...
     property string audioTheme: Config.options.sounds.theme
-    property real value: sink?.audio.volume ?? 0
+    property real value: sink?.audio?.volume ?? 0
     
     function friendlyDeviceName(node) {
         return (node.nickname || node.description || Translation.tr("Unknown"));
@@ -61,18 +61,22 @@ Singleton {
         Audio.source.audio.muted = !Audio.source.audio.muted
     }
 
+    // What the volume keys may reach: the "Loudest allowed" setting (up to hardMaxValue), or 100% with the protection off
+    readonly property real keyMaxValue: Config.options.audio.protection.enable
+        ? Math.min(root.hardMaxValue, Config.options.audio.protection.maxAllowed / 100) : 1
+
     function incrementVolume() {
         if (!Audio.sink?.audio) return;
         const currentVolume = Audio.value;
         const step = currentVolume < 0.1 ? 0.01 : 0.02;
-        Audio.sink.audio.volume = Math.max(0, Math.min(1, Audio.sink.audio.volume + step));
+        Audio.sink.audio.volume = Math.max(0, Math.min(root.keyMaxValue, Audio.sink.audio.volume + step));
     }
     
     function decrementVolume() {
         if (!Audio.sink?.audio) return;
         const currentVolume = Audio.value;
         const step = currentVolume < 0.1 ? 0.01 : 0.02;
-        Audio.sink.audio.volume = Math.max(0, Math.min(1, Audio.sink.audio.volume - step));
+        Audio.sink.audio.volume = Math.max(0, Math.min(root.keyMaxValue, Audio.sink.audio.volume - step));
     }
 
     function setDefaultSink(node) {

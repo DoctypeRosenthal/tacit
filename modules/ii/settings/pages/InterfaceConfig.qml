@@ -234,11 +234,12 @@ ContentPage {
                 ConfigSpinBox {
                     icon: "loupe"
                     text: Translation.tr("Scale (%)")
-                    value: Config.options.overview.scale * 100
+                    value: Math.round(Config.options.overview.scale * 100)
                     from: 1
                     to: 100
                     stepSize: 1
                     onValueChanged: {
+                        if (value === Math.round(Config.options.overview.scale * 100)) return;
                         Config.options.overview.scale = value / 100;
                     }
                 }
@@ -497,9 +498,12 @@ ContentPage {
                     ConfigSpinBox {
                         icon: "loupe"
                         text: Translation.tr("Extra wallpaper zoom (%)")
-                        value: Config.options.lock.blur.extraZoom * 100
+                        value: Math.round(Config.options.lock.blur.extraZoom * 100)
                         from: 1; to: 150; stepSize: 2
-                        onValueChanged: { Config.options.lock.blur.extraZoom = value / 100 }
+                        onValueChanged: {
+                            if (value === Math.round(Config.options.lock.blur.extraZoom * 100)) return;
+                            Config.options.lock.blur.extraZoom = value / 100;
+                        }
                     }
                 }
             }
@@ -1030,9 +1034,12 @@ ContentPage {
                 ConfigSpinBox {
                     icon: "invert_colors"
                     text: Translation.tr("Terminal: Harmony (%)")
-                    value: Config.options.appearance.wallpaperTheming.terminalGenerationProps.harmony * 100
+                    value: Math.round(Config.options.appearance.wallpaperTheming.terminalGenerationProps.harmony * 100)
                     from: 0; to: 100; stepSize: 10
-                    onValueChanged: { Config.options.appearance.wallpaperTheming.terminalGenerationProps.harmony = value / 100 }
+                    onValueChanged: {
+                        if (value === Math.round(Config.options.appearance.wallpaperTheming.terminalGenerationProps.harmony * 100)) return;
+                        Config.options.appearance.wallpaperTheming.terminalGenerationProps.harmony = value / 100;
+                    }
                 }
                 ConfigSpinBox {
                     icon: "gradient"
@@ -1044,9 +1051,12 @@ ContentPage {
                 ConfigSpinBox {
                     icon: "format_color_text"
                     text: Translation.tr("Terminal: Foreground boost (%)")
-                    value: Config.options.appearance.wallpaperTheming.terminalGenerationProps.termFgBoost * 100
+                    value: Math.round(Config.options.appearance.wallpaperTheming.terminalGenerationProps.termFgBoost * 100)
                     from: 0; to: 100; stepSize: 10
-                    onValueChanged: { Config.options.appearance.wallpaperTheming.terminalGenerationProps.termFgBoost = value / 100 }
+                    onValueChanged: {
+                        if (value === Math.round(Config.options.appearance.wallpaperTheming.terminalGenerationProps.termFgBoost * 100)) return;
+                        Config.options.appearance.wallpaperTheming.terminalGenerationProps.termFgBoost = value / 100;
+                    }
                 }
             }
         }

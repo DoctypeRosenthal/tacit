@@ -11,6 +11,7 @@
 set -u
 
 TACIT_SHELL=${TACIT_SHELL:-$HOME/.config/quickshell/tacit}  # the shell's folder (the package sets TACIT_SHELL)
+export QML_IMPORT_PATH="$HOME/.local/lib/qml${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}"   # Tacit.Edit and Tacit.Sand are installed there (native/*/build.sh)
 CONFIG="${qsConfig:-tacit}"   # the name an older start used; still recognised below
 LOG="$HOME/.cache/qs-startup.log"
 NOTE="$HOME/.cache/qs-crashloop.txt"

@@ -9,6 +9,7 @@ import qs.modules.common.functions
 import qs.modules.tacit
 import "Markdown.js" as Md
 import "Titles.js" as Titles
+import "ActivityWords.js" as Words
 
 /**
  * A session's conversation, laid out after OpenChamber's chat column in the shell's colours.
@@ -180,7 +181,7 @@ Item {
         ? conv.acc.catalogKey(conv.agent, conv.chosenAccount || (conv.acc.defaultAccount(conv.agent)?.id ?? ""), conv.session.cwd ?? "") : ""
     readonly property var catalogCommands: conv.catalogKey ? conv.acc.catalogs[conv.catalogKey]?.commands ?? null : null
     onCatalogKeyChanged: if (conv.catalogKey) Qt.callLater(() => conv.acc.catalog(conv.agent, conv.chosenAccount, conv.session?.cwd ?? ""))
-    Component.onCompleted: if (conv.catalogKey) conv.acc.catalog(conv.agent, conv.chosenAccount, conv.session?.cwd ?? "")
+    Component.onCompleted: { conv.syncAsks(); if (conv.catalogKey) conv.acc.catalog(conv.agent, conv.chosenAccount, conv.session?.cwd ?? ""); }
     readonly property var commands: conv.liveCommands ?? conv.catalogCommands ?? conv.defaultCommands
     function commandsOf(list) {
         return (list ?? []).filter(c => c?.name).map(c => ({ name: c.name, description: c.description ?? "", hint: c.hint ?? c.argumentHint ?? "",
@@ -280,6 +281,7 @@ Item {
           + (conv.agentsInfo.workflows ?? []).filter(w => w.state === "running").length
           + (conv.agentsInfo.shells ?? []).filter(x => x.state === "running").length
     property string need: ""          // missing | signedOut: Claude Code is not ready (SetupNotice)
+    property bool needChecking: false // ...and it is being checked now
     property string hostNote: ""      // reconnecting | unreachable | outdated: the line above the box
     signal recheck()
     signal restartHost()
@@ -341,6 +343,17 @@ Item {
         if (!conv.accountPicked) conv.chosenAccount = "";
         conv.resolveRun();
     }
+    // An account removed in Settings while a fresh session had it chosen: the box would still name it and Send would
+    // be refused with its id. The choice is dropped and the folder's default stands in again.
+    Connections {
+        target: conv.acc
+        function onAccountsChanged() {
+            if (!conv.session?.fresh || !conv.chosenAccount.length || !conv.acc.available || conv.acc.account(conv.chosenAccount)) return;
+            conv.chosenAccount = "";
+            conv.accountPicked = false;
+            conv.resolveRun();
+        }
+    }
     // "Use for new sessions in <folder>": this run becomes the folder's default; asked again on the
     // run that already is, it is cleared
     function keep(over) {
@@ -374,21 +387,45 @@ Item {
         p.recent = recent;
         prefsFile.setText(JSON.stringify(p) + "\n");
     }
+    // the turns whose changes were undone (their records, newest last, the last hundred): a card built again, after
+    // a scroll or a restart, still says "Changes undone" rather than offering Undo on files that are already back
+    readonly property var undoneRecs: conv.prefs.undone ?? []
+    function noteUndone(rec) {
+        const p = Object.assign({ version: 1 }, conv.prefs);
+        p.undone = (p.undone ?? []).filter(x => x !== rec).concat([rec]).slice(-100);
+        prefsFile.setText(JSON.stringify(p) + "\n");
+    }
     // a process that ended because its sign-in is gone: { reason, text, images, files } of the
     // message it was given, for Send again once the account is back
     property var authLost: null
+    // why a session's process crashed (session id -> text): the 8 s error line was gone before anyone came back to
+    // it, and a crash in another session never showed. Kept until that session's next message, or Dismiss.
+    property var crashes: ({})
+    readonly property string crashNote: conv.session ? (conv.crashes[conv.session.id] ?? "") : ""
+    function setCrash(id, text) {
+        const c = Object.assign({}, conv.crashes);
+        if (text.length) c[id] = text;
+        else delete c[id];
+        conv.crashes = c;
+    }
     property var lastSent: null
     // ── going back, and asking aside ──────────────────────────────────────────
     // Both are requests to the session's own process (Claude Code's rewind_conversation /
     // rewind_files / side_question, through agent-host). A session the host does not hold yet is
-    // opened (resumed, nothing sent) first.
-    function ensureHosted(then) {
+    // opened (resumed, nothing sent) first; if that fails the error shows and `failed` (if given) is
+    // called with it, so what waited on the session does not wait for ever.
+    function ensureHosted(then, failed) {
         const s = conv.session;
         if (!s || s.fresh) return;
         if (conv.live) { then(); return; }
         conv.host.request({ op: "start", cwd: s.cwd, resume: s.id, mode: conv.chosenMode }, m => {
             if (m.ev === "started") then();
-            else { conv.error = m.message ?? "Could not open the session."; errorFade.restart(); }
+            else {
+                const why = m.message ?? "Could not open the session.";
+                conv.error = why;
+                errorFade.restart();
+                if (failed) failed(why);
+            }
         });
     }
     function lastUserRec() {
@@ -408,7 +445,7 @@ Item {
         const id = conv.session.id;
         conv.ensureHosted(() => conv.host.request({ op: "rewind_files", id: id, message: rec, dry: true }, m => {
             if (conv.rewindAt === rec) conv.rewindFiles = m.ev === "control" ? (m.response ?? {}) : { canRewind: false };
-        }));
+        }), () => { if (conv.rewindAt === rec) conv.rewindFiles = { canRewind: false }; });
     }
     function doRewind(rec, withFiles) {
         const id = conv.session.id;
@@ -421,7 +458,7 @@ Item {
             conv.rewindAt = "";
             conv.cuts = Object.assign({}, conv.cuts, { [id]: rec });
             conv.applyCut();
-            composer.setText(m.response.prefillText ?? "");
+            composer.addText(m.response.prefillText ?? "");
             conv.loadChanges();
         });
         conv.ensureHosted(() => {
@@ -430,7 +467,7 @@ Item {
                 if (m.ev !== "control" || m.response?.canRewind === false) { fail(`Could not put the files back: ${m.message ?? m.response?.error ?? "no answer"}`); return; }
                 back();
             });
-        });
+        }, fail);
     }
     // the conversation as it stands after a rewind: everything from the message it went back to
     function applyCut() {
@@ -458,30 +495,41 @@ Item {
         });
     }
     property int hoverTurn: -1        // the turn under the pointer: its footer shows
+    // the same for a finger: a tap on a row shows its actions (a touch screen has no hover), a tap again hides them
+    property int touchIndex: -1
+    property int touchTurn: -1
     // Undo on a turn's changes card: the files go back to how they were before that turn's message
     function undoTurn(rec, done) {
         const id = conv.session.id;
         conv.ensureHosted(() => conv.host.request({ op: "rewind_files", id: id, message: rec }, m => {
             const ok = m.ev === "control" && m.response?.canRewind !== false && !m.response?.error;
             if (!ok) { conv.error = `Could not undo: ${m.message ?? m.response?.error ?? "no answer"}`; errorFade.restart(); }
+            if (ok) conv.noteUndone(rec);
             done(ok);
             conv.loadChanges();
-        }));
+        }), () => done(false));
     }
-    property var asideThread: []      // [{ question, response, pending, error }]
+    property var asideThread: []      // [{ question, response, pending, error, ticket }]
+    property int asideTickets: 0      // each question's own number: a reply lands only on the entry it was asked for
     function askAside(q) {
         const s = conv.session;
         if (!s || s.fresh) return;
         const history = conv.asideThread.filter(e => (e.response ?? "").length).map(e => ({ question: e.question, response: e.response }));
         const at = conv.asideThread.length;
-        conv.asideThread = conv.asideThread.concat([{ question: q, pending: true }]);
+        const ticket = ++conv.asideTickets;
+        conv.asideThread = conv.asideThread.concat([{ question: q, pending: true, ticket: ticket }]);
         const id = s.id;
         conv.ensureHosted(() => conv.host.request({ op: "side_question", id: id, question: q, history: history }, m => {
-            if (!conv.session || conv.session.id !== id || at >= conv.asideThread.length) return;
+            if (!conv.session || conv.session.id !== id || conv.asideThread[at]?.ticket !== ticket) return;
             const t = conv.asideThread.slice();
-            t[at] = m.ev === "control" ? { question: q, response: m.response?.response ?? "" } : { question: q, error: m.message ?? "No answer came." };
+            t[at] = m.ev === "control" ? { question: q, ticket: ticket, response: m.response?.response ?? "" } : { question: q, ticket: ticket, error: m.message ?? "No answer came." };
             conv.asideThread = t;
-        }));
+        }), why => {
+            if (!conv.session || conv.session.id !== id || conv.asideThread[at]?.ticket !== ticket) return;
+            const t = conv.asideThread.slice();
+            t[at] = { question: q, ticket: ticket, error: why };
+            conv.asideThread = t;
+        });
     }
     signal agentOpened(string agent)
     signal runOpened(string run)
@@ -504,6 +552,17 @@ Item {
     // holding it too no longer unlocks it once the roster can tell its own processes from a terminal (`checked`).
     readonly property bool locked: conv.terminal !== null && (conv.live === null || conv.terminal.checked === true)
     readonly property var pending: conv.live ? (conv.live.pending ?? []) : []
+    // The cards, a row per request: every announcement of the session brings a new pending array, and a Repeater
+    // on it would build each card again, losing the answers picked or typed so far. A card is kept for as long as its
+    // request is pending, and looks its entry up by the request's id.
+    ListModel { id: askRows }
+    function syncAsks() {
+        const ids = conv.pending.map(p => p.request);
+        for (let i = askRows.count - 1; i >= 0; i--) if (!ids.includes(askRows.get(i).request)) askRows.remove(i);
+        ids.forEach((id, i) => { if (i >= askRows.count || askRows.get(i).request !== id) askRows.insert(i, { request: id }); });
+        while (askRows.count > ids.length) askRows.remove(askRows.count - 1);
+    }
+    onPendingChanged: conv.syncAsks()
     // 768 in a window, growing with it to 960 (60 % of the room): full screen read as squeezed
     readonly property real columnWidth: Math.min(conv.width - 48, Math.max(768, Math.min(960, conv.width * 0.6)))
     readonly property var lastItem: conv.items.length ? conv.items[conv.items.length - 1] : null
@@ -560,6 +619,7 @@ Item {
             if (turn && it.kind === "tool" && it.error !== true)
                 for (const f of it.files ?? []) {
                     const e = turn.files[f.path] ?? (turn.files[f.path] = { path: f.path, add: 0, del: 0 });
+                    e.kind = Words.kindOver(e.kind, f.kind);
                     e.add += f.add ?? 0;
                     e.del += f.del ?? 0;
                 }
@@ -834,6 +894,8 @@ Item {
         conv.readFailed = false;
         conv.rewindAt = "";
         conv.asideThread = [];
+        conv.touchIndex = -1;
+        conv.touchTurn = -1;
         if (conv.session && !conv.session.fresh) conv.desktopContext = "";
         // a request lost with the socket never answers: its flag would park the follow loop for good
         conv.following = false;
@@ -870,6 +932,7 @@ Item {
             if (m.disconnected) return;   // the socket went: what is on screen stays until it is back
             loadTimeout.stop();
             conv.loadRetried = false;
+            conv.readFailed = false;
             if (m.ev !== "transcript") {
                 // a session started a moment ago has no file yet; for any other it is a read that failed
                 conv.swapIn([], 0, 0);
@@ -901,6 +964,8 @@ Item {
         return ["auto", "manual", "acceptEdits", "plan", "bypassPermissions"].includes(m) ? m : "auto";
     }
     property var shownSession: null   // the session whose conversation is on screen (header follows it)
+    // another session's transcript is being read while the previous one is still up: not what Send would go to
+    readonly property bool reading: conv.loading && conv.session !== null && !conv.session.fresh && conv.shownSession !== conv.session
     function swapIn(items, start, total) {
         conv.swapping = true;
         conv.shownSession = conv.session;
@@ -1046,6 +1111,8 @@ Item {
     // the list's 20 s refresh hands over a new copy of the same session: keep what is on screen
     property string loadedKey: ""
     property var drafts: ({})          // session key -> { text, files } typed there and not sent
+    // something typed and not sent, here or in another session: what a quit would throw away
+    readonly property bool hasDraft: composer.text.trim().length > 0 || composer.attachments.length > 0 || Object.keys(conv.drafts).length > 0
     onSessionChanged: {
         const key = conv.session ? (conv.session.fresh ? `fresh:${conv.session.cwd}` : conv.session.id) : "";
         if (key === conv.loadedKey && key.length) {
@@ -1055,9 +1122,14 @@ Item {
         conv.closeFind();   // another session starts without the find
         // The box's draft belongs to its session: it stayed in the box when another was opened, ready to be sent
         // there by mistake. Kept by session while the app runs; a pre-fill (a drop, a page) comes after this.
+        // Messages queued behind a working turn were never sent (load() empties the queue): they go into the
+        // draft, ahead of what is in the box, so they are still there to send when that session is opened again.
         const d = Object.assign({}, conv.drafts);
         if (conv.loadedKey.length) {
-            if (composer.text.trim().length || composer.attachments.length) d[conv.loadedKey] = { text: composer.text, files: composer.attachments };
+            const texts = conv.queued.map(q => q.text).concat(composer.text.trim().length ? [composer.text] : []);
+            const files = conv.queued.reduce((all, q) => all.concat(q.images, q.files), []).concat(composer.attachments)
+                .filter((p, i, all) => all.indexOf(p) === i);
+            if (texts.length || files.length) d[conv.loadedKey] = { text: texts.join("\n\n"), files: files };
             else delete d[conv.loadedKey];
         }
         const draft = d[key];
@@ -1214,7 +1286,10 @@ Item {
     }
     // a session in a terminal is read every 0.4 s (a read of the new bytes takes the host about 1 ms):
     // its steps come as the CLI writes them
-    Timer { running: conv.running && conv.offset >= 0; interval: conv.terminal !== null ? 400 : conv.busy ? 600 : 1500; repeat: true; onTriggered: conv.follow() }
+    // (not while the window is closed: the roster, presence and refresh timers rest then too; it reads once on showing)
+    property bool active: true
+    onActiveChanged: if (conv.active) conv.follow()
+    Timer { running: conv.active && conv.running && conv.offset >= 0; interval: conv.terminal !== null ? 400 : conv.busy ? 600 : 1500; repeat: true; onTriggered: conv.follow() }
     Timer { id: followSoon; interval: 60; onTriggered: conv.follow() }
     // a glide already under way is heading for the end: a jump would cut it short by the distance left
     Timer { id: toEnd; interval: 30; onTriggered: { list.atEnd = true; if (!chase.running) list.positionViewAtEnd(); toEndAgain.restart(); } }
@@ -1237,6 +1312,16 @@ Item {
             if (!conv.loading) return;
             conv.loading = false;
             if (!conv.loadRetried && conv.host.connected) { conv.loadRetried = true; conv.load(); }
+            else if (conv.host.connected) {
+                // gave up: the screen no longer holds the previous session's rows under this one's selection, and
+                // says so as a failed read does (a reply that still comes is shown)
+                conv.loadRetried = false;
+                conv.swapIn([], 0, 0);
+                conv.offset = conv.live ? 0 : -1;
+                conv.readFailed = conv.live === null;
+                conv.settled = !conv.readFailed;
+                if (conv.readFailed) { conv.error = "That conversation could not be read."; errorFade.restart(); }
+            }
         }
     }
     Timer { id: followTimeout; interval: 5000; onTriggered: conv.following = false }
@@ -1290,6 +1375,11 @@ Item {
             }
         }
         function onExited(id, reason, stderr) {
+            if (reason === "crashed") {
+                const why = (stderr ?? []).map(l => String(l).trim()).filter(l => l.length).pop() ?? "";
+                const agent = conv.session && id === conv.session.id ? conv.agentName : (conv.agentNames[conv.host.live[id]?.tool] ?? "The session");
+                conv.setCrash(id, why.length ? `${agent} stopped unexpectedly: ${why}` : `${agent} stopped unexpectedly. Send again to pick up where it left off.`);
+            }
             if (!conv.session || id !== conv.session.id) return;
             conv.partialThinking = "";
             conv.partialText = "";
@@ -1301,17 +1391,24 @@ Item {
                 if (conv.acc?.available) conv.acc.send({ op: "account_check", account: conv.chosenAccount || undefined });
                 return;
             }
-            if (reason === "crashed") {
-                const why = (stderr ?? []).map(l => String(l).trim()).filter(l => l.length).pop() ?? "";
-                conv.error = why.length ? `${conv.agentName} stopped unexpectedly: ${why}` : `${conv.agentName} stopped unexpectedly. Send again to pick up where it left off.`;
-                errorFade.restart();
-            }
         }
         // A dropped socket strands every request in flight (Host answers them as failures), and the
         // watch it held is gone with it: the pane is read again from the host that came back, since
         // nothing else re-arms following or the stream.
         function onConnectedChanged() {
-            if (!conv.host.connected) { conv.pendingUser = ""; conv.pendingImages = []; return; }
+            if (!conv.host.connected) {
+                // no exit event comes with a dropped socket: the half-written reply, the thought and the running
+                // tool lines would stay up as if live (the watch replays what is still going on once it is back)
+                conv.pendingUser = "";
+                conv.pendingImages = [];
+                conv.partialText = "";
+                conv.partialThinking = "";
+                conv.liveTools = [];
+                conv.shownChars = 0;
+                // a queued message that stood as the echo has no bubble now: it shows as a queue row, still in line
+                conv.queued = conv.queued.map(q => q.shown ? Object.assign({}, q, { shown: false }) : q);
+                return;
+            }
             conv.watching = "";
             conv.following = false;
             conv.loading = false;
@@ -1340,11 +1437,16 @@ Item {
         // taken for an injection and skipped, and the transcript keeps it as an attachment, not your message.
         // It shows in the conversation at once, as sent, while the run stops (Paseo's pending message): a row in
         // the queue for that second read as not sent. A second one typed meanwhile waits in the queue.
+        if (!fromQueue && conv.reading) {
+            conv.error = "Nothing was sent: this conversation is still being read. Send again in a moment.";
+            errorFade.restart();
+            return false;
+        }
         if (!fromQueue && conv.turnOpen && !s.fresh) {
             const echo = !conv.pendingUser.length && !conv.pendingImages.length;
             conv.queued = conv.queued.concat([{ text: text, images: images, files: files, shown: echo }]);
             if (echo) { conv.pendingUser = text; conv.pendingImages = images; }
-            if (conv.live) conv.host.request({ op: "interrupt", id: s.id });
+            conv.interruptTurn();
             return true;
         }
         if (!conv.host.connected) {
@@ -1377,6 +1479,7 @@ Item {
         if (conv.chosenAccount.length) opts.account = conv.chosenAccount;
         conv.lastSent = { text: text, images: images, files: files };
         conv.authLost = null;
+        conv.setCrash(s.id, "");
         if (s.fresh) {
             // the echo shows at once, and load() keeps it when the real session swaps in
             conv.pendingUser = text;
@@ -1427,6 +1530,34 @@ Item {
         toEnd.restart();
         return true;
     }
+    // Ends the turn that is open. The host interrupts a session it runs; a turn the previous host's process is
+    // finishing (leftover) is not its own, so that process is ended. An answer that is an error is said here.
+    function interruptTurn() {
+        const id = conv.session?.id ?? "";
+        if (conv.live) {
+            conv.host.request({ op: "interrupt", id: id }, m => {
+                if (m.ev !== "error") return;
+                conv.error = `Could not stop ${conv.agentName}: ${m.message ?? "no reply"}`;
+                errorFade.restart();
+            });
+        } else if (conv.leftover !== null && !conv.host.stopLeftover(id)) {
+            conv.error = `${conv.agentName} is still finishing a turn from before the background service restarted. It can't be stopped from here; it ends by itself.`;
+            errorFade.restart();
+        }
+    }
+    // Stop: the turn ends and nothing behind it starts a new one. What was queued would have gone out the moment
+    // the turn stopped (the notch's Stop clears its queue too), so it goes back into the box, after what is there.
+    function stopTurn() {
+        const q = conv.queued;
+        if (q.length) {
+            conv.queued = [];
+            if (q.some(x => x.shown)) { conv.pendingUser = ""; conv.pendingImages = []; }
+            const text = q.map(x => x.text).join("\n\n");
+            composer.setText(composer.text.trim().length ? `${composer.text.replace(/\s+$/, "")}\n\n${text}` : text);
+            composer.take(q.reduce((a, x) => a.concat(x.images ?? [], x.files ?? []), []));
+        }
+        conv.interruptTurn();
+    }
     // A message the host refused goes back into the box (the box clears as soon as it is handed over, and the
     // refusal comes after: it was lost and had to be typed again). Not over something typed since.
     function giveBack(text, images, files) {
@@ -1449,7 +1580,7 @@ Item {
 
     function place(cwd) {
         const home = Quickshell.env("HOME");
-        return cwd.startsWith(home) ? "~" + cwd.substring(home.length) : cwd;
+        return cwd === home || cwd.startsWith(home + "/") ? "~" + cwd.substring(home.length) : cwd;
     }
 
     // ── header: title, where it ran, changes, pin ──────────────────────────
@@ -1623,6 +1754,9 @@ Item {
         visible: conv.need.length === 0   // Claude Code not ready: SetupNotice instead
         anchors { left: parent.left; right: parent.right; top: header.bottom; bottom: bottomArea.top }
         clip: true
+        // the previous session's rows, while a slow read of this one's goes on: dimmed, with "Reading…" over them
+        opacity: conv.reading && !slowRead.running ? 0.3 : 1
+        Behavior on opacity { NumberAnimation { duration: 140 } }
         model: blockModel
         cacheBuffer: 1600
         Keys.onPressed: e => conv.typeInto(e)
@@ -1640,6 +1774,14 @@ Item {
                 conv.hoverTurn = i >= 0 ? blockModel.get(i).turn : -1;
             }
             onHoveredChanged: if (!hovered) conv.hoverTurn = -1
+        }
+        TapHandler {
+            acceptedDevices: PointerDevice.TouchScreen
+            onTapped: point => {
+                const i = list.indexAt(point.position.x + list.contentX, point.position.y + list.contentY);
+                conv.touchIndex = i >= 0 && i !== conv.touchIndex ? i : -1;
+                conv.touchTurn = conv.touchIndex >= 0 ? blockModel.get(conv.touchIndex).turn : -1;
+            }
         }
         // where the reader scrolls to (wheel, touchpad, scrollbar or a drag) decides whether new messages
         // pull the view along: a move up leaves the end, reaching the end follows again. A move down
@@ -2040,10 +2182,13 @@ Item {
                         }
                     }
                     UserBubble { id: bubble; anchors.right: parent.right; maxWidth: parent.width * 0.85; text: d.b.text; mono: d.b.mono ?? false; images: d.b.images ?? []; viewer: conv.viewer }
+                    // shown on hover, on a tap, or while one of them has the keyboard (Tab): hidden, they take no clicks
                     Row {
+                        id: acts
+                        property int focused: 0
                         anchors { right: parent.right; top: bubble.bottom; topMargin: 4 }
                         spacing: 12
-                        opacity: userHover.hovered ? 1 : 0
+                        opacity: userHover.hovered || conv.touchIndex === d.index || acts.focused > 0 ? 1 : 0
                         Behavior on opacity { NumberAnimation { duration: 120 } }
                         StyledText {
                             anchors.verticalCenter: parent.verticalCenter
@@ -2055,17 +2200,22 @@ Item {
                         }
                         Repeater {
                             model: [{ glyph: "content_copy", tip: "Copy", run: () => Quickshell.clipboardText = d.b.text },
-                                    { glyph: "edit", tip: "Edit in the box", run: () => composer.setText(d.b.text), hide: conv.locked },
-                                    { glyph: "replay", tip: "Send again", run: () => conv.send(d.b.text), hide: conv.locked || conv.busy },
+                                    { glyph: "edit", tip: "Edit in the box", run: () => composer.addText(d.b.text), hide: conv.locked },
+                                    { glyph: "replay", tip: "Send again", run: () => conv.send(d.b.text.length ? d.b.text : "Look at this.", d.b.images ?? []), hide: conv.locked || conv.busy, pictures: true },
                                     { glyph: "undo", tip: "Go back to here", run: () => conv.askRewind(d.b.rec), hide: conv.locked || conv.busy || conv.rewinding || !(d.b.rec ?? "").length || !conv.caps?.rewind }]
                             delegate: MaterialSymbol {
                                 required property var modelData
-                                visible: !modelData.hide && d.b.text.length > 0
+                                visible: !modelData.hide && (d.b.text.length > 0 || (!!modelData.pictures && (d.b.images ?? []).length > 0))
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: modelData.glyph
                                 iconSize: 16
-                                color: actArea.containsMouse ? Appearance.colors.colInkMain : Appearance.colors.colInkSecondary
-                                MouseArea { id: actArea; anchors { fill: parent; margins: -5 } hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: modelData.run() }
+                                color: actArea.containsMouse || activeFocus ? Appearance.colors.colInkMain : Appearance.colors.colInkSecondary
+                                activeFocusOnTab: true
+                                onActiveFocusChanged: acts.focused += activeFocus ? 1 : -1
+                                Keys.onReturnPressed: modelData.run()
+                                Keys.onEnterPressed: modelData.run()
+                                Keys.onSpacePressed: modelData.run()
+                                MouseArea { id: actArea; anchors { fill: parent; margins: -5 } enabled: acts.opacity > 0.5; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: modelData.run() }
                                 StyledToolTip { text: modelData.tip; extraVisibleCondition: actArea.containsMouse }
                             }
                         }
@@ -2079,6 +2229,7 @@ Item {
                     add: d.b.add
                     del: d.b.del
                     cwd: conv.session?.cwd ?? ""
+                    undo: (d.b.rec ?? "").length && conv.undoneRecs.includes(d.b.rec) ? "done" : ""
                     canUndo: (d.b.latest ?? false) && (d.b.rec ?? "").length > 0 && !conv.locked && !conv.busy && !!conv.caps?.rewindFiles
                     onViewChanges: conv.changesViewed(d.b.edits ?? [])
                     onUndoAsked: done => conv.undoTurn(d.b.rec, done)
@@ -2089,9 +2240,11 @@ Item {
                 // under a finished reply: model · how long · when, and copy; shown while the pointer is
                 // on that turn
                 Row {
+                    id: foot
+                    property int focused: 0
                     spacing: 10
                     height: 24
-                    opacity: conv.hoverTurn === d.b.turn ? 1 : 0
+                    opacity: conv.hoverTurn === d.b.turn || conv.touchTurn === d.b.turn || foot.focused > 0 ? 1 : 0
                     Behavior on opacity { NumberAnimation { duration: 140 } }
                     function pretty(m) {
                         const x = /claude-([a-z]+)-(\d+)(?:-(\d+))?/.exec(m ?? "");
@@ -2101,7 +2254,7 @@ Item {
                     StyledText {
                         anchors.verticalCenter: parent.verticalCenter
                         visible: text.length > 0
-                        text: [parent.pretty(d.b.model), d.b.secs > 0 ? (d.b.secs < 60 ? `${d.b.secs}s` : `${Math.floor(d.b.secs / 60)}m ${d.b.secs % 60}s`) : "",
+                        text: [parent.pretty(d.b.model), d.b.secs > 0 ? Words.span(d.b.secs * 1000) : "",
                                d.b.ts > 0 ? Qt.formatDateTime(new Date(d.b.ts), "hh:mm") : ""].filter(x => x.length).join(" · ")
                         font.pixelSize: 13
                         color: Appearance.colors.colInkSecondary
@@ -2112,9 +2265,15 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         text: copyTurn.done ? "check" : "content_copy"
                         iconSize: 15
-                        color: copyArea.containsMouse ? Appearance.colors.colInkMain : Appearance.colors.colInkSecondary
-                        MouseArea { id: copyArea; anchors { fill: parent; margins: -5 } hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                            onClicked: { Quickshell.clipboardText = d.b.text; copyTurn.done = true; copyReset.restart(); } }
+                        color: copyArea.containsMouse || activeFocus ? Appearance.colors.colInkMain : Appearance.colors.colInkSecondary
+                        activeFocusOnTab: true
+                        onActiveFocusChanged: foot.focused += activeFocus ? 1 : -1
+                        function copy() { Quickshell.clipboardText = d.b.text; copyTurn.done = true; copyReset.restart(); }
+                        Keys.onReturnPressed: copyTurn.copy()
+                        Keys.onEnterPressed: copyTurn.copy()
+                        Keys.onSpacePressed: copyTurn.copy()
+                        MouseArea { id: copyArea; anchors { fill: parent; margins: -5 } enabled: foot.opacity > 0.5; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                            onClicked: copyTurn.copy() }
                         Timer { id: copyReset; interval: 1500; onTriggered: copyTurn.done = false }
                         StyledToolTip { text: "Copy reply"; extraVisibleCondition: copyArea.containsMouse }
                     }
@@ -2124,7 +2283,7 @@ Item {
             Component { id: codeC; CodeBlock { code: d.b.content; lang: d.b.lang } }
             Component { id: toolC; ToolLine { item: d.b.item; openIds: conv.openIds; onToggled: key => conv.toggleOpen(key); viewer: conv.viewer; files: conv.files; running: conv.runningIds.includes(d.b.item.id) } }
             Component { id: activityC; ActivityGroup { tools: d.b.tools; openIds: conv.openIds; onToggled: key => conv.toggleOpen(key); viewer: conv.viewer; files: conv.files; runningIds: conv.runningIds; asking: conv.pending.length > 0 && d.isLast } }
-            Component { id: agentsC; AgentsGroup { calls: d.b.calls; info: conv.agentsInfo; now: conv.clock; openAgent: conv.openAgent; onOpened: a => conv.agentOpened(a) } }
+            Component { id: agentsC; AgentsGroup { calls: d.b.calls; info: conv.agentsInfo; pending: conv.running || conv.agentsInfo === null; now: conv.clock; openAgent: conv.openAgent; onOpened: a => conv.agentOpened(a) } }
             Component {
                 id: workflowC
                 WorkflowCard {
@@ -2132,6 +2291,7 @@ Item {
                     run: (conv.agentsInfo?.workflows ?? []).find(w => w.call === d.b.item.id) ?? null
                     open: run !== null && conv.openRun === run.run
                     canStop: conv.canStop
+                    pending: conv.running || conv.agentsInfo === null
                     now: conv.clock
                     onOpened: if (run) conv.runOpened(run.run)
                     onStopRequested: task => conv.stopTask(task)
@@ -2289,6 +2449,19 @@ Item {
                 }
             }
         }
+        Column {
+            visible: conv.crashNote.length > 0
+            width: parent.width
+            spacing: 2
+            StyledText { width: parent.width; text: conv.crashNote; wrapMode: Text.Wrap; font.pixelSize: 13; color: Appearance.colors.colClay }
+            StyledText {
+                text: "Dismiss"
+                font.pixelSize: 13
+                font.weight: Font.Medium
+                color: Appearance.colors.colPrimary
+                MouseArea { anchors { fill: parent; margins: -4 } cursorShape: Qt.PointingHandCursor; onClicked: conv.setCrash(conv.session.id, "") }
+            }
+        }
         StyledText {
             visible: conv.error.length > 0
             width: parent.width
@@ -2367,18 +2540,26 @@ Item {
             }
         }
         Repeater {
-            model: conv.pending
+            model: askRows
             delegate: Loader {
                 id: ask
-                required property var modelData
+                required property string request
                 required property int index
+                // only the first card answers to the keys, and not while a menu of the box is open
+                readonly property bool keys: ask.index === 0 && composer.menu === ""
+                // the entry as the host last sent it, kept while the request is still pending but gone a moment from the list
+                readonly property var found: conv.pending.find(p => String(p.request) === ask.request)
+                property var modelData: ({})
+                onFoundChanged: if (ask.found && JSON.stringify(ask.found) !== JSON.stringify(ask.modelData)) ask.modelData = ask.found
+                Component.onCompleted: if (ask.found) ask.modelData = ask.found
+                active: ask.modelData.request !== undefined
                 width: bottomArea.width
-                sourceComponent: ask.modelData.tool === "AskUserQuestion" ? questionCard : permissionCard
+                sourceComponent: ask.modelData.tool === "AskUserQuestion" ? questionCard : ask.modelData.tool === "Choose" ? chooseCard : permissionCard
                 Component {
                     id: questionCard
                     QuestionCard {
                         pending: ask.modelData
-                        keys: ask.index === 0
+                        keys: ask.keys
                         // the conversation keeps the rest of the window
                         maxHeight: (conv.height - header.height) * 0.6
                         onAnswered: input => conv.answer({ op: "answer", id: conv.session.id, request: ask.modelData.request, allow: true, input: input })
@@ -2386,13 +2567,24 @@ Item {
                     }
                 }
                 Component {
+                    id: chooseCard
+                    ChooseCard {
+                        pending: ask.modelData
+                        keys: ask.keys
+                        maxHeight: (conv.height - header.height) * 0.6
+                        onAnswered: input => conv.answer({ op: "answer", id: conv.session.id, request: ask.modelData.request, allow: true, input: input })
+                        onDeclined: conv.answer({ op: "answer", id: conv.session.id, request: ask.modelData.request, allow: false })
+                    }
+                }
+                Component {
                     id: permissionCard
                     PermissionCard {
                         pending: ask.modelData
-                        keys: ask.index === 0
-                        onAnswered: (allow, permissions) => {
+                        keys: ask.keys
+                        onAnswered: (allow, permissions, input) => {
                             const req = { op: "answer", id: conv.session.id, request: ask.modelData.request, allow: allow };
                             if (permissions) req.permissions = permissions;
+                            if (input) req.input = input;
                             conv.answer(req);
                         }
                     }
@@ -2422,8 +2614,8 @@ Item {
             PillButton {
                 visible: text.length > 0
                 anchors { right: parent.right; verticalCenter: parent.verticalCenter }
-                text: composer.hasAccounts ? composer.accounts.stepWord(composer.step) : ""
-                onClicked: composer.openMenu("agent")
+                text: composer.step === "locked" ? "Check again" : composer.hasAccounts ? composer.accounts.stepWord(composer.step) : ""
+                onClicked: composer.step === "locked" ? composer.accounts.check(composer.acctId) : composer.openMenu("agent")
             }
         }
         Rectangle {
@@ -2487,12 +2679,19 @@ Item {
             meter: conv.meter
             meterPct: conv.meterPct
             sendFn: (text, images, files) => conv.send(text, images, files)
-            onStop: if (conv.live) conv.host.request({ op: "interrupt", id: conv.session.id })
+            onStop: conv.stopTurn()
             onFolderPicked: path => conv.folderChosen(path)
             // Only a fresh session takes another agent (folders plan: agentChosen); its model and
             // level come from the folder's defaults for that agent (resolveRun).
             onAgentPicked: (agent, account, keep) => {
                 if (!conv.session?.fresh) return;
+                // another account of the same agent may not offer the model or level the last one had: the agent's own
+                // default stands until one is picked (the other agent's are cleared just below)
+                const nowOn = conv.chosenAccount || (conv.acc?.defaultAccount(agent)?.id ?? "");
+                if (agent === conv.agent && (account || (conv.acc?.defaultAccount(agent)?.id ?? "")) !== nowOn) {
+                    conv.chosenModel = "";
+                    conv.chosenEffort = "";
+                }
                 conv.accountPicked = true;
                 conv.chosenAccount = account;
                 if (agent !== conv.agent) {
@@ -2500,7 +2699,8 @@ Item {
                     conv.chosenEffort = "";
                     conv.agentChosen(agent);
                 }
-                if (keep) conv.keep({ agent: agent, account: account });
+                // kept as the folder's default only once it can start a session: Esc on its steps must not leave it
+                if (keep && conv.acc.stepOf(agent, account) === "ready") conv.keep({ agent: agent, account: account });
             }
             onModePicked: (m, keep) => {
                 conv.chosenMode = m;
@@ -2538,6 +2738,7 @@ Item {
         visible: shown
         accounts: conv.acc
         need: conv.need
+        checking: conv.needChecking
         fresh: conv.session?.fresh ?? false
         hostNote: conv.hostNote
         reserve: bottomArea.visible ? bottomArea.height : 0
@@ -2567,7 +2768,7 @@ Item {
     Column {
         anchors.centerIn: parent
         visible: conv.need.length === 0 && setupNotice.form !== "setup" && !(conv.session === null && conv.hostNote.length > 0)
-            && (conv.session === null || (conv.loading && !slowRead.running && conv.items.length === 0) || (conv.session?.fresh ?? false))
+            && (conv.session === null || (conv.loading && !slowRead.running && (conv.items.length === 0 || conv.reading)) || (conv.session?.fresh ?? false))
             || (conv.readFailed && conv.items.length === 0)
         spacing: 8
         readonly property bool fresh: conv.session?.fresh ?? false
@@ -2588,5 +2789,6 @@ Item {
             font.pixelSize: 15
             color: Appearance.colors.colInkSecondary
         }
+        PillButton { visible: conv.readFailed; anchors.horizontalCenter: parent.horizontalCenter; text: "Try again"; onClicked: conv.load() }
     }
 }

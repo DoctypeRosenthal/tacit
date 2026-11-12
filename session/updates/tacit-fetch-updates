@@ -5,12 +5,21 @@
 # (From ~/dev/tacit-updates 5b2428e; tacit-session installs it.)
 set -u
 
-# pacman at work: not now. A lock with no pacman behind it is one a stopped pacman left (a restart in the middle of a
-# download), and kept every later download from starting
+# A check asked for in Settings takes over from the background run: that one is at the lowest priority and idle I/O and a
+# download of hundreds of MB could keep the press spinning for many minutes. It is stopped (SIGINT: pacman lets go of its
+# lock and keeps the part downloaded, the next download carries on from it) and this run goes on at full speed.
+if [ "${1:-}" = now ] && [ "$(systemctl is-active tacit-fetch-updates.service 2>/dev/null)" = activating ]; then
+    timeout 60 systemctl stop tacit-fetch-updates.service
+fi
+
+# pacman at work: not now. A lock with nothing holding it is one a stopped pacman left (a restart in the middle of a
+# download), and kept every later download from starting. Who holds it is asked of the lock file itself (libalpm keeps
+# it open while it works), not of the name "pacman": the shell's own pacman -Qu and -Sup lookups carry that name too,
+# and another package tool's lock is not pacman's to clear
 if [ -e /var/lib/pacman/db.lck ]; then
     # asked for in Settings: only the background download running is a check under way; anything else (an install in the
     # Store) means nothing was checked, and the unit must not end as a success
-    if pgrep -x pacman >/dev/null; then
+    if [ -n "$(find /proc/[0-9]*/fd -lname /var/lib/pacman/db.lck -print -quit 2>/dev/null)" ]; then
         [ "${1:-}" = now ] && ! systemctl is-active --quiet tacit-fetch-updates.service && exit 75
         exit 0
     fi
@@ -43,8 +52,26 @@ fi
 
 # -Syuw: refresh the list and download what the next update needs; nothing is installed or removed
 pacman -Syuw --noconfirm --noprogressbar || exit
-# older downloads of a package a newer one replaced are never installed; pacman -Sc would also take the waiting ones
-paccache -rk1 -q 2>/dev/null || true
 # when the last look worked, whether or not anything had changed: pacman leaves a list it finds current untouched, and
 # Settings' "Checked at" (the lists' time) went back to when something last came
 install -d /var/lib/tacit && touch /var/lib/tacit/updates-checked
+
+# Every new version of the big packages lands in the cache and nothing took the superseded ones out until an install at
+# a restart succeeded: a postponed restart, a failed install or an update done in Apps left them all. What stays: the
+# files the waiting update installs (pacman -Sc would take those too: they are not installed yet) and the versions
+# installed now (paccache is pacman-contrib's, which Tacit does not install). A lookup that fails prunes nothing.
+cache=/var/cache/pacman/pkg
+waiting=$(pacman -Sup --print-format '%f') || exit 0
+installed=$(pacman -Q | awk '{print $1 "-" $2}')
+[ -n "$installed" ] || exit 0
+for f in "$cache"/*.pkg.tar.*; do
+    [ -f "$f" ] || continue
+    base=${f##*/}
+    case $base in *.sig) continue ;; esac
+    grep -qxF -- "$base" <<< "$waiting" && continue
+    # name-version-arch.pkg.tar.zst; an epoch's colon can be written %3A in a file name
+    key=${base%.pkg.tar.*}
+    key=${key%-*}
+    grep -qxF -- "${key//%3A/:}" <<< "$installed" && continue
+    rm -f -- "$f" "$f.sig"
+done

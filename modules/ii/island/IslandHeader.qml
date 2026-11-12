@@ -198,7 +198,7 @@ Item {
             }
         }
     }
-    readonly property color recordRed: "#e8705e"
+    readonly property color recordRed: Tacit.risk
 
     // Status slot: recording, mic, dnd, charging, timer, unread - in that order. At the right edge, the right side
     // ending 8 px before it; in the open sheet's header (and the address bar's, the sign-in's) that edge is the battery's
@@ -404,7 +404,7 @@ Item {
         case "window":
             return IslandController.payload?.pill ? windowPillWing : messageGlyphWing;
         case "update":
-            return updateAnswerWing;
+            return IslandController.payload?.restarting ? messageGlyphWing : updateAnswerWing;
         case "updated":
             return IslandController.payload?.notes ? updatedNotesWing : messageGlyphWing;
         case "claudeAsk":
@@ -896,7 +896,7 @@ Item {
                     action: () => { IslandController.dismiss(); Updates.tonight(); }
                 }
                 StripPill {
-                    text: "Restart"
+                    text: IslandController.payload?.warning ? "Restart anyway" : "Restart"
                     ring: true
                     action: () => Updates.restartNow()
                 }

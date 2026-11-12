@@ -12,9 +12,9 @@ import qs.modules.claude as Praxis
  * top of the window, drawn like the shell's other popovers; type, move with the
  * arrows, Enter opens, Esc closes.
  *
- * Search shows each file the way the editor would open it: a changed file is
+ * Search shows each file the way the editor would open it: with typing on, a changed file is
  * searched as it was before the change (git grep at `base`), a new one not at all,
- * so a result never shows code that has not been typed yet.
+ * so a result never shows code that has not been typed yet; with it off, as it is on disk.
  */
 Item {
     id: finder
@@ -22,6 +22,7 @@ Item {
     property var project
     property string mode: "files"        // "files" | "search"
     property var glyphFor: name => "draft"
+    property bool typing: false          // typing mode is on; off, every file opens as it is on disk and is searched so
     property var typed: ({})             // typed out in full: searched as written
     property var results: []             // files: [{ rel, score }]  search: [{ rel, line, text }]
     readonly property bool shown: visible
@@ -85,7 +86,7 @@ Item {
         rg.running = false; gg.running = false;
         const q = query.text;
         if (q.length < 2) { finder.results = []; return; }
-        const ch = finder.project.changes, changed = Object.keys(ch).filter(f => ch[f] !== "D" && !finder.typed[f]);
+        const ch = finder.project.changes, changed = Object.keys(ch).filter(f => finder.typing && ch[f] !== "D" && !finder.typed[f]);
         finder._plain = []; finder._before = [];
         // Changed files that have not been typed out are left out here and searched as they
         // were before the change below. They are filtered after the search rather than with

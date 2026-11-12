@@ -42,9 +42,14 @@ Scope {
             target: GlobalStates
             function onSidebarRightOpenChanged() {
                 if (GlobalStates.sidebarRightOpen) {
-                    panelWindow.openScreen = Quickshell.screens.find(s => s.name === Hyprland.focusedMonitor?.name) ?? null;
+                    // only while it is down: opened again during the exit slide it stays where it is, since
+                    // moving a mapped layer surface would carry it out from under the pointer
+                    if (!panelWindow.reallyVisible)
+                        panelWindow.openScreen = Quickshell.screens.find(s => s.name === Hyprland.focusedMonitor?.name) ?? null;
                     closeAnimTimer.stop();
                     panelWindow.reallyVisible = true;
+                    // Opened again during the exit slide, `visible` never changes, and a click-away has emptied the grab
+                    GlobalFocusGrab.addDismissable(panelWindow);
                 } else {
                     // The shell owns the exit slide on every compositor now (Hyprland's
                     // layer animation is off for this namespace), so always let it finish.
@@ -101,6 +106,9 @@ Scope {
             item: maskBox
         }
         WlrLayershell.namespace: "quickshell:sidebarRight"
+        // under a fullscreen window the Top layer is buried: the panel took the keyboard unseen. Overlay while open there
+        readonly property bool overFullscreen: WM.fullscreenOnMonitor(Hyprland.monitorFor(panelWindow.screen)?.name)
+        WlrLayershell.layer: GlobalStates.sidebarRightOpen && panelWindow.overFullscreen ? WlrLayer.Overlay : WlrLayer.Top
         WlrLayershell.keyboardFocus: GlobalStates.sidebarRightOpen ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
         color: "transparent"
 

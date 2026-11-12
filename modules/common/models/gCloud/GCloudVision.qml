@@ -61,7 +61,7 @@ GCloudApi {
         seq.push([
             "bash", "-c",
             `curl -s -X POST \
--H "Authorization: Bearer ${GoogleCloud.token}" \
+-H "Authorization: Bearer $GCLOUD_TOKEN" \
 -H "x-goog-user-project: ${GoogleCloud.projectId}" \
 -H "Content-Type: application/json" \
 https://vision.googleapis.com/v1/images:annotate \
@@ -81,5 +81,9 @@ https://vision.googleapis.com/v1/images:annotate \
 
     MultiTurnProcess {
         id: lookMultiproc
+        // The token goes in the environment: as an argument it is in /proc/<pid>/cmdline, which is world readable
+        environment: ({
+            "GCLOUD_TOKEN": GoogleCloud.token
+        })
     }
 }

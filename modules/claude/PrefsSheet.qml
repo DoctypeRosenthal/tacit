@@ -238,7 +238,7 @@ FocusScope {
         const add = (path, name) => {
             if (!path || !path.startsWith("/") || seen[path] || sheet.defs.folders?.[path] || path === sheet.pending) return;
             seen[path] = true;
-            out.push({ label: name || sheet.nameOf(path), after: path.replace(sheet.home, "~"), middle: true, value: path });
+            out.push({ label: name || sheet.nameOf(path), after: path === sheet.home || path.startsWith(sheet.home + "/") ? "~" + path.substring(sheet.home.length) : path, middle: true, value: path });
         };
         add(sheet.folder, "");
         for (const f of sheet.folders ?? [])
@@ -255,7 +255,10 @@ FocusScope {
     readonly property string needLine: {
         const n = sheet.needs[0];
         if (!n) return "";
-        const name = sheet.accounts.agentName(n.agent);
+        // an agent with several accounts: the one that needs a step is named, not the agent (the line above
+        // speaks of the default account and read as its contradiction)
+        const list = sheet.accounts.accountsOf(n.agent);
+        const name = list.length > 1 && n.account ? (list.find(x => x.id === n.account)?.label || sheet.accounts.agentName(n.agent)) : sheet.accounts.agentName(n.agent);
         const multi = n.agent === "pi" || n.agent === "opencode";
         const what = ({ signedOut: multi ? `${name} has no provider` : `${name} isn't signed in`,
                         expired: `${name}'s sign-in has expired`, noProvider: `${name} has no provider`,
@@ -415,10 +418,12 @@ FocusScope {
             current: ({ agent: v.agent, account: v.account })
             maxHeight: sheet.chooserMaxH
             Component.onCompleted: sheet.chooserItem = this
-            // a ready account closes the menu; one with a step keeps it open on the step
+            // a ready account is written and closes the menu; one with a step keeps it open on the step and is
+            // written when the step is done (AgentSteps' done chooses it again), so giving up leaves the default
             onChosen: (agent, account) => {
+                if (sheet.accounts.stepOf(agent, account) !== "ready") return;
                 sheet.pickAgent(scope, agent, account);
-                if (sheet.accounts.stepOf(agent, account) === "ready") sheet.closeChooser();
+                sheet.closeChooser();
             }
             onClosed: sheet.closeChooser()
             onSettingsRequested: anchor => sheet.settingsRequested(anchor)

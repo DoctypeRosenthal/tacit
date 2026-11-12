@@ -52,26 +52,52 @@ Rectangle {
     implicitWidth: imageWidth * scale
 
     Component.onCompleted: {
+        root.decode();
+    }
+
+    // A preview can be given another entry (the search list reuses its rows): decode the new one
+    // and drop the old file
+    onImageDecodeFilePathChanged: {
+        if (decodeImageProcess.outPath.length > 0)
+            root.decode();
+    }
+
+    function decode() {
+        // A decode in progress comes back here from its exit, once it sees the entry moved on
+        if (decodeImageProcess.running)
+            return;
+        root.removeDecoded();
+        decodeImageProcess.outPath = root.imageDecodeFilePath;
+        decodeImageProcess.decodeEntry = root.entry;
+        root.source = "";
         decodeImageProcess.running = true;
+    }
+
+    function removeDecoded() {
+        const path = decodeImageProcess.outPath;
+        if (path.length > 0)
+            Quickshell.execDetached(["bash", "-c", `[ -f '${path}' ] && rm -f '${path}'`]);
     }
 
     Process {
         id: decodeImageProcess
+        property string outPath: ""
+        property string decodeEntry: ""
         // -s, so a decode that wrote nothing is not handed to the Image as a valid picture
-        command: ["bash", "-c", `echo '${StringUtils.shellSingleQuoteEscape(root.entry)}' | ${Cliphist.cliphistBinary} decode > '${imageDecodeFilePath}' && [ -s '${imageDecodeFilePath}' ]`]
+        command: ["bash", "-c", `echo '${StringUtils.shellSingleQuoteEscape(decodeEntry)}' | ${Cliphist.cliphistBinary} decode > '${outPath}' && [ -s '${outPath}' ]`]
         onExited: (exitCode, exitStatus) => {
-            if (exitCode === 0) {
-                root.source = imageDecodeFilePath;
+            if (outPath !== root.imageDecodeFilePath) {
+                root.decode();
+            } else if (exitCode === 0) {
+                root.source = outPath;
             } else {
-                console.error("[CliphistImage] Failed to decode image for entry:", root.entry);
+                console.error("[CliphistImage] Failed to decode image for entry:", decodeEntry);
                 root.source = "";
             }
         }
     }
 
-    Component.onDestruction: {
-        Quickshell.execDetached(["bash", "-c", `[ -f '${imageDecodeFilePath}' ] && rm -f '${imageDecodeFilePath}'`]);
-    }
+    Component.onDestruction: root.removeDecoded()
 
     layer.enabled: true
     layer.effect: OpacityMask {

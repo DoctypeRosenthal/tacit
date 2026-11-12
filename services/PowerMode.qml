@@ -71,6 +71,8 @@ Singleton {
         // in place: the folder is root's, only the file is the wheel group's
         atomicWrites: false
         onFileChanged: reload()
+        // not allowed to write (outside the wheel group, a read-only disk): show the modes the file really holds
+        onSaveFailed: reload()
         onLoaded: {
             root.available = true;
             for (const line of text().split("\n")) {

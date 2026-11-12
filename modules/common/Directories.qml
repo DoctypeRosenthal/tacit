@@ -27,6 +27,7 @@ Singleton {
     readonly property string pictures: StandardPaths.standardLocations(StandardPaths.PicturesLocation)[0]
     readonly property string music: StandardPaths.standardLocations(StandardPaths.MusicLocation)[0]
     readonly property string videos: StandardPaths.standardLocations(StandardPaths.MoviesLocation)[0]
+    readonly property string desktop: StandardPaths.standardLocations(StandardPaths.DesktopLocation)[0]
 
     // The shell's entry point, so `qs -p $shellFile ipc call ...` reaches the running shell.
     // ipc matches an instance by the config file path it was started with, and the session starts
@@ -68,7 +69,7 @@ Singleton {
     property string cliphistDecode: FileUtils.trimFileProtocol(`${Directories.runtime}/quickshell/media/cliphist`)
     property string screenshotTemp: FileUtils.trimFileProtocol(`${Directories.runtime}/quickshell/media/screenshot`)
     // Screen crops handed to Praxis (agent-host reads them back), so shared with ~/dev/agent-host
-    property string agentHostRegion: FileUtils.trimFileProtocol(`${Directories.cache}/agent-host/region`)
+    property string agentHostRegion: FileUtils.trimFileProtocol(`${Directories.genericCache}/agent-host/region`)
     property string wallpaperSwitchScriptPath: FileUtils.trimFileProtocol(`${Directories.scriptPath}/colors/switchwall.sh`)
     property string userActions: FileUtils.trimFileProtocol(`${Directories.shellConfig}/actions`)
     property string recordScriptPath: FileUtils.trimFileProtocol(`${Directories.scriptPath}/videos/record.sh`)
@@ -83,19 +84,23 @@ Singleton {
     // states.json's directory and everything else under it (first_run.txt, todo.json, notes.txt,
     // desktopnotes.txt, generated/). A fresh user has none of it, and every writer assumes it.
     property string userStateDir: FileUtils.trimFileProtocol(`${Directories.state}/user`)
-    // Cleanup on init
+    // Cleanup of what the desktop left in the cache and runtime folders. Only the desktop's process calls it (shell.qml):
+    // every Tacit program loads this singleton, and one started later (Settings, Viewer) wiped the cover art, the
+    // clipboard previews and a region screenshot's capture that the running desktop was still showing.
+    function cleanTemporary() {
+        Quickshell.execDetached(["bash", "-c", 'for d in "$@"; do rm -rf "$d"; mkdir -p "$d"; done', "clean", coverArt, cliphistDecode,
+            // A crash leaves the full-screen capture of a region selection behind, and with it a
+            // picture of whatever was on screen. Nothing here survives a restart on purpose.
+            screenshotTemp])
+        Quickshell.execDetached(["rm", "-rf", `${tempImages}`])
+    }
     Component.onCompleted: {
         Quickshell.execDetached(["mkdir", "-p", `${userPresetsPath}`])
         Quickshell.execDetached(["mkdir", "-p", `${shellConfig}`])
         Quickshell.execDetached(["mkdir", "-p", `${favicons}`])
-        Quickshell.execDetached(["bash", "-c", `rm -rf '${coverArt}'; mkdir -p '${coverArt}'`])
-        Quickshell.execDetached(["bash", "-c", `rm -rf '${cliphistDecode}'; mkdir -p '${cliphistDecode}'`])
-        // A crash leaves the full-screen capture of a region selection behind, and with it a
-        // picture of whatever was on screen. Nothing here survives a restart on purpose.
-        Quickshell.execDetached(["bash", "-c", `rm -rf '${screenshotTemp}'; mkdir -p '${screenshotTemp}'`])
+        Quickshell.execDetached(["mkdir", "-p", `${coverArt}`, `${cliphistDecode}`, `${screenshotTemp}`])
         Quickshell.execDetached(["mkdir", "-p", `${userActions}`])
         Quickshell.execDetached(["mkdir", "-p", `${eqStateDir}`])
         Quickshell.execDetached(["mkdir", "-p", `${userStateDir}`])
-        Quickshell.execDetached(["rm", "-rf", `${tempImages}`])
     }
 }

@@ -64,27 +64,65 @@ Singleton {
         root.progress = 0;
         fetchProc.running = true;
     }
-    // the next start installs them; no password (50-tacit-updates.rules)
-    // restarting: the download for the install is under way; restartFailed: it did not finish (Settings shows both)
+    // Restart: the download for the install is made first, then the computer restarts; when a step fails nothing
+    // restarts, and the notch and Settings' row say so. "" for neither, "prepare" or "reboot".
+    property string restartFailed: ""
     readonly property bool restarting: restartProc.running
-    property bool restartFailed: false
+    // What a restart would cut off (the session screen's warnings): said once, and the next Restart goes through, as
+    // the session screen's "press again" does. It goes back to asking after ten seconds.
+    property string restartWarning: ""
+    property bool guarding: false       // the warnings are being read
     // Tonight was chosen: the night's timer is waiting (read with the list, and set at once when chosen)
     property bool tonightSet: false
+    // the next start installs them; no password (50-tacit-updates.rules)
     function restartNow() {
-        if (restartProc.running)
+        if (root.restarting || root.guarding)
             return;
-        root.restartFailed = false;
-        IslandController.request("copied", { "icon": "system_update", "text": "Getting ready to restart" }, 65);
+        root.restartFailed = "";
+        if (root.restartWarning.length > 0) {
+            root.go();
+            return;
+        }
+        root.guarding = true;
+        SessionWarnings.refresh();
+    }
+    function go() {
+        root.restartWarning = "";
+        disarmTimer.stop();
+        // from the first press the notch says so: the download can take minutes
+        IslandController.request("update", { "icon": "system_update", "text": "Getting ready to restart", "restarting": true }, 60);
         restartProc.running = true;
     }
-    // the download for the install is made first; when it fails nothing restarts, and the notch says so
+    Connections {
+        target: SessionWarnings
+        function onChecked() {
+            if (!root.guarding)
+                return;
+            root.guarding = false;
+            const warning = IslandController.workUnsaved ? "Unsaved changes"
+                : SessionWarnings.packageManagerRunning ? "The package manager is running"
+                : SessionWarnings.downloadRunning ? "A download may be in progress" : "";
+            if (warning.length === 0) {
+                root.go();
+                return;
+            }
+            root.restartWarning = warning;
+            disarmTimer.restart();
+            IslandController.request("update", { "icon": "warning", "text": warning, "warning": true }, 60);
+        }
+    }
+    Timer {
+        id: disarmTimer
+        interval: 10000
+        onTriggered: root.restartWarning = ""
+    }
     Process {
         id: restartProc
         command: ["bash", "-c", "systemctl start tacit-update@now.service || exit 1; systemctl reboot || { systemctl start tacit-update@cancel.service; exit 3; }"]
         onExited: (code, status) => {
             if (code !== 0) {
-                root.restartFailed = true;
-                IslandController.request("copied", { "icon": "error", "text": code === 3 ? "Couldn't restart" : "Couldn't download the update · check the connection" }, 65);
+                root.restartFailed = code === 3 ? "reboot" : "prepare";
+                IslandController.request("note", { "icon": "error", "text": code === 3 ? "Couldn't restart" : "Couldn't download the update · check the connection" }, 65);
             }
         }
     }
@@ -92,7 +130,7 @@ Singleton {
     function openNotes() {
         Quickshell.execDetached(["bash", "-c", '"${TACIT_BIN:-$HOME/.local/bin}"/settings-open about 2>/dev/null || settings-open about']);
     }
-    // said only once it is set: a refused start used to read as done
+    // said only once systemctl has taken it: a start that failed (no rights) set nothing for the night
     function tonight() {
         if (!tonightProc.running)
             tonightProc.running = true;
@@ -103,7 +141,7 @@ Singleton {
         onExited: (code, status) => {
             root.tonightSet = code === 0;
             IslandController.request("copied", code === 0 ? { "icon": "schedule", "text": "Tonight, on the charger" }
-                : { "icon": "error", "text": "Couldn't set it for tonight" }, 65);
+                : { "icon": "error", "text": "Couldn't set the update for tonight" }, 65);
         }
     }
 
@@ -140,13 +178,16 @@ Singleton {
                     root.lastCheckFailed = true;
                     return;
                 }
+                // a failed check is said once, by the read that ends it: a later read only knows what is on disk
                 root.lastCheckFailed = root.fetchFailed;
+                root.fetchFailed = false;
                 // when the package list was really fetched (a read of the local list is not a check), and Tonight's timer
                 const synced = parseInt((halves[2] ?? "").trim()) * 1000;
                 if (synced > 0)
                     root.lastChecked = synced;
                 root.tonightSet = (halves[3] ?? "").trim() === "active";
-                const waiting = halves[0].split("\n").filter(l => l.includes(" -> "));
+                // pacman -Qu lists a held package (IgnorePkg) with " [ignored]"; -Sup never downloads it
+                const waiting = halves[0].split("\n").filter(l => l.includes(" -> ") && !l.endsWith(" [ignored]"));
                 const files = halves[1].split("\n").filter(l => l.length > 0 && !l.startsWith(":"));
                 root.count = waiting.length;
                 root.downloaded = files.length > 0 && files.every(f => f.startsWith("file://"));
@@ -188,7 +229,12 @@ Singleton {
         }
         onRunningChanged: root.checking = waitingProc.running || fetchProc.running || root.phase !== ""
     }
-    onPhaseChanged: root.checking = waitingProc.running || fetchProc.running || root.phase !== ""
+    onPhaseChanged: {
+        root.checking = waitingProc.running || fetchProc.running || root.phase !== "";
+        // a check or download that starts leaves the last restart's failure behind
+        if (root.phase !== "")
+            root.restartFailed = "";
+    }
 
     // How far a download is: what is waiting and its size, against what of it is here already (file://), while either
     // download runs. Pieces finish one package at a time, so it goes up in steps.
@@ -216,7 +262,7 @@ Singleton {
         command: ["bash", "-c", "a=0; systemctl is-active tacit-fetch-updates-now.service tacit-fetch-updates.service | grep -qxE 'activating|active' && a=1; "
             + "[ -n \"$(systemctl list-jobs --no-legend tacit-fetch-updates-now.service tacit-fetch-updates.service)\" ] && a=1; "
             + "echo \"active $a\"; echo \"result $(systemctl show -P Result tacit-fetch-updates-now.service)\"; "
-            + (full ? "echo \"waiting $(pacman -Qu 2>/dev/null | wc -l)\"; pacman -Sup --print-format '%s %l' 2>/dev/null | grep -v '^:'" : "true")]
+            + (full ? "echo \"waiting $(pacman -Qu 2>/dev/null | grep -vc ' \\[ignored\\]$')\"; pacman -Sup --print-format '%s %l' 2>/dev/null | grep -v '^:'" : "true")]
         stdout: StdioCollector {
             onStreamFinished: {
                 const lines = text.split("\n");

@@ -1,4 +1,5 @@
 import qs.modules.common
+import qs.services
 import "layouts.js" as Layouts
 import QtQuick
 import QtQuick.Layouts
@@ -6,7 +7,10 @@ import QtQuick.Layouts
 Item {
     id: root    
     property var layouts: Layouts.byName
-    property var activeLayoutName: (layouts.hasOwnProperty(Config.options?.osk.layout)) 
+    // The keys send scancodes, so what they type is the compositor's layout: label them with it when layouts.js has
+    // it (the config value is only written on a layout change, not for the one active at start), else the config's
+    property var activeLayoutName: layouts.hasOwnProperty(HyprlandXkb.currentLayoutName) ? HyprlandXkb.currentLayoutName
+        : (layouts.hasOwnProperty(Config.options?.osk.layout)) 
         ? Config.options?.osk.layout 
         : Layouts.defaultLayout
     property var currentLayout: layouts[activeLayoutName]

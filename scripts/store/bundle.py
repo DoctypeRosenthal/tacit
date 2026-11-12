@@ -14,12 +14,13 @@ outside the bundle changes: no password, no partial upgrade of the system. Packa
 /etc/pacman.conf and are checked against the database's SHA-256 and the packager's signature (pacman's own keyring).
 The app's own files (settings, caches) live in a private home; it sees the user's folders its permissions allow.
 """
-import concurrent.futures, contextlib, fcntl, glob, hashlib, json, os, re, shlex, shutil, subprocess, sys, tarfile, time
+import concurrent.futures, contextlib, fcntl, glob, hashlib, json, os, re, shlex, shutil, signal, subprocess, sys, tarfile, time
 
 HOME = os.path.expanduser("~")
 ROOT = os.path.join(HOME, ".local/share/tacit/bundles")
 DATA = os.path.join(HOME, ".local/share/tacit/app-data")
 CACHE = os.path.join(HOME, ".cache/tacit-bundle")
+RUN = os.path.join(CACHE, "run")
 APPS_DIR = os.path.join(HOME, ".local/share/applications")
 ICONS_DIR = os.path.join(HOME, ".local/share/icons")
 KEYRING = "/etc/pacman.d/gnupg/pubring.gpg"
@@ -36,9 +37,28 @@ def say(**kw):
 
 
 class Refused(Exception):
-    """an outcome in words for the store: unavailable, installed, system, offline, space, failed"""
+    """an outcome in words for the store: unavailable, installed, system, offline, space, failed, stopped"""
     def __init__(self, why, detail=""):
         super().__init__(detail or why); self.why = why; self.detail = detail
+
+
+# Stop: the store sends SIGTERM to an install the person gave up on. Everything before the swap only fills a folder of its
+# own (cache files, the ".new" stage), so it ends there; from the swap to the finished manifest the install is carried
+# through, as a stop half way would leave a folder without a manifest.
+STOPPING = False
+SWAPPING = False
+
+
+def stop_on_term(sig, frame):
+    global STOPPING
+    STOPPING = True
+    if SWAPPING:
+        return
+    try:
+        subprocess.run(["pkill", "-TERM", "-P", str(os.getpid())], capture_output=True)      # curl, bsdtar, bwrap at work
+    except OSError:
+        pass
+    raise Refused("stopped")
 
 
 # ---- packages: the system's mirrors and its installed set ----
@@ -240,13 +260,21 @@ def fetch(p):
     if os.path.exists(dst) and os.path.exists(dst + ".sig") and sha(dst) == p["sha256"]:
         return dst
     for s in p["servers"]:
+        if STOPPING:
+            raise Refused("stopped")
         url = f"{s}/{p['filename']}"
-        ok = subprocess.run(["curl", "-fsSL", "--max-time", "900", "-o", dst + ".part", url], capture_output=True).returncode == 0 and \
-             subprocess.run(["curl", "-fsSL", "--max-time", "60", "-o", dst + ".sig", url + ".sig"], capture_output=True).returncode == 0
-        if ok:
+        # a slow line is fine, a stalled one is not; what came so far is kept, so the next mirror or the next try goes on from it
+        rc = subprocess.run(["curl", "-fsSL", "-C", "-", "--speed-limit", "1024", "--speed-time", "60", "-o", dst + ".part", url],
+                            capture_output=True).returncode
+        if rc == 33:                                         # the mirror cannot resume: start the file again
+            os.unlink(dst + ".part")
+        elif rc == 0:
+            rc = subprocess.run(["curl", "-fsSL", "--max-time", "60", "-o", dst + ".sig", url + ".sig"], capture_output=True).returncode
+        if rc == 0:
             break
     else:
-        raise Refused("offline", f"could not download {p['filename']}")
+        # curl's last word: 23 is a write error (the disk is full), 22 an HTTP error (a mirror that lacks the file)
+        raise Refused({23: "space", 22: "failed"}.get(rc, "offline"), f"could not download {p['filename']} (curl {rc})")
     if not p["sha256"] or sha(dst + ".part") != p["sha256"]:
         os.unlink(dst + ".part"); raise Refused("failed", f"{p['filename']} does not match its checksum")
     if subprocess.run(["gpgv", "--keyring", KEYRING, dst + ".sig", dst + ".part"], capture_output=True).returncode != 0:
@@ -372,10 +400,30 @@ def tell(*args):
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
 
+def app_lock(app, how):
+    """the app's lock, or None when `how` would wait (with LOCK_NB). Every running instance holds it shared, for as long as its
+    sandbox lives (the descriptor goes through the exec into bwrap); an update holds it exclusive while it swaps the folder"""
+    os.makedirs(RUN, exist_ok=True)
+    fd = os.open(os.path.join(RUN, app + ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, how)
+    except OSError:
+        os.close(fd); return None
+    return fd
+
+
 def run(app, cmd):
     base = os.path.join(ROOT, app)
+    # nobody has it open: the lock is ours alone, so the bundle can be brought in line without changing the folder under a
+    # running copy. Open already, or being updated by another start: wait for that, and start on the bundle there is.
+    lock = app_lock(app, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    alone = lock is not None
+    if not alone:
+        lock = app_lock(app, fcntl.LOCK_SH)
     man = json.load(open(os.path.join(base, "manifest.json")))
-    if man.get("host_stamp") != host_stamp():
+    tried = os.path.join(RUN, app + ".tried")
+    # a refused update (offline, a captive network) is not tried again for ten minutes: each try waits on the network
+    if alone and man.get("host_stamp") != host_stamp() and not (os.path.exists(tried) and time.time() - os.path.getmtime(tried) < 600):
         # the system changed since this bundle was made: bring the bundle in line before starting
         try:
             with locked(app):
@@ -394,8 +442,14 @@ def run(app, cmd):
                         man["host_stamp"] = host_stamp()
                         json.dump(man, open(os.path.join(base, "manifest.json"), "w"), indent=1)
                     man = json.load(open(os.path.join(base, "manifest.json")))
+        except Refused:
+            open(tried, "w").close()                # offline: start what we have
         except Exception:
-            pass                                    # offline or a failed refresh: start what we have
+            pass                                    # a failed refresh: start what we have
+    if alone:
+        fcntl.flock(lock, fcntl.LOCK_SH)
+    if lock is not None:
+        os.set_inheritable(lock, True)
     root = os.path.join(base, "root")
     perm = man["permissions"]
     uid = os.getuid(); rt = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{uid}"
@@ -539,6 +593,7 @@ def integrate(app, root, target_files, made):
 
 
 def install(target, quiet=False, step=None):
+    global SWAPPING
     step = step or ((lambda **kw: None) if quiet else say)
     step(step="lists")
     refresh_sync(max_age=600 if not quiet else 3600)
@@ -570,7 +625,7 @@ def install(target, quiet=False, step=None):
     sys_parts = sorted({sp for m in tfiles for sp in SYSTEM_PARTS if m.startswith(sp)})
     if sys_parts:
         raise Refused("system", "needs parts of the system: " + ", ".join(sys_parts))
-    # unpack into a fresh folder, then swap it in
+    # unpack into a fresh folder, then swap it in; whatever goes wrong, the half-made folders do not stay
     stage = base + ".new"; wipe(stage)
     root = os.path.join(stage, "root"); os.makedirs(root)
     skipped = []
@@ -579,14 +634,18 @@ def install(target, quiet=False, step=None):
             step(step="unpack", package=n)
             tops = {m.split("/", 1)[0] for m in lists[n] if m and not m.startswith(".")}
             skipped += [f"{n}:{t}" for t in tops - {"usr", "etc", "opt"}]
-            subprocess.run(["bsdtar", "-xpf", f, "-C", root, "--exclude", ".PKGINFO", "--exclude", ".BUILDINFO", "--exclude", ".MTREE",
-                            "--exclude", ".INSTALL", "--exclude", ".CHANGELOG", *[x for t in tops - {"usr", "etc", "opt"} for x in ("--exclude", t)]],
-                           check=True, capture_output=True)
+            r = subprocess.run(["bsdtar", "-xpf", f, "-C", root, "--exclude", ".PKGINFO", "--exclude", ".BUILDINFO", "--exclude", ".MTREE",
+                                "--exclude", ".INSTALL", "--exclude", ".CHANGELOG", *[x for t in tops - {"usr", "etc", "opt"} for x in ("--exclude", t)]],
+                               capture_output=True, text=True, errors="replace")
+            if r.returncode:
+                raise Refused("space" if shutil.disk_usage(ROOT).free < 1 << 26 else "failed", r.stderr.strip()[-300:])
         step(step="caches")
         refresh_caches(root)
     except BaseException:
         wipe(stage); raise                          # a half-unpacked folder can be hundreds of MB
-    # the old bundle waits in '<app>.old' until the new one is integrated, so a failure here can put it back
+    # the old bundle waits in '<app>.old' until the new one is integrated, so a failure here can put it back. A stop from
+    # here to the finished manifest is carried through (stop_on_term)
+    SWAPPING = True
     aside = base + ".old"; wipe(aside)
     if os.path.isdir(base):
         if os.path.exists(old):
@@ -597,6 +656,10 @@ def install(target, quiet=False, step=None):
     root = os.path.join(base, "root")
     made = []
     try:
+        # a first manifest at once: if this dies before the last one is written, Remove still finds the app, and an install
+        # sees it is not complete (no versions)
+        json.dump(dict(package=target, version=bundle[target]["version"], versions={}, made=[], size=size),
+                  open(os.path.join(base, "manifest.json"), "w"), indent=1)
         ids, execs = integrate(target, root, tfiles, made)
         first = next((m for m in tfiles if m.startswith("usr/bin/") and not m.endswith("/")), None)
         man = dict(package=target, version=bundle[target]["version"], versions=want, shared=used, made=made, ids=ids,
@@ -620,6 +683,7 @@ def install(target, quiet=False, step=None):
                     os.unlink(f)
         wipe(aside)
         subprocess.run(["update-desktop-database", APPS_DIR], capture_output=True)
+    SWAPPING = False
     # older versions of this bundle's packages; other apps' files may be in use by an install running now
     names = {p["filename"].rsplit("-", 3)[0] for p in bundle.values()}
     keep = {p["filename"] + e for p in bundle.values() for e in ("", ".sig")}
@@ -658,6 +722,7 @@ def main():
         if a[0] == "plan":
             say(**plan(a[1]))
         elif a[0] in ("install", "update"):
+            signal.signal(signal.SIGTERM, stop_on_term)
             with locked(a[1]):
                 install(a[1])
         elif a[0] == "remove":

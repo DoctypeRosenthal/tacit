@@ -13,6 +13,7 @@
 # behave differently under a race, and code-open had no lock at all, which is why the launcher
 # started a second editor beside the one already running. One copy, three one-line callers.
 TACIT_SHELL=${TACIT_SHELL:-$HOME/.config/quickshell/tacit}  # the shell's folder (the package sets TACIT_SHELL)
+export QML_IMPORT_PATH="$HOME/.local/lib/qml${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}"   # Tacit.Edit and Tacit.Sand are installed there (native/*/build.sh)
 set -u
 
 app_paths() {
@@ -38,7 +39,9 @@ app_paths() {
 }
 
 # `qs ipc` picks the instance by config path, so every call names the same -p as the launch.
-up() { qs -p "$qml" ipc call "$target" state >/dev/null 2>&1; }
+# Bounded: an app whose main thread is wedged takes the call and never answers it, and every launcher click and file
+# open waited on it forever; one that does not answer in 3 s counts as not up.
+up() { timeout 3 qs -p "$qml" ipc call "$target" state >/dev/null 2>&1; }
 
 cmd=${1:-}
 [ $# -ge 2 ] || { echo "tacit-app: ensure|call|focus <praxis|graphis|viewer|activity|store>" >&2; exit 2; }
@@ -72,8 +75,10 @@ ensure)
 		# -n: exit at once if an instance is somehow already up rather than run two, of which the
 		# second is invisible but takes every ipc call that arrives while both live.
 		setsid qs -n -p "$qml" >> "$log" 2>&1 &
-		i=0
-		while [ $i -lt 60 ] && ! up; do sleep 0.1; i=$((i + 1)); done
+		# A cold start (first after boot or an update, a loaded disk) can take well over 6 s; the wait is by the clock,
+		# as an `up` against a wedged app takes 3 s itself.
+		end=$(( $(date +%s) + 20 ))
+		while [ "$(date +%s)" -lt "$end" ] && ! up; do sleep 0.1; done
 	fi
 	flock -u 9
 	if ! up; then
@@ -85,7 +90,7 @@ ensure)
 	;;
 call)
 	shift 2
-	exec qs -p "$qml" ipc call "$target" "$@"   # the caller reads its output and its status
+	exec timeout 5 qs -p "$qml" ipc call "$target" "$@"   # the caller reads its output and its status
 	;;
 focus)
 	pid=$(pgrep -f -- "-p $qml$" | head -1)   # anchored: the instance, not an `ipc call` helper

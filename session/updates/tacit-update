@@ -17,7 +17,8 @@ mkdir -p "$state"
 # the files missing (Discord, 2026-10-20).
 ready() {
 	systemctl stop tacit-fetch-updates.service tacit-fetch-updates-now.service 2>/dev/null
-	if [ -e /var/lib/pacman/db.lck ] && ! pgrep -x pacman >/dev/null; then
+	# held is asked of the lock file (libalpm keeps it open), not of the name: a pacman -Qu lookup is not a download
+	if [ -e /var/lib/pacman/db.lck ] && [ -z "$(find /proc/[0-9]*/fd -lname /var/lib/pacman/db.lck -print -quit 2>/dev/null)" ]; then
 		rm -f /var/lib/pacman/db.lck
 	fi
 	pacman -Suw --noconfirm --noprogressbar > "$state/download.log" 2>&1

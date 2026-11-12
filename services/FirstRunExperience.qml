@@ -79,6 +79,9 @@ Singleton {
             Config.writeNow();
             Wallpapers.apply(dusk, true);
         }
+        // the marker last: a shell that restarts before the name and the look are done meets a first run again
+        // (every step above only fills in what is still empty)
+        firstRunFileView.setText(root.firstRunFileContent);
     }
     // the notch greets the person by the first name Setup made the account with (as it greets the owner); Settings'
     // Your name and the lock show the whole name (they showed the login name, "sam" for "Sam Tester")
@@ -111,7 +114,6 @@ Singleton {
         // then open upstream's welcome tour, which walks the user through panels this fork does not have.
         onLoadFailed: (error) => {
             if (error == FileViewError.FileNotFound) {
-                firstRunFileView.setText(root.firstRunFileContent)
                 root.firstRun = true
                 root.start()
             }

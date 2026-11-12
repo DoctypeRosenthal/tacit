@@ -60,6 +60,13 @@ Item {
     // ------------------------------------------------------------- programs
     readonly property var programs: TaskbarApps.apps.filter(app => app.appId !== "SEPARATOR")
 
+    // the pills are kept by program, not rebuilt, when a window opens or closes and programs is a new array
+    ScriptModel {
+        id: programModel
+        values: root.programs
+        objectProp: "appId"
+    }
+
     // Tacit's own programs carry Tacit's names and symbols; any other program shows its own icon
     readonly property var known: ({
             "org.quickshell": { "name": "Pinax", "symbol": "folder" },
@@ -119,7 +126,7 @@ Item {
     }
     Repeater {
         id: measures
-        model: root.programs
+        model: programModel
         StyledText {
             required property var modelData
             readonly property bool open: modelData.toplevels.length > 0
@@ -229,8 +236,8 @@ Item {
     // ------------------------------------------------------------- reordering
     // A pinned pill is carried by the pointer. The row makes its room as it goes: the pills between it and
     // the place it would take slide over by its own width, so it is not laid on top of them. Let go, and it
-    // settles into that place before the order is written: writing it rebuilds every pill at once, and a
-    // pill still in the hand would leave it.
+    // settles into that place before the order is written. The pills are kept, not rebuilt, so writing it moves
+    // them to their new places in the row: they take them at once, since each is already shown there.
     property string draggingId: ""
     property real dragOffset: 0
     property int dragFrom: -1      // its place among the pinned programs
@@ -238,6 +245,7 @@ Item {
     property real dragHome: 0      // its centre where it rests, in the row
     property real dragWidth: 0     // its width: the room the others make for it
     property bool landing: false   // let go: it is going into dragTo now
+    property bool settling: false  // the order is written: the row takes it without moving anything again
 
     // Arrive, small (the guide's motion): it decelerates and ends still, so the pill reads as put down
     NumberAnimation {
@@ -313,12 +321,12 @@ Item {
         const appId = root.draggingId;
         const from = root.dragFrom;
         const to = root.dragTo;
-        root.cancelDrag();
-        if (appId.length === 0 || from < 0 || to < 0 || from === to)
-            return;
         const pins = (Config.options.dock.pinnedApps ?? []).slice();
         const at = pins.findIndex(id => id.toLowerCase() === appId.toLowerCase());
-        if (at < 0)
+        const write = appId.length > 0 && from >= 0 && to >= 0 && from !== to && at >= 0;
+        root.settling = write;
+        root.cancelDrag();
+        if (!write)
             return;
         pins.splice(to, 0, pins.splice(at, 1)[0]);
         Config.options.dock.pinnedApps = pins;
@@ -348,8 +356,15 @@ Item {
             return;
         if (act === "new")
             root.launch(app.appId);
-        else if (act === "quit")
-            app.toplevels.slice().forEach(t => t.close());
+        else if (act === "quit") {
+            // Graphis, the Viewer and Praxis only hide when closed and stay running: they quit themselves, asking about
+            // unsaved work in their own window
+            const own = ({ "graphis": "graphis", "viewer": "viewer", "praxis": "praxis" })[String(app.appId).toLowerCase()];
+            if (own)
+                Quickshell.execDetached([`${Directories.tacitBin}/tacit-app`, "call", own, "quit"]);
+            else
+                app.toplevels.slice().forEach(t => t.close());
+        }
         else if (act === "pin" || act === "unpin")
             TaskbarApps.togglePin(app.appId);
     }
@@ -492,7 +507,7 @@ Item {
             restoreMode: Binding.RestoreNone
         }
         Behavior on x {
-            enabled: tick.placed && !(tick.under?.dragging ?? false)
+            enabled: tick.placed && !(tick.under?.dragging ?? false) && !root.settling
             Anim {
                 type: Anim.Emphasized
             }
@@ -508,7 +523,9 @@ Item {
         x: 18
         y: (root.rowHeight - root.tile) / 2 - 3
         spacing: 6
+        onPositioningComplete: root.settling = false
         move: Transition {
+            enabled: !root.settling
             Anim {
                 properties: "x"
                 type: Anim.Emphasized
@@ -516,7 +533,7 @@ Item {
         }
 
         Repeater {
-            model: root.programs
+            model: programModel
             Rectangle {
                 id: pill
                 required property var modelData
@@ -549,11 +566,12 @@ Item {
                 // the window band's window is heading for this button: it opens as the slot that takes it
                 readonly property bool bandTarget: WindowBand.dropInto.length > 0 && WindowBand.dropInto === pill.appId
                 onBandTargetChanged: if (pill.bandTarget) pill.reportBand()
+                Component.onDestruction: if (pill.dragging) root.cancelDrag()
                 Component.onCompleted: if (pill.bandTarget) pill.reportBand()
                 // where it will rest, at once, and again once the dock has arrived
                 function reportBand() {
                     const p = pill.mapToItem(null, 0, 0);
-                    WindowBand.reportHide(p.x, p.y - root.restOffset, pill.width, pill.height);
+                    WindowBand.reportHide(p.x, p.y - root.restOffset, pill.width, pill.height, pill.QsWindow.window?.screen);
                     bandReport.restart();
                 }
                 // the window has landed in it: the button takes it with a small swell, and settles
@@ -578,7 +596,7 @@ Item {
                     interval: 320
                     onTriggered: {
                         const p = pill.mapToItem(null, 0, 0);
-                        WindowBand.reportHide(p.x, p.y, pill.width, pill.height);
+                        WindowBand.reportHide(p.x, p.y, pill.width, pill.height, pill.QsWindow.window?.screen);
                     }
                 }
                 readonly property bool hot: pill.dragging || pill.hovered && !pill.open || pill.bandTarget
@@ -607,7 +625,7 @@ Item {
                     x: pill.dragging ? root.dragOffset : pill.reorderShift
                     // carried, it follows the pointer with nothing in between; otherwise the room it made arrives
                     Behavior on x {
-                        enabled: !pill.dragging
+                        enabled: !pill.dragging && !root.settling
                         NumberAnimation {
                             duration: Appearance.animationCurves.smallDuration
                             easing.type: Easing.BezierSpline

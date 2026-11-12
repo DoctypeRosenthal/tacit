@@ -100,6 +100,8 @@ Button {
         onReleased: (event) => {
             root.down = false
             if (event.button != Qt.LeftButton) return;
+            // pressing and dragging off cancels, as the click does and as RippleButton's release does
+            if (!buttonMouseArea.contains(Qt.point(event.x, event.y))) return;
             if (root.releaseAction) root.releaseAction();
         }
         onClicked: (event) => {
@@ -111,9 +113,8 @@ Button {
         }
 
         onPressAndHold: () => {
-            altAction(); 
-            root.down = false; 
-            root.clicked = false;
+            if (root.altAction) root.altAction();
+            root.down = false;
         };
     }
 

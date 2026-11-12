@@ -5,14 +5,19 @@
 set -u
 dir=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/notch-sessions
 [ -d "$dir" ] || exit 0
-clients=
+clients= listed=
 for f in "$dir"/*.state; do
 	[ -f "$f" ] || continue
 	sid=${f##*/}; sid=${sid%.state}
 	IFS=$'\t' read -r state cwd addr < "$f"
-	# still alive? the terminal window must still exist (clients listed once, on the first need)
-	[ -n "${addr:-}" ] && [ -z "$clients" ] && clients=$(hyprctl clients -j 2>/dev/null)
-	if [ -n "${addr:-}" ] && [[ $clients != *"\"address\": \"$addr\""* ]]; then
+	# still alive? the terminal window must still exist (clients listed once, on the first need); if hyprctl
+	# cannot answer (the compositor is not ready), nothing is dropped
+	if [ -n "${addr:-}" ] && [ -z "$listed" ]; then
+		listed=1
+		clients=$(hyprctl clients -j 2>/dev/null) || clients=""
+		case "$clients" in "["*) ;; *) clients="" ;; esac
+	fi
+	if [ -n "${addr:-}" ] && [ -n "$clients" ] && [[ $clients != *"\"address\": \"$addr\""* ]]; then
 		rm -f "$dir/$sid".*; continue
 	fi
 	printf '%s\t%s\t%s\t%s\t%s\n' "$sid" "$state" "$cwd" "${addr:-}" "$(stat -c %Y "$f")"

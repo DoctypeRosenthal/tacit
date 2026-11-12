@@ -210,6 +210,17 @@ Item {
                 type: Anim.Emphasized
             }
         }
+        // folded away with the section: the form closes and nothing typed lingers (the password lines of the rows do the same)
+        Connections {
+            target: root
+            function onShownChanged() {
+                if (!root.shown) {
+                    hrow.open = false;
+                    hiddenName.text = "";
+                    hiddenPassword.text = "";
+                }
+            }
+        }
         RippleButton {
             id: hline
             anchors.left: parent.left
@@ -291,7 +302,7 @@ Item {
                     placeholderText: Translation.tr("Password, if any")
                     echoMode: TextInput.Password
                     inputMethodHints: Qt.ImhSensitiveData
-                    onAccepted: if (hiddenName.text.trim().length > 0) { Network.joinHidden(hiddenName.text.trim(), text); hrow.open = false; }
+                    onAccepted: if (hiddenName.text.trim().length > 0) { Network.joinHidden(hiddenName.text.trim(), text); text = ""; hrow.open = false; }
                     Keys.onEscapePressed: hrow.open = false
                 }
                 RippleButton {
@@ -304,6 +315,7 @@ Item {
                     enabled: hiddenName.text.trim().length > 0
                     onClicked: {
                         Network.joinHidden(hiddenName.text.trim(), hiddenPassword.text);
+                        hiddenPassword.text = "";
                         hrow.open = false;
                     }
                     contentItem: StyledText {

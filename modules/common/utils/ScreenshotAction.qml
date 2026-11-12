@@ -54,7 +54,9 @@ Singleton {
             case ScreenshotAction.Action.Copy:
                 if (saveDir === "") {
                     // Nothing is saved, so the notch has no file to park and announce: say it here
-                    return ["bash", "-c", `${cropToStdout} | wl-copy && ${cleanup}`
+                    // The crop is made in the capture first: a crop that failed must not reach wl-copy as an empty
+                    // picture (it clears the clipboard) or take the capture and the notice with it
+                    return ["bash", "-c", `${cropInPlace} && wl-copy < '${StringUtils.shellSingleQuoteEscape(screenshotPath)}' && ${cleanup}`
                         + ` && notify-send "Screenshot Copied" "Copied to clipboard" -a "Screen Snip" -i "image-x-generic"`]
                     break;
                 }
@@ -64,7 +66,8 @@ Singleton {
                     savePathBase='${StringUtils.shellSingleQuoteEscape(saveDir)}'"/screenshot-$(date '+%Y-%m-%d_%H.%M.%S')" && \
                     savePath="$savePathBase.png" && \
                     suffix=1 && while [ -e "$savePath" ]; do savePath="$savePathBase-$suffix.png"; suffix=$((suffix+1)); done && \
-                    ${cropToStdout} | tee >(wl-copy) > "$savePath" && \
+                    ${cropInPlace} && cp '${StringUtils.shellSingleQuoteEscape(screenshotPath)}' "$savePath" && \
+                    wl-copy < "$savePath" && \
                     ${cleanup}`
                 ]
 

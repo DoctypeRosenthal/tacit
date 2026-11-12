@@ -14,7 +14,7 @@ Item {
     readonly property bool connected: host.link?.connected ?? false
     property var live: ({})        // id -> the host's summary of a session it runs
     property var terminals: ({})   // id -> { status, cwd, name } for sessions in a terminal
-    // id -> { status } for a turn the previous agent-host's process is still finishing: a host restart closes its
+    // id -> { status, pid } for a turn the previous agent-host's process is still finishing: a host restart closes its
     // stdin, and Claude Code ends the turn before it exits. In an agent scope, so not a terminal (it read as one).
     property var leftovers: ({})
     property int pollInterval: 10000
@@ -31,6 +31,7 @@ Item {
     // empty with a host older than protocol 5
     property var agents: ({})
     property bool helloSent: false     // this connection has said which protocol it speaks
+    property bool greeted: false       // the host has answered it: agents and features are known
     // what this host can do beyond its protocol number ("accounts", "catalog", "effort"); empty
     // while disconnected and with an older host
     property var features: []
@@ -54,10 +55,11 @@ Item {
     function request(obj, cb) {
         host.sayHello();
         const tag = host.nextTag++;
+        obj.tag = tag;
+        // answered here, not kept: a callback left in the table was failed a second time by the next drop
+        if (!host.connected) { if (cb) cb({ ev: "error", message: "Lost the connection to the background service. Praxis keeps trying to reconnect.", disconnected: true }); return; }
         if (cb)
             host.callbacks[tag] = cb;
-        obj.tag = tag;
-        if (!host.connected) { if (cb) cb({ ev: "error", message: "Lost the connection to the background service. Praxis keeps trying to reconnect.", disconnected: true }); return; }
         host.link.write(JSON.stringify(obj) + "\n");
         host.link.flush();
     }
@@ -94,6 +96,7 @@ Item {
             host.agents = m.agents ?? ({});
             host.features = m.features ?? [];
             host.protoMismatch = m.proto !== host.proto;
+            host.greeted = true;
             if (host.protoMismatch)
                 console.warn("agent-host speaks protocol", m.proto ?? "(none)", "and this shell", host.proto,
                              "- version", host.hostVersion || "(none)", ": restart agent-host.service");
@@ -146,6 +149,7 @@ Item {
                     return;
                 }
                 host.helloSent = false;
+                host.greeted = false;
                 host.features = [];
                 host.failPending();
                 // The sessions in here died with the daemon, and every surface reads this list: left
@@ -207,7 +211,7 @@ Item {
                 const t = {}, left = {};
                 for (const r of rows) {
                     if (r.kind !== "interactive" || !r.sessionId || own.includes(String(r.pid))) continue;
-                    if (scoped.includes(String(r.pid))) left[r.sessionId] = { status: r.status };
+                    if (scoped.includes(String(r.pid))) left[r.sessionId] = { status: r.status, pid: r.pid };
                     else t[r.sessionId] = { status: r.status, cwd: r.cwd ?? "", name: r.name ?? "", checked: checked };
                 }
                 if (JSON.stringify(left) !== JSON.stringify(host.leftovers)) host.leftovers = left;
@@ -222,6 +226,22 @@ Item {
                 }
             }
         }
+    }
+    // The host does not own a leftover turn's process, so it cannot interrupt it: Stop ends the process itself, as
+    // the roster named it. The pid is checked again here (still a Claude Code in an agent scope), since the roster
+    // is up to a poll old and pids are reused. True when there was a process to end.
+    function stopLeftover(id) {
+        const pid = host.leftovers[id]?.pid;
+        if (!pid) return false;
+        Quickshell.execDetached(["bash", "-c", "p=$1; grep -qs /app.slice/agent- /proc/$p/cgroup && [ \"$(cat /proc/$p/comm)\" = claude ] && kill $p", "stop", String(pid)]);
+        afterStop.restart();
+        return true;
+    }
+    // the roster again soon after, so the turn is seen to have ended without waiting out the poll
+    Timer {
+        id: afterStop
+        interval: 1500
+        onTriggered: { roster.running = false; roster.running = true; }
     }
     Timer {
         running: host.roster

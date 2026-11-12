@@ -42,7 +42,9 @@ Singleton {
 
     function setNestedField(path, value) {
         if (!root.loaded) {
+            // nothing else may have asked for the read yet, so this write asks for it
             root.pendingWrites = root.pendingWrites.concat([{ path: path, value: value }]);
+            root.fetchKeyringData();
             return;
         }
         if (!root.keyringData) root.keyringData = {};

@@ -37,6 +37,8 @@ ColumnLayout {
     }
 
     function updateEntry(index, key, value) {
+        const current = Config.options.hyprland.autostartApps.apps[index]
+        if (current && current[key] === value) return
         let list = []
         for (let i = 0; i < Config.options.hyprland.autostartApps.apps.length; i++) {
             let o = Config.options.hyprland.autostartApps.apps[i]
@@ -128,12 +130,14 @@ ColumnLayout {
 
     Repeater {
         id: appsRepeater
-        model: Config.options.hyprland.autostartApps.apps
+        // Only the number of rows: an edit replaces the list, and rows keyed to the list itself
+        // were rebuilt on every keystroke, taking the focus and any unsaved text with them
+        model: Config.options.hyprland.autostartApps.apps.length
 
         delegate: Item {
             id: entryRow
-            required property var modelData
             required property int index
+            readonly property var entry: Config.options.hyprland.autostartApps.apps[index] ?? ({})
             Layout.fillWidth: true
             implicitHeight: cmdArea.implicitHeight
             visible: Config.options.hyprland.autostartApps.enable
@@ -146,7 +150,7 @@ ColumnLayout {
 
                 ConfigSpinBox {
                     width: 118
-                    value: entryRow.modelData.workspace ?? 1
+                    value: entryRow.entry.workspace ?? 1
                     from: 1
                     to: 20
 
@@ -161,7 +165,7 @@ ColumnLayout {
 
                 ConfigSpinBox {
                     width: 118
-                    value: entryRow.modelData.delay ?? 0
+                    value: entryRow.entry.delay ?? 0
                     from: 0
                     to: 60
                     stepSize: 1
@@ -199,7 +203,7 @@ ColumnLayout {
                 anchors.right: rightGroup.left
                 anchors.rightMargin: 6
                 placeholderText: Translation.tr("App (e.g. firefox)")
-                text: entryRow.modelData.cmd ?? ""
+                text: entryRow.entry.cmd ?? ""
                 wrapMode: TextEdit.Wrap
                 font.pixelSize: Appearance.font.pixelSize.normal
 
@@ -208,16 +212,7 @@ ColumnLayout {
 
                 onTextChanged: {
                     if (!ready) return
-                    debounceTimer.restart()
-                }
-
-                Timer {
-                    id: debounceTimer
-                    interval: 3000
-                    repeat: false
-                    onTriggered: {
-                        root.updateEntry(entryRow.index, "cmd", cmdArea.text)
-                    }
+                    root.updateEntry(entryRow.index, "cmd", text)
                 }
             }
         }

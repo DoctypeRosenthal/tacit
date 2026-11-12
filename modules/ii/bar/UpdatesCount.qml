@@ -38,14 +38,21 @@ MouseArea {
         }
     }
 
+    // The owner's update command (Config apps.update), as Settings > About runs it: Tacit's packages
+    // come from pacman, and the terminal and helper are the ones that file names, not a fixed one.
     Process {
         id: updateProc
-        command: [
-            "foot", "--hold",
-            "fish", "-i", "-l", "-c",
-            "yay -Syu --combinedupgrade=false"
-        ]
+        command: ["bash", "-c", Config.options.apps.update]
         onExited: (exitCode, exitStatus) => {
+            // 127: the command was not found, so nothing ran and there is no result to report
+            if (exitCode === 127) {
+                Quickshell.execDetached(["notify-send",
+                    Translation.tr("Update didn't start"),
+                    Translation.tr("Could not run the update command in the config file (apps.update)."),
+                    "-a", "Shell"
+                ])
+                return
+            }
             Updates.refresh()
             notifyTimer.restart()
         }

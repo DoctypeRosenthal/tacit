@@ -103,7 +103,13 @@ ContentPage {
         presetAssetsFetchProc.running = true
     }
 
+    // The download is one chain of processes shared by every card: a second one started inside it
+    // would overwrite the first one's name and files.
+    readonly property bool downloadBusy: presetJsonFetchProc.running || presetMetaFetchProc.running
+        || presetAssetsFetchProc.running || presetRewriteProc.running
+
     function downloadOnlinePreset(entry) {
+        if (page.downloadBusy) return
         page.onlinePresetsError = ""
         const stagingJsonPath = `${page.onlinePresetsDir()}/.${entry.name}.online.json.tmp`
         presetJsonFetchProc.entryName = entry.name
@@ -709,8 +715,8 @@ ContentPage {
                             description: onlineDelegate.presetDescription !== "" ? onlineDelegate.presetDescription : Translation.tr("Downloaded preset")
                             onApply: () => Presets.applyOnline(onlineDelegate.presetName)
                             onRemove: () => Presets.removeOnline(onlineDelegate.presetName)
-                            onOverwrite: () => Presets.overwrite(onlineDelegate.presetName)
-                            onExportZip: () => Presets.exportZip(onlineDelegate.presetName)
+                            onOverwrite: () => Presets.overwrite(onlineDelegate.presetName, "--online")
+                            onExportZip: () => Presets.exportZip(onlineDelegate.presetName, "--online")
                         }
                     }
                 }
@@ -762,8 +768,8 @@ ContentPage {
                         description: importedDelegate.presetDescription !== "" ? importedDelegate.presetDescription : Translation.tr("Imported preset")
                         onApply: () => Presets.applyImported(importedDelegate.presetName)
                         onRemove: () => Presets.removeImported(importedDelegate.presetName)
-                        onOverwrite: () => Presets.overwrite(importedDelegate.presetName)
-                        onExportZip: () => Presets.exportZip(importedDelegate.presetName)
+                        onOverwrite: () => Presets.overwrite(importedDelegate.presetName, "--imported")
+                        onExportZip: () => Presets.exportZip(importedDelegate.presetName, "--imported")
                     }
                 }
             }
@@ -911,6 +917,7 @@ ContentPage {
                                         colBackground: Appearance.colors.colPrimary
                                         colBackgroundHover: Appearance.colors.colPrimaryHover
                                         colRipple: Appearance.colors.colPrimaryActive
+                                        enabled: !page.downloadBusy
                                         downAction: () => page.downloadOnlinePreset(onlineCard.modelData)
 
                                         MaterialSymbol {

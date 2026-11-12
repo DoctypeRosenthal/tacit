@@ -79,8 +79,10 @@ roll() {
 	[ "$first" = "$today" ] && return 0
 	mv "$journal" "${journal%.jsonl}-$first.jsonl" 2>/dev/null || true
 }
-record() { mkdir -p "$(dirname "$journal")"; roll; jq -nc --arg k "$1" --arg s "$sid" --arg c "$cwd" --arg a "$addr" \
-	'{t: (now * 1000 | floor), kind: $k, session: $s, cwd: $c, addr: $a}' >> "$journal" 2>/dev/null; }
+# roll and append under one lock: two hooks at the first event of a day both saw yesterday's file, and the
+# second one's mv put its fresh file over the day the first had just rolled out.
+record() { mkdir -p "$(dirname "$journal")"; ( flock 9; roll; jq -nc --arg k "$1" --arg s "$sid" --arg c "$cwd" --arg a "$addr" \
+	'{t: (now * 1000 | floor), kind: $k, session: $s, cwd: $c, addr: $a}' >> "$journal" 2>/dev/null ) 9>"$journal.lock"; }
 report() { printf '%s\t%s\t%s\n' "$1" "$cwd" "$addr" > "$dir/$sid.state"; qs_call update "$sid" "$1" "$addr" "$cwd"; record "session.$1"; }
 
 case "$event" in
@@ -110,11 +112,13 @@ PreToolUse)
 		*)                                  line="running $(printf '%s' "$c" | cut -c1-30)" ;;
 		esac ;;
 	Edit|Write|MultiEdit|NotebookEdit)
-		f=$(jq -r '.tool_input.file_path // ""' <<<"$input")
+		f=$(jq -r '.tool_input.file_path // .tool_input.notebook_path // ""' <<<"$input")   # NotebookEdit names its file notebook_path
 		line="editing $(basename "$f")"
 		# the file's origin: "written by claude · <repo>" wherever it is shown later
 		[ -n "$f" ] && qs -p "$TACIT_SHELL" ipc call origins edited "$sid" "$f" >/dev/null 2>&1 ;;
-	Read)       line="reading $(jq -r '.tool_input.file_path // ""' <<<"$input" | xargs -r basename)" ;;
+	Read)
+		f=$(jq -r '.tool_input.file_path // ""' <<<"$input")
+		line="reading $([ -n "$f" ] && basename -- "$f")" ;;
 	Grep|Glob)  line="searching" ;;
 	WebFetch|WebSearch) line="browsing" ;;
 	Agent|Task) line="delegating" ;;

@@ -33,7 +33,9 @@ Process {
         // The measurement runs whether or not the download did: behind `||` and `&&` it was skipped
         // exactly when the cache was already there, so a picture measured once was never measured
         // again and the widget stayed empty from the second start on.
-        return `mkdir -p $(dirname '${cache}'); [ -f '${cache}' ] || curl -sSL '${StringUtils.shellSingleQuoteEscape(root.sourceUrl)}'${userAgent} -o '${cache}'; ${measure}`;
+        // Fetched to a .part file and moved into place only when curl succeeds (-f: an HTTP error is a failure, not
+        // a page to keep), so a dropped or refused download is never mistaken for the cached image.
+        return `mkdir -p "$(dirname '${cache}')"; [ -f '${cache}' ] || { curl -fsSL --max-time 30 '${StringUtils.shellSingleQuoteEscape(root.sourceUrl)}'${userAgent} -o '${cache}.part' && mv '${cache}.part' '${cache}' || rm -f '${cache}.part'; }; ${measure}`;
     }
 
     // A run is set up here, not by a binding on `command`: a binding moves after the properties

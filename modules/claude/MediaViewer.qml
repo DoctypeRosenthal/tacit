@@ -39,7 +39,7 @@ Rectangle {
         anchors { centerIn: parent; verticalCenterOffset: -16 }
         width: parent.width - 96
         height: parent.height - 140
-        source: viewer.path.length ? `file://${viewer.path}?${viewer.rev}` : ""
+        source: viewer.path.length ? `${FileUtils.fileUrl(viewer.path)}?${viewer.rev}` : ""
         fillMode: Image.PreserveAspectFit
         // a screenshot is decoded at whatever size it was taken: nothing here ever draws more than
         // this box, and the full decode of a 4K one is tens of megabytes held for one look
@@ -77,7 +77,7 @@ Rectangle {
                 MaterialSymbol { anchors.verticalCenter: parent.verticalCenter; text: "open_in_new"; iconSize: 18; color: Appearance.colors.colInkSecondary }
                 StyledText { anchors.verticalCenter: parent.verticalCenter; text: "Open"; font.pixelSize: 14; color: Appearance.colors.colInkSecondary }
             }
-            MouseArea { id: openArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: Qt.openUrlExternally(`file://${viewer.path}`) }
+            MouseArea { id: openArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: Qt.openUrlExternally(FileUtils.fileUrl(viewer.path)) }
         }
     }
 }

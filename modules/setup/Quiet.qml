@@ -8,8 +8,8 @@ Item {
     width: qt.width + Look.px(56)
     height: Look.px(50)
     activeFocusOnTab: true
-    Keys.onReturnPressed: clicked()
-    Keys.onSpacePressed: clicked()
+    Keys.onReturnPressed: event => { if (!event.isAutoRepeat) clicked(); }
+    Keys.onSpacePressed: event => { if (!event.isAutoRepeat) clicked(); }
     Rectangle {
         anchors.fill: parent
         radius: height / 2

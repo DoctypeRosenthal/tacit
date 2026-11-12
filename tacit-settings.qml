@@ -20,6 +20,7 @@ import Qt.labs.folderlistmodel
 import Quickshell
 import Quickshell.Io
 import Quickshell.Bluetooth
+import Quickshell.Hyprland
 import Quickshell.Services.UPower
 import qs.services
 import qs.modules.common
@@ -48,6 +49,12 @@ ApplicationWindow {
     color: "transparent"
 
     property int current: 0
+    // bumped when ~/.face has been copied over, so the rail's picture and the account page's read it again
+    property int faceVersion: 0
+    Process {
+        id: faceCopy
+        onExited: root.faceVersion += 1
+    }
     // A page switch: the new page is built and laid out unseen (its rows settled over the first
     // frames, a flicker), then comes in from the top of the scroll, rising 6 px as it fades in.
     onCurrentChanged: { root.revealPage(); Qt.callLater(root.revealInRail); }
@@ -89,7 +96,12 @@ ApplicationWindow {
     // Closing ends the process. ApplicationWindow only hides on close, so each closed Settings
     // left a quickshell instance running with nothing on screen, and a relaunch added another.
     // Graphis ends itself the same way (code.qml).
-    onClosing: Qt.quit()
+    onClosing: {
+        // a Files window still open for a pick would answer a Settings that is gone: it is closed with us
+        if (root.pickDone !== null)
+            Quickshell.execDetached(["qs", "-p", Directories.shellFile, "ipc", "call", "files", "cancelpick", "settingsApp"]);
+        Qt.quit();
+    }
     property string query: ""
     // installed families, for the two font rows; picking from these cannot name a missing font
     readonly property var fontOptions: [...new Set(Qt.fontFamilies())].map(f => ({ value: f, label: f }))
@@ -180,7 +192,7 @@ ApplicationWindow {
                 StyledText {
                     anchors.centerIn: parent
                     visible: meImage.status !== Image.Ready
-                    text: (Config.options.profile.displayName || SystemInfo.username || "?").charAt(0).toUpperCase()
+                    text: Array.from(Config.options.profile.displayName || SystemInfo.username || "?")[0].toUpperCase()
                     font.pixelSize: 15
                     font.weight: Font.DemiBold
                     color: Appearance.colors.colInkMain
@@ -190,7 +202,8 @@ ApplicationWindow {
                     anchors.fill: parent
                     fillMode: Image.PreserveAspectCrop
                     cache: false
-                    source: `file://${Quickshell.env("HOME")}/.face`
+                    // the query changes the url, so a new picture over the same file is read again
+                    source: `file://${Quickshell.env("HOME")}/.face?${root.faceVersion}`
                     sourceSize: Qt.size(72, 72)
                 }
             }
@@ -341,8 +354,10 @@ ApplicationWindow {
                             }
                         }
                         Rectangle {
+                            // the Accounts row carries a second line: how many agents are ready, or what the first needs
+                            readonly property string line: catRow.modelData.key === "accounts" ? root.accountsLine : ""
                             width: parent.width
-                            height: 38
+                            height: line.length > 0 ? 52 : 38
                             radius: 9
                             color: ColorUtils.transparentize(Appearance.m3colors.m3onSurface, catArea.pressed ? 0.82 : catRow.isCurrent ? 0.86 : catArea.containsMouse ? 0.95 : 1)
                             Behavior on color { enabled: !catArea.pressed; ColorAnimation { duration: 110 } }
@@ -358,9 +373,20 @@ ApplicationWindow {
                                 x: 44
                                 width: parent.width - x - 10
                                 anchors.verticalCenter: parent.verticalCenter
+                                anchors.verticalCenterOffset: parent.line.length > 0 ? -8 : 0
                                 text: catRow.modelData.name
                                 font.pixelSize: 15
                                 color: catRow.isCurrent ? Appearance.colors.colInkMain : Tacit.inkSec
+                                elide: Text.ElideRight
+                            }
+                            StyledText {
+                                visible: parent.line.length > 0
+                                x: 44
+                                y: parent.height / 2 + 4
+                                width: parent.width - x - 10
+                                text: parent.line
+                                font.pixelSize: 12
+                                color: Tacit.inkMeta
                                 elide: Text.ElideRight
                             }
                             MouseArea {
@@ -373,6 +399,81 @@ ApplicationWindow {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // ── Display changes are kept only when asked. A scale, resolution or position is written to monitors.lua and
+    // loaded at once; a mode the monitor or cable cannot carry leaves a blank screen with nothing to click, so the
+    // old file waits in the runtime folder for 15 s and comes back unless Keep is pressed (the way other desktops
+    // ask). It lives here and not on the Display page, so leaving the page does not lose the way back.
+    property int displayKeepLeft: 0
+    readonly property string displayBackupBase: 'b="${XDG_RUNTIME_DIR:-/tmp}/tacit-monitors"; '
+    Timer {
+        interval: 1000
+        repeat: true
+        running: root.displayKeepLeft > 0
+        onTriggered: {
+            root.displayKeepLeft -= 1;
+            if (root.displayKeepLeft === 0)
+                root.restoreDisplay();
+        }
+    }
+    function keepDisplay() {
+        root.displayKeepLeft = 0;
+        Quickshell.execDetached(["bash", "-c", root.displayBackupBase + 'rm -f "$b.previous" "$b.absent"']);
+    }
+    // the file as it was, or none when there was none (then Hyprland's own monitor lines apply again)
+    function restoreDisplay() {
+        root.displayKeepLeft = 0;
+        Quickshell.execDetached(["bash", "-c", 'f="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/monitors.lua"; ' + root.displayBackupBase
+            + 'if [ -e "$b.previous" ]; then cp -f "$b.previous" "$f"; elif [ -e "$b.absent" ]; then rm -f "$f"; else exit 0; fi; '
+            + 'rm -f "$b.previous" "$b.absent"; hyprctl reload >/dev/null']);
+    }
+    // Esc goes back, as the bar says
+    Shortcut {
+        sequence: "Escape"
+        enabled: root.displayKeepLeft > 0
+        onActivated: root.restoreDisplay()
+    }
+    Rectangle {
+        z: 10
+        visible: root.displayKeepLeft > 0
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 32
+        width: keepRow.implicitWidth + 40
+        height: 52
+        radius: 18
+        // solid, as the Files pick bar: frost over this window's own glass does not read
+        color: ColorUtils.transparentize(Appearance.m3colors.m3surfaceContainer, 0.04)
+        border.width: 1
+        border.color: ColorUtils.transparentize(Appearance.m3colors.m3outlineVariant, 0.4)
+        Row {
+            id: keepRow
+            anchors.centerIn: parent
+            spacing: 12
+            MaterialSymbol {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "desktop_windows"
+                iconSize: 20
+                color: Appearance.colors.colPrimary
+            }
+            StyledText {
+                anchors.verticalCenter: parent.verticalCenter
+                text: `Keep these display settings? Going back in ${root.displayKeepLeft} s`
+                font.pixelSize: 15
+                color: Tacit.inkMain
+            }
+            TextButton {
+                anchors.verticalCenter: parent.verticalCenter
+                label: "Go back"
+                onPressed: root.restoreDisplay()
+            }
+            TextButton {
+                anchors.verticalCenter: parent.verticalCenter
+                label: "Keep"
+                onPressed: root.keepDisplay()
             }
         }
     }
@@ -529,8 +630,8 @@ ApplicationWindow {
                 lines[at] = `${lines[at].match(/^\s*/)[0]}timeout = ${secs}`;
                 const restart = "if systemctl --user -q is-active hypridle; then systemctl --user restart hypridle; else pkill -x hypridle; hyprctl dispatch 'hl.dsp.exec_cmd(\"hypridle\")'; fi";
                 if (own) {
+                    // the write is asynchronous: idleFile's onSaved restarts hypridle once the new timeout is in the file
                     idleFile.setText(lines.join("\n"));
-                    Quickshell.execDetached(["bash", "-c", restart]);
                 } else {
                     Quickshell.execDetached(["bash", "-c", 'mkdir -p "$(dirname "$1")" && printf "%s" "$2" > "$1" && ' + restart, "_", FileUtils.trimFileProtocol(`${Directories.config}/hypr/hypridle.conf`), lines.join("\n")]);
                     root.idleTimes = Object.assign({}, root.idleTimes, { [kind]: secs });
@@ -572,6 +673,8 @@ ApplicationWindow {
         watchChanges: true
         printErrors: false
         onFileChanged: idleFile.reload()
+        // the write is asynchronous: hypridle is restarted once the new timeout is in the file
+        onSaved: Quickshell.execDetached(["bash", "-c", "if systemctl --user -q is-active hypridle; then systemctl --user restart hypridle; else pkill -x hypridle; hyprctl dispatch 'hl.dsp.exec_cmd(\"hypridle\")'; fi"]);
         onLoaded: {
             root.idleTimes = root.parseIdle(idleFile.text());
         }
@@ -583,7 +686,7 @@ ApplicationWindow {
     readonly property var batteryDevice: UPower.devices.values.find(d => d.isLaptopBattery && (d.nativePath ?? "").includes("book4-ec")) ?? UPower.displayDevice
     readonly property bool hasBattery: root.batteryDevice?.isLaptopBattery ?? false
     function batteryTime(secs) {
-        const h = Math.floor(secs / 3600), m = Math.round((secs % 3600) / 60);
+        const t = Math.round(secs / 60), h = Math.floor(t / 60), m = t % 60;
         return h > 0 ? `${h} h ${m} min` : `${m} min`;
     }
     // "7:5" or "19.30" to "07:05" / "19:30"; null when it is not a time of day
@@ -625,7 +728,7 @@ ApplicationWindow {
 
     // Dictation: Flow's words (~/.config/flow/words.txt, one per line, # for comments kept as they
     // are) and the key bound to quickshell:flowHold in hypr/custom/keybinds.lua.
-    readonly property string flowWordsPath: `${Quickshell.env("HOME")}/.config/flow/words.txt`
+    readonly property string flowWordsPath: FileUtils.trimFileProtocol(`${Directories.config}/flow/words.txt`)
     property var flowWords: []
     property string flowWordsHeader: ""
     FileView {
@@ -639,25 +742,28 @@ ApplicationWindow {
             root.flowWordsHeader = lines.filter(l => l.trim().startsWith("#")).join("\n");
             root.flowWords = lines.map(l => l.trim()).filter(l => l.length > 0 && !l.startsWith("#"));
         }
+        // the list on show is the saved one: it takes the new words only once they are written
+        onSaved: root.flowWords = root.flowWordsPending
     }
-    // FileView does not create missing folders, so make ~/.config/flow first and write when mkdir is done.
-    property string flowWordsPending: ""
+    // FileView does not create missing folders, so make the flow folder first and write when mkdir is done.
+    property var flowWordsPending: []
     Process {
         id: flowDirMaker
-        command: ["mkdir", "-p", `${Quickshell.env("HOME")}/.config/flow`]
-        onExited: flowWordsFile.setText(root.flowWordsPending)
+        command: ["mkdir", "-p", FileUtils.trimFileProtocol(`${Directories.config}/flow`)]
+        onExited: {
+            const head = root.flowWordsHeader.length > 0 ? root.flowWordsHeader : "# One term per line: Flow spells these exactly.";
+            flowWordsFile.setText(`${head}\n${root.flowWordsPending.join("\n")}\n`);
+        }
     }
     function setFlowWords(words) {
-        root.flowWords = words;
-        const head = root.flowWordsHeader.length > 0 ? root.flowWordsHeader : "# One term per line: Flow spells these exactly.";
-        root.flowWordsPending = `${head}\n${words.join("\n")}\n`;
+        root.flowWordsPending = words;
         flowDirMaker.running = false;
         flowDirMaker.running = true;
     }
     property string flowKey: ""
     readonly property var flowKeyOptions: {
         const known = [
-            { value: "SUPER + SHIFT + F23", label: "Copilot key" },
+            { value: "SUPER + SHIFT + F23", label: "Copilot key (tap)" },
             { value: "SUPER + SHIFT + D", label: "Super + Shift + D" },
             { value: "SUPER + ALT + D", label: "Super + Alt + D" }
         ];
@@ -666,8 +772,12 @@ ApplicationWindow {
     }
     FileView {
         id: customKeybinds
-        path: `${Quickshell.env("HOME")}/.config/hypr/custom/keybinds.lua`
+        path: FileUtils.trimFileProtocol(`${Directories.config}/hypr/custom/keybinds.lua`)
         printErrors: false
+        watchChanges: true
+        onFileChanged: customKeybinds.reload()
+        // the write is asynchronous: Hyprland reloads once the new key is in the file
+        onSaved: Quickshell.execDetached(["hyprctl", "reload"])
         onLoaded: {
             const m = customKeybinds.text().match(/hl\.bind\("([^"]+)", hl\.dsp\.global\("quickshell:flowHold"\)/);
             root.flowKey = m ? m[1] : "";
@@ -678,7 +788,6 @@ ApplicationWindow {
             .join(`hl.bind("${key}", hl.dsp.global("quickshell:flowHold")`);
         customKeybinds.setText(text);
         root.flowKey = key;
-        Quickshell.execDetached(["hyprctl", "reload"]);
     }
 
     // Files and folders are picked in Tacit's own Files (Pinax), the pick mode Praxis attaches
@@ -700,6 +809,11 @@ ApplicationWindow {
     }
     function pickFolder(label, folder, done) {
         root.startPick(folder, `${label} · select it, then Choose`, false, true, done);
+    }
+    // A pick's callback runs long after it was made, so it must not reach for a page's ids: a page is
+    // built only while it is shown, and the wallpaper tile's callback calls this, not the page
+    function applyWallpaper(path) {
+        Quickshell.execDetached(["qs", "-p", Directories.shellFile, "ipc", "call", "wallpapers", "apply", path]);
     }
     // the list arrives as JSON text, as one path, or already unwrapped (claude.qml's picked)
     function receivePick(json) {
@@ -744,6 +858,15 @@ ApplicationWindow {
     // Pairs asked for on the Bluetooth page, by address. Held here, not on the row: the row leaves
     // the Nearby list the moment the device bonds, before it could trust and connect it.
     property var pendingPairs: []
+    // when each was asked, in ms: a row that is gone before its own 15 s timer fires (the page closed, the device
+    // left the scan) leaves its pair here, which would read "Pairing…" for ever and trust the device on a later pair
+    property var pairAsked: ({})
+    Timer {
+        interval: 5000
+        running: root.pendingPairs.length > 0
+        repeat: true
+        onTriggered: root.pendingPairs = root.pendingPairs.filter(a => Date.now() - (root.pairAsked[a] ?? 0) < 20000)
+    }
     Variants {
         model: Bluetooth.devices.values
         Connections {
@@ -899,13 +1022,25 @@ ApplicationWindow {
             readonly property string stillPath: /\.(mp4|webm|mkv|mov|avi)$/i.test(look.wallPath)
                 ? Config.options.background.thumbnailPath : look.wallPath
             property bool showAll: false
-            function apply(path) {
-                Quickshell.execDetached(["qs", "-p", Directories.shellFile, "ipc", "call", "wallpapers", "apply", path]);
+            // The accent eyedropper is hyprpicker, run by switchwall.sh. Without it Pick ended at once and said
+            // nothing, so the button is shown only where it is installed (as the control panel's picker is), and a
+            // second press waits for the first picker to end instead of stacking another.
+            property bool pickerFound: false
+            Process {
+                running: true
+                command: ["bash", "-c", "command -v hyprpicker"]
+                onExited: code => look.pickerFound = code === 0
+            }
+            Process {
+                id: accentPicker
+                command: [Directories.wallpaperSwitchScriptPath, "--noswitch", "--color"]
             }
             FolderListModel {
                 id: wallFiles
-                folder: `file://${look.folder}`
-                nameFilters: ["*.jpg", "*.jpeg", "*.png", "*.webp", "*.avif", "*.JPG", "*.JPEG", "*.PNG"]
+                // each part encoded: a # or % in the folder's name would cut or change the url
+                folder: "file://" + look.folder.split("/").map(encodeURIComponent).join("/")
+                nameFilters: ["*.jpg", "*.jpeg", "*.png", "*.webp", "*.avif"]
+                caseSensitive: false
                 showDirs: false
                 sortField: FolderListModel.Time
             }
@@ -921,7 +1056,10 @@ ApplicationWindow {
                 }
                 return out;
             }
-            readonly property var tiles: [...(look.showAll ? look.pictures : look.pictures.slice(0, 5)), ""]
+            // 14 pictures and the add tile make five full rows of three: the Horizons Tacit gives every account (14) show in
+            // full, and only a bigger folder waits behind "All". With 5 it looked as if the others did not exist.
+            readonly property int shownPictures: 14
+            readonly property var tiles: [...(look.showAll ? look.pictures : look.pictures.slice(0, look.shownPictures)), ""]
 
             // see-through as three looks: Solid is off, Frosted decides itself per wallpaper,
             // Clear is a hand-set amount (raised to 40 % when it was lower, so it reads clearer than Frosted)
@@ -996,10 +1134,10 @@ ApplicationWindow {
                                             root.pickFile("A picture for the desktop", look.pickFrom, path => {
                                                 // its folder is the wallpaper folder from now on: the pictures here, the rotation
                                                 Config.options.wallpaperSelector.userPath = path.replace(/\/[^/]*$/, "");
-                                                look.apply(path);
+                                                root.applyWallpaper(path);
                                             });
                                         else if (!tile.inUse)
-                                            look.apply(tile.modelData);
+                                            root.applyWallpaper(tile.modelData);
                                     }
                                     Keys.onReturnPressed: tile.choose()
                                     Keys.onEnterPressed: tile.choose()
@@ -1050,7 +1188,7 @@ ApplicationWindow {
                             wrapMode: Text.Wrap
                         }
                         TextButton {
-                            visible: look.pictures.length > 5
+                            visible: look.pictures.length > look.shownPictures
                             x: -10
                             glyph: look.showAll ? "expand_less" : "expand_more"
                             label: look.showAll ? "Fewer" : `All ${look.pictures.length}`
@@ -1127,7 +1265,8 @@ ApplicationWindow {
                 }
                 SettingRow {
                     label: "Accent"
-                    description: (Config.options.appearance.palette.accentColor ?? "").length > 0 ? "Picked by you" : "Taken from the wallpaper"
+                    description: accentPicker.running ? "Click any colour on the screen, or press Esc"
+                        : (Config.options.appearance.palette.accentColor ?? "").length > 0 ? "Picked by you" : "Taken from the wallpaper"
                     clickable: false
                     control: Row {
                         spacing: 4
@@ -1143,8 +1282,10 @@ ApplicationWindow {
                         }
                         Item { width: 4; height: 1 }
                         TextButton {
+                            visible: look.pickerFound
+                            enabled: !accentPicker.running
                             label: "Pick"
-                            onPressed: Quickshell.execDetached([Directories.wallpaperSwitchScriptPath, "--noswitch", "--color"])
+                            onPressed: accentPicker.running = true
                         }
                         TextButton {
                             visible: (Config.options.appearance.palette.accentColor ?? "").length > 0
@@ -1299,6 +1440,10 @@ ApplicationWindow {
             // Bluetooth section is (BluetoothSection.qml): pairable goes on with discovery, because
             // the adapter comes up unpairable after boot and BlueZ then refuses to bond.
             readonly property var adapter: Bluetooth.defaultAdapter
+            // one split for both groups: a device is in the paired list when it is paired, bonded or
+            // connected, and Nearby holds the rest (a connected one would otherwise be in neither)
+            readonly property var knownDevices: Bluetooth.devices.values.filter(d => d.paired || d.bonded || d.connected)
+            readonly property var nearbyDevices: BluetoothStatus.unpairedDevices.filter(d => !d.bonded)
             function look() {
                 if (!btPage.adapter || !btPage.adapter.enabled)
                     return;
@@ -1367,31 +1512,95 @@ ApplicationWindow {
 
             Group {
                 title: "Devices you have paired"
-                visible: Bluetooth.devices.values.some(d => d.paired || d.bonded)
+                visible: btPage.knownDevices.length > 0
                 Repeater {
-                    model: ScriptModel { values: Bluetooth.devices.values.filter(d => d.paired || d.bonded) }
+                    model: ScriptModel { values: btPage.knownDevices }
                     SettingRow {
                         id: dev
                         required property var modelData
+                        // The control panel's rule (BluetoothSection.qml DeviceRow): connect() and disconnect() return
+                        // nothing and no signal reports a failure, so what was asked is remembered from the press, the
+                        // row reads it at once, and a device that has not answered after a while says so.
+                        property string asked: ""
+                        property string failed: ""
+                        function ask(what) {
+                            dev.failed = "";
+                            dev.asked = what;
+                            waitTimer.restart();
+                        }
                         label: dev.modelData?.name || "Unknown device"
-                        description: dev.modelData.connected
+                        description: dev.modelData.state === BluetoothDeviceState.Connecting || dev.asked === "connect" ? "Connecting…"
+                            : dev.modelData.state === BluetoothDeviceState.Disconnecting || dev.asked === "disconnect" ? "Disconnecting…"
+                            : dev.modelData.connected
                             ? (BluetoothStatus.hasBattery(dev.modelData) ? `Connected · ${Math.round(dev.modelData.battery * 100)}%` : "Connected")
+                            : dev.failed.length > 0 ? dev.failed
                             : "Paired"
                         glyph: Icons.getBluetoothDeviceMaterialSymbol(dev.modelData?.icon || "")
+                        Timer {
+                            id: waitTimer
+                            interval: 12000
+                            onTriggered: {
+                                const d = dev.modelData;
+                                if (!d || dev.asked === "")
+                                    return;
+                                if (dev.asked === "connect" && !d.connected)
+                                    dev.failed = "Did not connect. Turn it on and try again";
+                                else if (dev.asked === "disconnect" && d.connected)
+                                    dev.failed = "Did not disconnect";
+                                dev.asked = "";
+                            }
+                        }
+                        // An adapter that has just powered on rejects Connect for a second or two: ask again a few times
+                        Timer {
+                            id: keepTrying
+                            property int left: 0
+                            interval: 900
+                            repeat: true
+                            onTriggered: {
+                                const d = dev.modelData;
+                                if (!d || dev.asked !== "connect" || d.connected || d.state === BluetoothDeviceState.Connecting || keepTrying.left <= 0) {
+                                    keepTrying.stop();
+                                    return;
+                                }
+                                keepTrying.left -= 1;
+                                d.connect();
+                            }
+                        }
+                        Connections {
+                            target: dev.modelData
+                            function onConnectedChanged() {
+                                if (dev.modelData.connected || dev.asked === "disconnect") {
+                                    dev.asked = "";
+                                    dev.failed = "";
+                                    waitTimer.stop();
+                                    keepTrying.stop();
+                                }
+                            }
+                        }
                         control: RowLayout {
                             spacing: 4
                             TextButton {
                                 label: dev.modelData.connected ? "Disconnect" : "Connect"
+                                enabled: dev.asked === "" && dev.modelData.state !== BluetoothDeviceState.Connecting && dev.modelData.state !== BluetoothDeviceState.Disconnecting
                                 onPressed: {
                                     const d = dev.modelData;
                                     if (d.connected) {
+                                        dev.ask("disconnect");
                                         d.disconnect();
+                                        return;
+                                    }
+                                    // BlueZ refuses a connect with the radio off and the refusal arrives nowhere
+                                    if (!BluetoothStatus.enabled) {
+                                        dev.failed = "Bluetooth is off";
                                         return;
                                     }
                                     // trusted first, so it may come back on its own after a drop
                                     if (!d.trusted)
                                         d.trusted = true;
+                                    dev.ask("connect");
                                     d.connect();
+                                    keepTrying.left = 3;
+                                    keepTrying.restart();
                                 }
                             }
                             RowMenu {
@@ -1405,12 +1614,12 @@ ApplicationWindow {
             Group {
                 title: "Nearby"
                 visible: BluetoothStatus.enabled
-                note: BluetoothStatus.unpairedDevices.length > 0
+                note: btPage.nearbyDevices.length > 0
                     ? (BluetoothStatus.hiddenUnnamedCount > 0 ? `${BluetoothStatus.hiddenUnnamedCount} more without a name are hidden.` : "")
                     : "Looking for devices. Put yours in pairing mode to see it here."
                 Repeater {
                     // kept row by row while discovery updates the list (a plain array rebuilt every row)
-                    model: ScriptModel { values: BluetoothStatus.unpairedDevices }
+                    model: ScriptModel { values: btPage.nearbyDevices }
                     PairRow {}
                 }
             }
@@ -1434,7 +1643,16 @@ ApplicationWindow {
             // the notch's own few settings stay on the page; the longer sections open as pages
             property string viewing: ""
             onViewingChanged: root.revealPage()
-            Component.onCompleted: if (["tells", "reminders", "music"].includes(root.pageAnchor)) nt.viewing = root.pageAnchor   // notch:<section>
+            // notch:<section>; the link is spent once the page has taken it, so choosing the page again opens its list
+            function takeAnchor(anchor) {
+                if (["tells", "reminders", "music"].includes(anchor)) nt.viewing = anchor;
+                root.pageAnchor = "";
+            }
+            Component.onCompleted: nt.takeAnchor(root.pageAnchor)
+            Connections {
+                target: root
+                function onAnchorAsked(anchor) { nt.takeAnchor(anchor); }
+            }
             readonly property var tellKeys: ["notification", "power", "network", "workspace", "focus", "download", "activity"]
             readonly property int tellsOn: nt.tellKeys.filter(k => Config.options.island.states[k]).length
 
@@ -1449,6 +1667,12 @@ ApplicationWindow {
                     options: [{ value: true, label: "When you point at it" }, { value: false, label: "When you click it" }]
                     current: Config.options.island.hoverExpand
                     onPicked: value => Config.options.island.hoverExpand = value
+                }
+                SwitchRow {
+                    label: "Scroll over it to change the volume"
+                    enabled: Config.options.island.enable
+                    checked: Config.options.island.scrollVolume
+                    onToggled: value => Config.options.island.scrollVolume = value
                 }
                 SwitchRow {
                     label: "Stay over full-screen windows while music plays"
@@ -1606,23 +1830,35 @@ ApplicationWindow {
                     }
                 }
                 SettingRow {
+                    id: repoRow
+                    property string said: ""
                     clickable: false
                     glyph: "add"
                     label: "Watch pull requests"
+                    description: repoRow.said
                     control: RowLayout {
                         spacing: 6
                         LineField {
                             id: newRepo
                             placeholder: "owner/name"
                             onAccepted: addRepo.pressed()
+                            onTextChanged: repoRow.said = ""
                         }
                         TextButton {
                             id: addRepo
                             label: "Add"
+                            // a refused entry stays in the box, with the reason under the label
                             onPressed: {
                                 const r = newRepo.text.trim();
-                                if (/^[\w.-]+\/[\w.-]+$/.test(r) && !Config.options.island.prRepos.includes(r))
-                                    Config.options.island.prRepos = [...Config.options.island.prRepos, r];
+                                if (!/^[\w.-]+\/[\w.-]+$/.test(r)) {
+                                    repoRow.said = "Use owner/name, like acme/app";
+                                    return;
+                                }
+                                if (Config.options.island.prRepos.includes(r)) {
+                                    repoRow.said = "Already watched";
+                                    return;
+                                }
+                                Config.options.island.prRepos = [...Config.options.island.prRepos, r];
                                 newRepo.text = "";
                             }
                         }
@@ -1700,9 +1936,11 @@ ApplicationWindow {
                 }
                 StepperRow {
                     label: "Notch distance from the top edge"
+                    description: "Raise it to sit below a camera cut into the screen"
                     value: Config.options.island.topMargin
                     from: 0
-                    to: 24
+                    to: 80
+                    stepSize: 2
                     suffix: " px"
                     onMoved: value => Config.options.island.topMargin = value
                 }
@@ -1725,7 +1963,16 @@ ApplicationWindow {
             // the page shows its sections as rows; one opened shows only that section
             property string viewing: ""
             onViewingChanged: root.revealPage()
-            Component.onCompleted: if (["corners", "overview", "widgets"].includes(root.pageAnchor)) dk.viewing = root.pageAnchor   // desktop:<section>
+            // desktop:<section>; spent once the page has taken it, as the Notch page does
+            function takeAnchor(anchor) {
+                if (["corners", "overview", "widgets"].includes(anchor)) dk.viewing = anchor;
+                root.pageAnchor = "";
+            }
+            Component.onCompleted: dk.takeAnchor(root.pageAnchor)
+            Connections {
+                target: root
+                function onAnchorAsked(anchor) { dk.takeAnchor(anchor); }
+            }
             readonly property var widgetList: [
                 { key: "clock", label: "Clock", glyph: "schedule" },
                 { key: "weather", label: "Weather", glyph: "partly_cloudy_day" },
@@ -1984,7 +2231,8 @@ ApplicationWindow {
                     onCommitted: value => Config.options.bar.weather.city = value
                 }
                 SwitchRow {
-                    label: "Fahrenheit"
+                    label: "US units"
+                    description: "°F, mph, miles, inches"
                     checked: Config.options.bar.weather.useUSCS
                     onToggled: value => Config.options.bar.weather.useUSCS = value
                 }
@@ -1998,31 +2246,6 @@ ApplicationWindow {
 
             Advanced {
                 visible: dk.viewing === ""
-                StepperRow {
-                    visible: Config.options.overview.enable && Config.options.overview.style === "default"
-                    label: "Overview rows"
-                    value: Config.options.overview.rows
-                    from: 1
-                    to: 5
-                    onMoved: value => Config.options.overview.rows = value
-                }
-                StepperRow {
-                    visible: Config.options.overview.enable && Config.options.overview.style === "default"
-                    label: "Overview columns"
-                    value: Config.options.overview.columns
-                    from: 1
-                    to: 10
-                    onMoved: value => Config.options.overview.columns = value
-                }
-                StepperRow {
-                    visible: Config.options.overview.enable
-                    label: "Size of each workspace in the overview"
-                    value: Math.round(Config.options.overview.scale * 100)
-                    from: 10
-                    to: 40
-                    suffix: "%"
-                    onMoved: value => Config.options.overview.scale = value / 100
-                }
                 // the on-screen meters run whenever the notch does not show both volume and brightness
                 // (panelFamilies/IllogicalImpulseFamily.qml, the OnScreenDisplay loader)
                 StepperRow {
@@ -2094,6 +2317,39 @@ ApplicationWindow {
                             iconSize: 18
                             color: Appearance.colors.colPrimary
                         }
+                    }
+                }
+            }
+            // the microphone's level and mute, as the speakers' are above: a recording that comes out too loud is
+            // turned down here, through the source like the mic key (Audio.toggleMicMute)
+            Summary {
+                visible: !!Audio.source
+                readonly property var now: Audio.source ? root.soundName(Audio.source) : ({ label: "", line: "" })
+                glyph: (Audio.source?.audio.muted ?? false) ? "mic_off" : "mic"
+                eyebrow: "Listening through"
+                title: now.label
+                subtitle: now.line
+                live: !(Audio.source?.audio.muted ?? false)
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 12
+                    Ruler {
+                        id: micSlider
+                        Layout.fillWidth: true
+                        Layout.topMargin: 2
+                        label: (Audio.source?.audio.muted ?? false) ? "Muted" : `${Math.round(micSlider.value * 100)}%`
+                        from: 0
+                        to: 1
+                        enabled: !!Audio.source
+                        onMoved: if (Audio.source) Audio.source.audio.volume = micSlider.value
+                        Binding on value {
+                            value: Audio.source?.audio.volume ?? 0
+                            when: !micSlider.pressed
+                        }
+                    }
+                    TextButton {
+                        label: (Audio.source?.audio.muted ?? false) ? "Unmute" : "Mute"
+                        onPressed: Audio.toggleMicMute()
                     }
                 }
             }
@@ -2170,37 +2426,53 @@ ApplicationWindow {
     Component {
         id: networkPage
         ColumnLayout {
+            id: netPage
             spacing: 0
+            // the Wi-Fi network you are on: with a cable up networkName may be the cable's profile, so
+            // the scan's active access point names it then
+            readonly property string wifiName: Network.ethernet ? (Network.active?.ssid ?? "") : Network.networkName
+            // a computer with only a cable: the device list has been read and holds no Wi-Fi device. NetworkManager
+            // can still report the radio as enabled then, so the switch is judged by the device, not the radio.
+            readonly property bool noAdapter: Network.devicesKnown && Network.wifiDevice.length === 0
             // a fresh list each time the page opens, not whatever the last scan left
             Component.onCompleted: if (Network.wifiEnabled) Network.rescanWifi()
 
             Group {
                 SwitchRow {
-                    glyph: Network.networkName.length > 0 ? "wifi" : (Network.wifiEnabled ? "wifi_find" : "wifi_off")
+                    glyph: netPage.wifiName.length > 0 ? "wifi" : (Network.wifiEnabled && !netPage.noAdapter ? "wifi_find" : "wifi_off")
                     label: "Wi-Fi"
-                    description: !Network.wifiEnabled ? "Off" : Network.networkName.length > 0 ? "" : "Not connected"
-                    checked: Network.wifiEnabled
+                    description: netPage.noAdapter ? "No Wi-Fi adapter"
+                        : !Network.wifiEnabled ? (Network.wifiActionError.length > 0 ? Network.wifiActionError : "Off") : netPage.wifiName.length > 0 ? "" : "Not connected"
+                    enabled: !netPage.noAdapter
+                    checked: Network.wifiEnabled && !netPage.noAdapter
                     onToggled: value => Network.enableWifi(value)
+                }
+                SettingRow {
+                    visible: Network.ethernet
+                    clickable: false
+                    glyph: "lan"
+                    label: "Wired"
+                    description: "Connected"
                 }
                 // the network you are on, under the switch, with what you can do to it: before, it was
                 // a line of text here and its menu sat in Saved networks
                 SettingRow {
                     id: current
-                    visible: Network.wifiEnabled && Network.networkName.length > 0 && !Network.ethernet
+                    visible: Network.wifiEnabled && netPage.wifiName.length > 0
                     readonly property bool portal: Network.connectivity === "portal"
                     clickable: current.portal
                     leading: Signal { strength: Network.networkStrength }
-                    label: Network.networkName
+                    label: netPage.wifiName
                     selected: true
                     description: current.portal ? "Sign in to use this network"
-                        : ["Connected", Network.isTrusted(Network.networkName) ? "Trusted" : ""].filter(x => x).join(" · ")
+                        : ["Connected", Network.wifiStatus === "limited" ? "No internet" : "", Network.isTrusted(netPage.wifiName) ? "Trusted" : ""].filter(x => x).join(" · ")
                     onActivated: if (current.portal) Network.openPublicWifiPortal()
                     control: RowMenu {
                         items: [
                             { label: "Disconnect", run: () => Network.disconnectWifiNetwork() },
-                            { label: "Trusted: home or work", checked: Network.isTrusted(Network.networkName),
-                              run: () => Network.setTrusted(Network.networkName, !Network.isTrusted(Network.networkName)) },
-                            { label: "Forget this network", run: () => Network.forgetWifiNetwork(Network.networkName) }
+                            { label: "Trusted: home or work", checked: Network.isTrusted(netPage.wifiName),
+                              run: () => Network.setTrusted(netPage.wifiName, !Network.isTrusted(netPage.wifiName)) },
+                            { label: "Forget this network", run: () => Network.forgetWifiNetwork(netPage.wifiName) }
                         ]
                     }
                 }
@@ -2208,7 +2480,7 @@ ApplicationWindow {
             Group {
                 id: nearbyNetworks
                 title: "Nearby"
-                visible: Network.wifiEnabled
+                visible: Network.wifiEnabled && !netPage.noAdapter
                 // saved ones first, then by strength in three steps, then by name: a steady order, as the
                 // exact strength changes between scans and reshuffled the rows
                 readonly property var others: Network.friendlyWifiNetworks.filter(n => !n.active && (n.ssid ?? "").length > 0)
@@ -2236,7 +2508,7 @@ ApplicationWindow {
                 // saved networks out of range: the one you are on and the ones nearby are above, so none
                 // shows twice
                 readonly property var list: [...Network.savedConnections]
-                    .filter(c => c.name !== Network.networkName && !Network.friendlyWifiNetworks.some(n => (n.ssid ?? "") === c.name))
+                    .filter(c => c.name !== Network.networkName && !Network.friendlyWifiNetworks.some(n => (n.ssid ?? "") === c.ssid))
                     .sort((a, b) => (b.lastUsed - a.lastUsed) || a.name.localeCompare(b.name))
                 title: "Saved, not in range"
                 visible: farSaved.list.length > 0
@@ -2257,7 +2529,7 @@ ApplicationWindow {
                             items: [
                                 { label: "Trusted: home or work", checked: Network.isTrusted(net.modelData.name),
                                   run: () => Network.setTrusted(net.modelData.name, !Network.isTrusted(net.modelData.name)) },
-                                { label: "Forget this network", run: () => Network.forgetWifiNetwork(net.modelData.name) }
+                                { label: "Forget this network", run: () => Network.forgetWifiNetwork(net.modelData.ssid, net.modelData.name) }
                             ]
                         }
                     }
@@ -2341,6 +2613,37 @@ ApplicationWindow {
             }
             Group {
                 title: "Look and motion"
+                // The window band's line (tacit-frame, the plugin Hyprland loads at the start): a short line at the top of
+                // every window to carry it to the notch, the dock or a side. Off, the plugin is let go at once and not
+                // loaded at the next start (session/hypr/hyprland/general.lua reads the same file); held windows come back.
+                SwitchRow {
+                    id: lineRow
+                    readonly property string plugin: "/usr/lib/tacit/hyprland/tacit-frame.so"
+                    readonly property string flag: FileUtils.trimFileProtocol(`${Directories.state}/user/window-line-off`)
+                    property bool installed: false
+                    property bool lineOn: true
+                    visible: installed
+                    glyph: "drag_handle"
+                    label: "Line on windows"
+                    description: "Carry a window by it to the notch to close, the dock to hide, or a side"
+                    checked: lineRow.lineOn
+                    onToggled: value => {
+                        lineRow.lineOn = value;
+                        Quickshell.execDetached(["sh", "-c", value
+                            ? 'rm -f "$1"; hyprctl plugin load "$2"'
+                            : 'mkdir -p "$(dirname "$1")" && : > "$1"; hyprctl plugin unload "$2"', "sh", lineRow.flag, lineRow.plugin]);
+                    }
+                    Process {
+                        running: true
+                        command: ["sh", "-c", 'test -e "$1" && { test -e "$2" && echo off || echo on; }', "sh", lineRow.plugin, lineRow.flag]
+                        stdout: StdioCollector {
+                            onStreamFinished: {
+                                lineRow.installed = this.text.trim().length > 0;
+                                lineRow.lineOn = this.text.trim() !== "off";
+                            }
+                        }
+                    }
+                }
                 SwitchRow {
                     glyph: "blur_on"
                     label: "Blur behind see-through windows"
@@ -2358,6 +2661,8 @@ ApplicationWindow {
                     onToggled: value => {
                         Config.options.hyprland.animations.enable = value;
                         HyprlandConfig.set("animations:enabled", value ? 1 : 0);
+                        // the same switch as Reduce motion (Accessibility), so apps follow it too
+                        Quickshell.execDetached(["gsettings", "set", "org.gnome.desktop.interface", "enable-animations", value ? "true" : "false"]);
                     }
                 }
             }
@@ -2453,7 +2758,14 @@ ApplicationWindow {
                 id: readSilent
                 running: true
                 command: ["qs", "-p", Directories.shellFile, "ipc", "call", "notifications", "silent"]
-                stdout: SplitParser { onRead: data => np.silent = data.trim() === "true" }
+                // a reply that was already on its way when the switch moved would flip it back; and with
+                // no shell to answer, the state is not Do not disturb
+                stdout: SplitParser { onRead: data => { if (!writeSilent.running) np.silent = data.trim() === "true"; } }
+                onExited: exitCode => { if (exitCode !== 0) np.silent = false; }
+            }
+            Process {
+                id: writeSilent
+                onExited: readSilent.running = true
             }
             Connections {
                 target: root
@@ -2470,7 +2782,8 @@ ApplicationWindow {
                     checked: np.silent
                     onToggled: value => {
                         np.silent = value;
-                        Quickshell.execDetached(["qs", "-p", Directories.shellFile, "ipc", "call", "notifications", "setSilent", value ? "true" : "false"]);
+                        writeSilent.command = ["qs", "-p", Directories.shellFile, "ipc", "call", "notifications", "setSilent", value ? "true" : "false"];
+                        writeSilent.running = true;
                     }
                 }
             }
@@ -2616,6 +2929,18 @@ ApplicationWindow {
         id: palettePage
         ColumnLayout {
             spacing: 0
+            // The palette reads only a query's first character, so a prefix is one character and
+            // no other section's (the hidden ones too); anything else goes back with the reason.
+            function setPrefix(row, key, value) {
+                const prefix = Config.options.search.prefix;
+                const taken = ["action", "app", "clipboard", "dictation", "emojis", "files", "keybinds", "math", "shellCommand", "symbols", "webSearch", "windows"]
+                    .some(k => k !== key && prefix[k] === value);
+                row.description = value.length !== 1 ? "One character" : taken ? "Another section starts with it" : "";
+                if (row.description.length > 0)
+                    row.revert();
+                else
+                    prefix[key] = value;
+            }
             Group {
                 title: "What the palette shows"
                 note: "A hidden section is gone from the palette, its shortcut included."
@@ -2686,13 +3011,13 @@ ApplicationWindow {
             }
             // the characters that start a search in one section, rarely changed
             Advanced {
-                FieldRow { label: "Search apps with"; compact: true; text: Config.options.search.prefix.app; onCommitted: value => Config.options.search.prefix.app = value }
-                FieldRow { label: "Search actions with"; compact: true; text: Config.options.search.prefix.action; onCommitted: value => Config.options.search.prefix.action = value }
-                FieldRow { label: "Search the clipboard with"; compact: true; text: Config.options.search.prefix.clipboard; onCommitted: value => Config.options.search.prefix.clipboard = value }
-                FieldRow { label: "Search emoji with"; compact: true; text: Config.options.search.prefix.emojis; onCommitted: value => Config.options.search.prefix.emojis = value }
-                FieldRow { label: "Search keyboard shortcuts with"; compact: true; text: Config.options.search.prefix.keybinds; onCommitted: value => Config.options.search.prefix.keybinds = value }
-                FieldRow { label: "Run a command with"; compact: true; text: Config.options.search.prefix.shellCommand; onCommitted: value => Config.options.search.prefix.shellCommand = value }
-                FieldRow { label: "Search the web with"; compact: true; text: Config.options.search.prefix.webSearch; onCommitted: value => Config.options.search.prefix.webSearch = value }
+                FieldRow { id: pfxApp; label: "Search apps with"; compact: true; text: Config.options.search.prefix.app; onCommitted: value => setPrefix(pfxApp, "app", value) }
+                FieldRow { id: pfxAction; label: "Search actions with"; compact: true; text: Config.options.search.prefix.action; onCommitted: value => setPrefix(pfxAction, "action", value) }
+                FieldRow { id: pfxClipboard; label: "Search the clipboard with"; compact: true; text: Config.options.search.prefix.clipboard; onCommitted: value => setPrefix(pfxClipboard, "clipboard", value) }
+                FieldRow { id: pfxEmojis; label: "Search emoji with"; compact: true; text: Config.options.search.prefix.emojis; onCommitted: value => setPrefix(pfxEmojis, "emojis", value) }
+                FieldRow { id: pfxKeybinds; label: "Search keyboard shortcuts with"; compact: true; text: Config.options.search.prefix.keybinds; onCommitted: value => setPrefix(pfxKeybinds, "keybinds", value) }
+                FieldRow { id: pfxCommand; label: "Run a command with"; compact: true; text: Config.options.search.prefix.shellCommand; onCommitted: value => setPrefix(pfxCommand, "shellCommand", value) }
+                FieldRow { id: pfxWeb; label: "Search the web with"; compact: true; text: Config.options.search.prefix.webSearch; onCommitted: value => setPrefix(pfxWeb, "webSearch", value) }
             }
         }
     }
@@ -2706,7 +3031,6 @@ ApplicationWindow {
             // ~/.face is the picture login screens and apps read for the account; the shell's own
             // widgets read profile.avatarPath, so both point at it.
             readonly property string facePath: `${Quickshell.env("HOME")}/.face`
-            property int faceVersion: 0
 
             Group {
                 RowLayout {
@@ -2739,7 +3063,7 @@ ApplicationWindow {
                             anchors.fill: parent
                             fillMode: Image.PreserveAspectCrop
                             // the query changes the url, so a new picture over the same file is read again
-                            source: `file://${acct.facePath}?${acct.faceVersion}`
+                            source: `file://${acct.facePath}?${root.faceVersion}`
                             cache: false
                             asynchronous: true
                         }
@@ -2785,15 +3109,10 @@ ApplicationWindow {
                         // the picture it replaces is kept once, as ~/.face.previous
                         onPressed: root.pickFile("Your picture", `${FileUtils.trimFileProtocol(Directories.pictures)}`, path => {
                             const home = Quickshell.env("HOME");
-                            Quickshell.execDetached(["bash", "-c", '[ -e "$2/.face" ] && cp -f "$2/.face" "$2/.face.previous"; cp -f "$1" "$2/.face"', "_", path, home]);
+                            faceCopy.command = ["bash", "-c", '[ -e "$2/.face" ] && cp -f "$2/.face" "$2/.face.previous"; cp -f "$1" "$2/.face"', "_", path, home];
+                            faceCopy.running = true;
                             Config.options.profile.avatarPath = `${home}/.face`;
-                            faceReload.restart();
                         })
-                    }
-                    Timer {
-                        id: faceReload
-                        interval: 600
-                        onTriggered: acct.faceVersion += 1
                     }
                 }
             }
@@ -3167,12 +3486,12 @@ ApplicationWindow {
                 const s = accountsModel.signin?.account === id ? accountsModel.signin : null;
                 switch (flow) {
                 case "starting": return "Starting the sign-in…";
-                case "waiting":
+                case "waiting": return s?.opened === false && s.url ? "Open the page to sign in" : "Finish signing in in your browser…";
                 case "code": return "Finish signing in in your browser…";
                 case "device": return "Waiting for the code to be entered…";
                 case "busy": {
                     const who = accPage.holder(s?.holder ?? "").name;
-                    return "Another ChatGPT sign-in is open" + (who ? ` (${who})` : "");
+                    return who ? `Another sign-in is open (${who})` : "Another ChatGPT sign-in is open";
                 }
                 case "failed": {
                     const why = s ? (s.message ?? "") : (accPage.refusals[id] ?? "");
@@ -3184,13 +3503,13 @@ ApplicationWindow {
             }
 
             // ── accounts
-            function check(id) { accountsModel.send({ op: "account_check", account: id }); }
+            function check(id) { accountsModel.send({ op: "account_check", account: id }, accPage.noted(id, "check it")); }
             function setUse(id, use, key) {
                 const req = { op: "account_set", account: id, use: use };
                 if (key)
                     req.key = key;
                 accPage.open = "";
-                accountsModel.send(req);
+                accountsModel.send(req, accPage.noted(id, "change how it signs in"));
             }
             // pi's and opencode's rows, "<account>|<provider>": each connected provider, then one
             // being connected
@@ -3283,6 +3602,18 @@ ApplicationWindow {
                 : (accPage.keys.find(k => `k:${k.id}` === r)?.provider ?? ""))
             // by add or replace line: "Checking…", or why nothing was stored
             property var keyNotes: ({})
+            // by account id: why the host refused the last change to it, until the next change
+            property var accountNotes: ({})
+            // The reply of a change to an account or a key: the host's refusal goes on its row, and
+            // nothing shows when it went through.
+            function noted(id, what) {
+                accPage.put("accountNotes", id, undefined);
+                return r => { if (r.ev === "error") accPage.put("accountNotes", id, `Couldn't ${what}: ${r.message ?? ""}`); };
+            }
+            function keyNoted(line) {
+                accPage.put("keyNotes", line, undefined);
+                return r => { if (r.ev === "error") accPage.put("keyNotes", line, `Not changed: ${r.message ?? ""}`); };
+            }
             function keyFacts(k) {
                 const by = (k.use ?? []).filter(a => a === "pi" || a === "opencode").map(a => accPage.name(a))
                     .concat(accPage.signsInWith(k.id).map(a => `${a.label} (${accPage.name(a.agent)})`));
@@ -3540,7 +3871,7 @@ ApplicationWindow {
                 }
                 SettingRow {
                     label: "Keys"
-                    description: accPage.keys.length > 0 ? `${accPage.keys.length} in your keyring · for pi and opencode` : "For pi and opencode"
+                    description: accPage.keys.length > 0 ? `${accPage.keys.length} in your keyring · for your agents` : "For your agents"
                     onActivated: accPage.viewing = "keys"
                     control: MaterialSymbol { text: "chevron_right"; iconSize: 18; color: Tacit.inkMeta }
                 }
@@ -3731,7 +4062,7 @@ ApplicationWindow {
                             clickable: false
                             label: `Your ${accPage.providerName(modelData.provider)} key`
                             description: `In your keyring · ••••${modelData.last4}`
-                            control: TextButton { label: "Use"; onPressed: accountsModel.useKey(modelData.id, ag.agent, true) }
+                            control: TextButton { label: "Use"; onPressed: accountsModel.useKey(modelData.id, ag.agent, true, accPage.keyNoted(`paste:${ag.agent}`)) }
                         }
                     }
                     SettingRow {
@@ -3865,7 +4196,7 @@ ApplicationWindow {
                         const lines = value === 24 ? [] : [`hl.env("XCURSOR_SIZE", "${value}")`, `hl.env("HYPRCURSOR_SIZE", "${value}")`];
                         Quickshell.execDetached(["bash", "-c",
                             'theme=$(gsettings get org.gnome.desktop.interface cursor-theme | tr -d "\x27"); hyprctl setcursor "$theme" "$1" >/dev/null; gsettings set org.gnome.desktop.interface cursor-size "$1"; shift; python3 "$@"',
-                            "_", String(value), `${Directories.scriptPath}/settings/managed_block.py`, `${Quickshell.env("HOME")}/.config/hypr/custom/variables.lua`, "cursor"].concat(lines));
+                            "_", String(value), `${Directories.scriptPath}/settings/managed_block.py`, FileUtils.trimFileProtocol(`${Directories.config}/hypr/custom/variables.lua`), "cursor"].concat(lines));
                     }
                 }
             }
@@ -3885,10 +4216,11 @@ ApplicationWindow {
             property real brightness: -1
             property real wantBrightness: -1
             property bool nightOn: false
-            // hyprctl monitors: name, description, width, height, refreshRate, x, y, scale
+            // hyprctl monitors: name, description, width, height, refreshRate, x, y, scale, transform
             property var screens: []
             // monitors.lua is also nwg-displays' file: written only when absent or ours
             property bool monitorsFileOurs: false
+            property bool monitorsWriteFailed: false
 
             function setNight(on) {
                 dp.nightOn = on;
@@ -3900,13 +4232,13 @@ ApplicationWindow {
                 const all = fits.includes(m.scale) ? fits : [...fits, m.scale].sort((a, b) => a - b);
                 return all.map(s => ({ value: s, label: `${Math.round(s * 100)}%` }));
             }
-            // Every screen keeps its present mode, position, scale and mirroring; only what was
-            // asked for on the one screen changes.
+            // Every screen keeps its present mode, position, scale, rotation and mirroring; only what
+            // was asked for on the one screen changes.
             function monitorLine(m, o) {
                 const mode = o.mode ?? `${m.width}x${m.height}@${m.refreshRate.toFixed(3)}`;
                 const position = o.position ?? `${m.x}x${m.y}`;
                 const mirror = o.mirror !== undefined ? o.mirror : (m.mirrorOf && m.mirrorOf !== "none" ? m.mirrorOf : "");
-                return `hl.monitor({ output = "${m.name}", mode = "${mode}", position = "${position}", scale = ${o.scale ?? m.scale}${mirror ? `, mirror = "${mirror}"` : ""} })`;
+                return `hl.monitor({ output = "${m.name}", mode = "${mode}", position = "${position}", scale = ${o.scale ?? m.scale}${m.transform ? `, transform = ${m.transform}` : ""}${mirror ? `, mirror = "${mirror}"` : ""} })`;
             }
             // Positions are in logical pixels, so a new scale or mode on one screen moves the screens
             // that sat beyond its far edge by the change in its logical size.
@@ -3925,7 +4257,11 @@ ApplicationWindow {
             function setMonitor(name, change) {
                 const lines = ["-- Written by Tacit Settings (Display & power). Delete it to go back to hyprland/general.lua."]
                     .concat(dp.screens.map(m => dp.monitorLine(m, m.name === name ? change : { position: dp.shiftedPosition(m, name, change) })));
-                writeMonitors.command = ["bash", "-c", 'printf "%s\\n" "$@" > "$HOME/.config/hypr/monitors.lua" && hyprctl reload >/dev/null', "_"].concat(lines);
+                // the file as it is now is put by for the Keep bar, unless an earlier change is still waiting on it
+                // the lines of screens that are not plugged in now stay as they were, for when they are back
+                writeMonitors.command = ["bash", "-c", 'mode=$1; shift; f="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/monitors.lua"; ' + root.displayBackupBase
+                    + 'if [ "$mode" = fresh ]; then rm -f "$b.previous" "$b.absent"; if [ -e "$f" ]; then cp -f "$f" "$b.previous"; else : > "$b.absent"; fi; fi; '
+                    + 'new=$(printf "%s\\n" "$@"); keep=$(grep -sE "^hl\\.monitor\\(" "$f" | while IFS= read -r l; do o=${l#*output = \\"}; o=${o%%\\"*}; printf "%s\\n" "$new" | grep -qF "output = \\"$o\\"" || printf "%s\\n" "$l"; done); { printf "%s\\n" "$new"; [ -z "$keep" ] || printf "%s\\n" "$keep"; } > "$f" && hyprctl reload >/dev/null', "_", root.displayKeepLeft > 0 ? "again" : "fresh"].concat(lines);
                 writeMonitors.running = true;
             }
 
@@ -3944,6 +4280,16 @@ ApplicationWindow {
                     if (!brightnessSlider.pressed && !brightnessWrite.running)
                         readBrightness.running = true;
                     readNight.running = true;
+                    if (!writeMonitors.running)
+                        readScreens.running = true;
+                }
+            }
+            // a screen plugged in or out while the page is open (Hyprland says so; no polling); not while a write is landing
+            Connections {
+                target: Hyprland
+                function onRawEvent(event) {
+                    if (["monitoradded", "monitorremoved"].includes(event.name) && !writeMonitors.running)
+                        readScreens.running = true;
                 }
             }
             Timer {
@@ -3994,19 +4340,29 @@ ApplicationWindow {
                 stdout: StdioCollector {
                     onStreamFinished: {
                         try {
-                            dp.screens = JSON.parse(text).map(m => ({ name: m.name, description: m.description, width: m.width, height: m.height, refreshRate: m.refreshRate, x: m.x, y: m.y, scale: m.scale, modes: m.availableModes ?? [], mirrorOf: m.mirrorOf ?? "none" }));
+                            // mirrorOf names the source by its id in Hyprland's JSON; the rest of the page
+                            // and monitors.lua go by name
+                            const list = JSON.parse(text);
+                            const nameOf = id => list.find(o => String(o.id) === String(id))?.name ?? id;
+                            const next = list.map(m => ({ name: m.name, description: m.description, width: m.width, height: m.height, refreshRate: m.refreshRate, x: m.x, y: m.y, scale: m.scale, transform: m.transform ?? 0, modes: m.availableModes ?? [], mirrorOf: nameOf(m.mirrorOf ?? "none") }));
+                            // the rows are rebuilt when the list is replaced, so only a change replaces it
+                            if (JSON.stringify(next) !== JSON.stringify(dp.screens))
+                                dp.screens = next;
                         } catch (e) {}
                     }
                 }
             }
             Process {
                 id: readMonitorsFile
-                command: ["bash", "-c", 'f="$HOME/.config/hypr/monitors.lua"; [ -e "$f" ] && head -1 "$f" || echo absent']
+                command: ["bash", "-c", 'f="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/monitors.lua"; [ -s "$f" ] && head -1 "$f" || echo absent']
                 stdout: SplitParser { onRead: data => dp.monitorsFileOurs = data === "absent" || data.startsWith("-- Written by Tacit Settings") }
             }
             Process {
                 id: writeMonitors
-                onExited: {
+                onExited: exitCode => {
+                    dp.monitorsWriteFailed = exitCode !== 0;
+                    if (exitCode === 0)
+                        root.displayKeepLeft = 15;
                     readScreens.running = true;
                     readMonitorsFile.running = true;
                 }
@@ -4062,7 +4418,8 @@ ApplicationWindow {
             }
             Group {
                 title: "Screen"
-                note: dp.screens.length === 0 && dp.brightness < 0 ? "Tacit could not read your screens. Reopen Settings to try again." : ""
+                note: dp.monitorsWriteFailed ? "The screen settings could not be saved."
+                    : dp.screens.length === 0 && dp.brightness < 0 ? "Tacit could not read your screens. Reopen Settings to try again." : ""
                 SettingRow {
                     visible: dp.brightness >= 0
                     clickable: false
@@ -4114,6 +4471,7 @@ ApplicationWindow {
                         enabled: dp.monitorsFileOurs
                         glyph: "aspect_ratio"
                         label: dp.screens.length > 1 ? `${modelData.description || modelData.name}: resolution` : "Resolution"
+                        description: dp.monitorsFileOurs ? "" : "Set in ~/.config/hypr/monitors.lua, which another tool wrote"
                         // "1920x1080@60.00Hz" as Hyprland lists it
                         options: modelData.modes.map(md => {
                             const m = md.match(/^(\d+)x(\d+)@([\d.]+)Hz$/);
@@ -4137,6 +4495,7 @@ ApplicationWindow {
                         enabled: dp.monitorsFileOurs
                         glyph: "splitscreen_right"
                         label: `${place.modelData.description || place.modelData.name}: position`
+                        description: dp.monitorsFileOurs ? "" : "Set in ~/.config/hypr/monitors.lua, which another tool wrote"
                         options: [
                             { value: "right", label: `Right of ${place.main.name}` }, { value: "left", label: `Left of ${place.main.name}` },
                             { value: "above", label: `Above ${place.main.name}` }, { value: "below", label: `Below ${place.main.name}` },
@@ -4175,18 +4534,24 @@ ApplicationWindow {
                     }
                 }
                 FieldRow {
+                    // set when what was typed is not a time, so the field's snap back has a reason
+                    property bool badTime: false
                     visible: Config.options.light.night.automatic
                     label: "From"
+                    description: badTime ? "Use 24-hour time, like 19:30" : ""
                     fieldWidth: 80
                     text: Config.options.light.night.from
-                    onCommitted: value => { const t = root.clockTime(value); if (t) Config.options.light.night.from = t; revert(); }
+                    onCommitted: value => { const t = root.clockTime(value); badTime = !t; if (t) Config.options.light.night.from = t; revert(); }
                 }
                 FieldRow {
+                    // set when what was typed is not a time, so the field's snap back has a reason
+                    property bool badTime: false
                     visible: Config.options.light.night.automatic
                     label: "Until"
+                    description: badTime ? "Use 24-hour time, like 19:30" : ""
                     fieldWidth: 80
                     text: Config.options.light.night.to
-                    onCommitted: value => { const t = root.clockTime(value); if (t) Config.options.light.night.to = t; revert(); }
+                    onCommitted: value => { const t = root.clockTime(value); badTime = !t; if (t) Config.options.light.night.to = t; revert(); }
                 }
                 SettingRow {
                     clickable: false
@@ -4220,23 +4585,34 @@ ApplicationWindow {
                     to: 50
                     stepSize: 5
                     suffix: "%"
-                    onMoved: value => Config.options.battery.low = value
+                    // the later steps never sit above the earlier ones: low >= critical >= suspend
+                    onMoved: value => {
+                        Config.options.battery.low = value;
+                        if (Config.options.battery.critical > value)
+                            Config.options.battery.critical = value;
+                        if (Config.options.battery.suspend > Config.options.battery.critical)
+                            Config.options.battery.suspend = Config.options.battery.critical;
+                    }
                 }
                 StepperRow {
                     visible: root.hasBattery
                     label: "Warn again when it falls to"
                     value: Config.options.battery.critical
                     from: 1
-                    to: 30
+                    to: Math.min(30, Config.options.battery.low)
                     suffix: "%"
-                    onMoved: value => Config.options.battery.critical = value
+                    onMoved: value => {
+                        Config.options.battery.critical = value;
+                        if (Config.options.battery.suspend > value)
+                            Config.options.battery.suspend = value;
+                    }
                 }
                 StepperRow {
                     visible: root.hasBattery && Config.options.battery.automaticSuspend
                     label: "Sleep when it falls to"
                     value: Config.options.battery.suspend
                     from: 1
-                    to: 20
+                    to: Math.min(20, Config.options.battery.critical)
                     suffix: "%"
                     onMoved: value => Config.options.battery.suspend = value
                 }
@@ -4377,6 +4753,10 @@ ApplicationWindow {
             // Settings (the hotplug layer in tacit/general.lua reads the resolutions the configurator keeps).
             property var pointers: []
             readonly property var touchpads: pointers.filter(p => p.touch).map(p => p.name)
+            // the device list has been read once; until then the Touchpad group shows as it always did
+            property bool devicesKnown: false
+            // the layout the keyboard is running now: Setup's, from /etc/vconsole.conf, is not in the config
+            property string liveLayout: ""
             // resampled while the page is open: a mouse plugged in after it is one of the
             // pointers, not the ones a setting already named
             Process {
@@ -4385,7 +4765,17 @@ ApplicationWindow {
                 command: ["hyprctl", "devices", "-j"]
                 stdout: StdioCollector {
                     onStreamFinished: {
-                        try { inputCol.pointers = JSON.parse(text).mice.map(m => ({ name: m.name, touch: /touchpad|trackpad/i.test(m.name) })); } catch (e) {}
+                        try {
+                            const devices = JSON.parse(text);
+                            const pointers = devices.mice.map(m => ({ name: m.name, touch: /touchpad|trackpad/i.test(m.name) }));
+                            // a replaced list is a changed one: only a real change reaches the rows
+                            if (JSON.stringify(pointers) !== JSON.stringify(inputCol.pointers))
+                                inputCol.pointers = pointers;
+                            // the first read only: later the choice made here is ahead of what Hyprland reports
+                            if (!inputCol.devicesKnown)
+                                inputCol.liveLayout = (devices.keyboards.find(k => k.main) ?? devices.keyboards[0])?.layout ?? "";
+                            inputCol.devicesKnown = true;
+                        } catch (e) {}
                     }
                 }
             }
@@ -4424,13 +4814,14 @@ ApplicationWindow {
                     id: layoutRow
                     glyph: "keyboard"
                     label: "Layout"
-                    readonly property var codes: (Config.options.hyprland.input.kbLayout || "us").split(",")
+                    readonly property var codes: (inputCol.liveLayout || Config.options.hyprland.input.kbLayout || HyprlandXkb.layoutCodes.join(",") || "us").split(",")
                     options: root.xkbLayouts
                     current: layoutRow.codes[0]
                     // with several layouts this replaces the first and keeps the ones after it
                     onPicked: value => {
                         const v = [value, ...layoutRow.codes.slice(1)].join(",");
                         Config.options.hyprland.input.kbLayout = v;
+                        inputCol.liveLayout = v;
                         HyprlandConfig.set("input:kb_layout", v);
                     }
                 }
@@ -4471,7 +4862,9 @@ ApplicationWindow {
                 }
             }
             Group {
-                visible: inputCol.viewing === ""
+                // none on a desktop with a mouse. The name is how a touchpad is told (touchpad, trackpad), and some
+                // are named otherwise, so a laptop keeps the group whatever the names say.
+                visible: inputCol.viewing === "" && (!inputCol.devicesKnown || inputCol.touchpads.length > 0 || root.hasBattery)
                 title: "Touchpad"
                 // the profile: Tacit's curve (slow moves land precisely, quick moves travel far), flat sends
                 // each movement 1:1, adaptive is libinput's usual acceleration
@@ -4492,7 +4885,7 @@ ApplicationWindow {
                     visible: inputCol.touchpads.length > 0
                     clickable: false
                     label: "Speed"
-                    // written on release: every write reloads Hyprland
+                    // written once settled (released, or the keys at rest): every write reloads Hyprland
                     stacked: true
                     control: Ruler {
                         fill: true
@@ -4501,7 +4894,7 @@ ApplicationWindow {
                         label: inputCol.speedWord(Math.pow(2, touchpadSpeedSlider.value))
                         from: -1
                         to: 1
-                        onPressedChanged: if (!pressed) {
+                        onSettled: {
                             Config.options.hyprland.input.touchpad.speed = Math.round(touchpadSpeedSlider.value * 20) / 20;
                             inputCol.writeSpeeds();
                         }
@@ -4533,7 +4926,7 @@ ApplicationWindow {
                         from: 0.1
                         to: 3
                         stepSize: 0.1
-                        onPressedChanged: if (!pressed) {
+                        onSettled: {
                             const v = Math.round(scrollSlider.value * 10) / 10;
                             Config.options.hyprland.input.touchpad.scrollFactor = v;
                             HyprlandConfig.set("input:touchpad:scroll_factor", v);
@@ -4588,7 +4981,7 @@ ApplicationWindow {
                 SettingRow {
                     clickable: false
                     label: "Speed"
-                    // written on release: every write reloads Hyprland
+                    // written once settled (released, or the keys at rest): every write reloads Hyprland
                     stacked: true
                     control: Ruler {
                         fill: true
@@ -4597,7 +4990,7 @@ ApplicationWindow {
                         label: inputCol.speedWord(Math.pow(2, speedSlider.value))   // the curve is scaled by 2^value
                         from: -1
                         to: 1
-                        onPressedChanged: if (!pressed) {
+                        onSettled: {
                             Config.options.hyprland.input.sensitivity = Math.round(speedSlider.value * 20) / 20;
                             inputCol.writeSpeeds();
                         }
@@ -4631,7 +5024,7 @@ ApplicationWindow {
                         from: 0.1
                         to: 3
                         stepSize: 0.1
-                        onPressedChanged: if (!pressed) {
+                        onSettled: {
                             const v = Math.round(mouseScrollSlider.value * 10) / 10;
                             Config.options.hyprland.input.scrollFactor = v;
                             HyprlandConfig.set("input:scroll_factor", v);
@@ -4674,7 +5067,7 @@ ApplicationWindow {
                 ChoiceRow {
                     visible: root.flowKey.length > 0
                     glyph: "mic"
-                    label: "Hold to dictate"
+                    label: "Dictation key"
                     options: root.flowKeyOptions
                     current: root.flowKey
                     onPicked: value => root.setFlowKey(value)
@@ -4692,23 +5085,37 @@ ApplicationWindow {
                     }
                 }
                 SettingRow {
+                    id: wordRow
+                    property string said: ""
                     clickable: false
                     glyph: "add"
                     label: "Add a word"
+                    description: wordRow.said
                     control: RowLayout {
                         spacing: 6
                         LineField {
                             id: newWord
                             placeholder: "Word or name"
                             onAccepted: addWord.pressed()
+                            onTextChanged: wordRow.said = ""
                         }
                         TextButton {
                             id: addWord
                             label: "Add"
+                            // a refused word stays in the box, with the reason under the label
                             onPressed: {
                                 const w = newWord.text.trim();
-                                if (w.length > 0 && !root.flowWords.includes(w))
-                                    root.setFlowWords([...root.flowWords, w]);
+                                if (w.length === 0)
+                                    return;
+                                if (w.startsWith("#")) {
+                                    wordRow.said = "A word can't start with #";
+                                    return;
+                                }
+                                if (root.flowWords.includes(w)) {
+                                    wordRow.said = "Already in the list";
+                                    return;
+                                }
+                                root.setFlowWords([...root.flowWords, w]);
                                 newWord.text = "";
                             }
                         }
@@ -4819,7 +5226,8 @@ ApplicationWindow {
                     visible: Config.options.hyprland.autostartApps.enable
                     glyph: "add"
                     label: "Add an app"
-                    options: root.appOptions
+                    // the ones already on the list are left out, as the dock's Pin an app does
+                    options: root.appOptions.filter(o => !root.startupList().some(s => s.cmd === root.plainExec(root.appEntries.find(e => e.id === o.value))))
                     current: ""
                     onPicked: value => root.addStartup(value)
                 }
@@ -4827,6 +5235,7 @@ ApplicationWindow {
 
             Group {
                 title: "Default apps"
+                visible: Object.values(ap.roles).some(r => r.options.length > 0)
                 Repeater {
                     model: [
                         { role: "browser", label: "Web browser", glyph: "public" },
@@ -4909,7 +5318,8 @@ ApplicationWindow {
                     m=$(tr -d '\\0' < /proc/device-tree/model 2>/dev/null)
                     [ -z "$m" ] && m=$(cat /sys/class/dmi/id/product_name 2>/dev/null | grep -vi 'o\\.e\\.m\\|default string')
                     echo "model=$m"
-                    echo "cores=$(nproc)"
+                    c=$(lscpu -p=core,socket 2>/dev/null | grep -v '^#' | sort -u | wc -l)
+                    echo "cores=$([ "$c" -gt 0 ] && echo "$c" || nproc)"
                     echo "mem=$(awk '/MemTotal/ {print $2}' /proc/meminfo)"
                     df -B1 --output=size,avail / | tail -1 | awk '{print "disk=" $1 " " $2}'
                 `]
@@ -4981,10 +5391,11 @@ ApplicationWindow {
                 title: "Updates"
                 aside: Updates.currentVersion.length > 0 ? `Tacit ${Updates.currentVersion}` : ""
                 property var state: ({})
-                // Restart downloads what is missing first, which can take a while; when that fails nothing restarts, and
-                // the row says so (the shell's Updates.qml runs it, so the notch's Restart shows here too)
+                // Restart gets the update ready first, then restarts (Updates.restartNow, the notch's too); when a step fails
+                // nothing restarts, and the row says which: "" for neither, "prepare" or "reboot"
                 readonly property bool tonight: Updates.tonightSet
-                readonly property bool restartFailed: Updates.restartFailed
+                readonly property string restartFailed: Updates.restartFailed
+                readonly property bool restarting: Updates.restarting
                 readonly property bool busy: Updates.phase !== ""
                 readonly property bool ready: !busy && updatesGroup.state.ready === true
                 readonly property int waiting: updatesGroup.state.count ?? 0
@@ -5036,8 +5447,10 @@ ApplicationWindow {
                     description: Updates.phase === "looking" ? "Asking for the newest list"
                         : Updates.phase === "downloading" ? (Updates.totalMB > 0 ? `${Updates.doneMB} of ${Updates.totalMB} MB` : "Starting")
                         : Updates.lastCheckFailed ? "Check that this computer is online, then try again"
-                        : Updates.restarting ? "Getting ready to restart"
-                        : updatesGroup.restartFailed ? "Couldn't finish the download · check that this computer is online, then try again"
+                        : updatesGroup.restarting ? "Getting ready to restart"
+                        : Updates.restartWarning.length > 0 ? `${Updates.restartWarning} · restart anyway, or wait`
+                        : updatesGroup.restartFailed === "prepare" ? "Couldn't finish the download · check that this computer is online, then try again"
+                        : updatesGroup.restartFailed === "reboot" ? "Couldn't restart · someone else may be signed in on this computer"
                         : updatesGroup.tonight ? "Tonight, on the charger"
                         : updatesGroup.ready ? `${updatesGroup.waiting} ${updatesGroup.waiting === 1 ? "update" : "updates"} · they install while the computer restarts`
                         : updatesGroup.waiting > 0 ? "Check for updates gets them now"
@@ -5050,7 +5463,7 @@ ApplicationWindow {
                             onPressed: Updates.tonight()
                         }
                         TextButton {
-                            label: "Restart"
+                            label: Updates.restartWarning.length > 0 ? "Restart anyway" : "Restart"
                             onPressed: Updates.restartNow()
                         }
                     }
@@ -5071,6 +5484,7 @@ ApplicationWindow {
                         color: Tacit.raised
                         clip: true
                         Rectangle {
+                            id: bar
                             height: parent.height
                             radius: 2
                             color: Tacit.accent
@@ -5082,7 +5496,7 @@ ApplicationWindow {
                                 NumberAnimation { from: -track.width * 0.22; to: track.width; duration: 1400; easing.type: Easing.InOutQuad }
                             }
                             onVisibleChanged: x = 0
-                            Connections { target: Updates; function onPhaseChanged() { if (Updates.phase !== "looking") parent.x = 0; } }
+                            Connections { target: Updates; function onPhaseChanged() { if (Updates.phase !== "looking") bar.x = 0; } }
                         }
                     }
                 }
@@ -5137,6 +5551,7 @@ ApplicationWindow {
                     onActivated: Updates.checkNow()
                 }
                 SwitchRow {
+                    visible: Updates.available
                     label: "Say when updates are ready"
                     description: "Once, in the notch"
                     checked: Config.options.updates.enableCheck
@@ -5183,6 +5598,7 @@ ApplicationWindow {
                     return;
                 }
                 pr.failed = "";
+                root.pairAsked[d.address] = Date.now();
                 root.pendingPairs = [...root.pendingPairs, d.address];
                 pairWait.restart();
                 d.pair();
@@ -5314,7 +5730,7 @@ ApplicationWindow {
         function rename() {
             const t = renameField.text.trim();
             if (t.length > 0 && t !== ab.acct.label)
-                ab.page.am.rename(ab.modelData, t);
+                ab.page.am.rename(ab.modelData, t, ab.page.noted(ab.modelData, "rename it"));
             ab.page.open = "";
         }
         // its own key, while it signs in with one
@@ -5347,7 +5763,7 @@ ApplicationWindow {
             const p = ab.page;
             return [
                 p.accountsOf(a.agent).length > 1
-                    ? { label: `Default for ${ab.agentName}`, checked: p.defaultOf(a.agent)?.id === a.id, run: () => p.am.makeDefault(a.id) } : null,
+                    ? { label: `Default for ${ab.agentName}`, checked: p.defaultOf(a.agent)?.id === a.id, run: () => p.am.makeDefault(a.id, p.noted(a.id, "make it the default")) } : null,
                 { label: "Check again", run: () => p.check(a.id) },
                 { label: "Rename…", run: () => p.toggle(`rename:${a.id}`) },
                 a.use === "key" ? { label: "Use the plan instead", run: () => p.setUse(a.id, "plan", "") }
@@ -5364,6 +5780,7 @@ ApplicationWindow {
             clickable: false
             label: byEmail ? ab.acct.email : (ab.acct.label ?? "")
             description: ab.flow ? ab.page.flowText(ab.flow, ab.modelData)
+                : ab.page.accountNotes[ab.modelData] ? ab.page.accountNotes[ab.modelData]
                 : byEmail ? [ab.acct.label ?? "", ab.page.planText(ab.acct)].filter(s => s).join(" · ")
                 : ab.page.facts(ab.acct)
             control: RowLayout {
@@ -5440,7 +5857,7 @@ ApplicationWindow {
                     tone: "risk"
                     onPicked: {
                         ab.page.open = "";
-                        ab.page.am.logout(ab.modelData, "");
+                        ab.page.am.logout(ab.modelData, "", ab.page.noted(ab.modelData, "sign out"));
                     }
                 }
                 Slab {
@@ -5455,7 +5872,7 @@ ApplicationWindow {
             topRule: true
             clickable: false
             label: `Remove ${ab.acct.label}?`
-            description: "Its sign-in is deleted and its folder goes to the Trash."
+            description: "Its running sessions close, its sign-in is deleted and its folder goes to the Trash."
             control: RowLayout {
                 spacing: 10
                 Slab {
@@ -5463,7 +5880,7 @@ ApplicationWindow {
                     tone: "risk"
                     onPicked: {
                         ab.page.open = "";
-                        ab.page.am.remove(ab.modelData);
+                        ab.page.am.remove(ab.modelData, ab.page.noted(ab.modelData, "remove it"));
                     }
                 }
                 Slab {
@@ -5529,14 +5946,14 @@ ApplicationWindow {
             return [];
         }
         readonly property var menu: pb.prov?.via === "oauth" ? [{ label: "Sign out", run: () => pb.page.toggle(`signOut:${pb.modelData}`) }]
-            : pb.key ? [{ label: `Stop using this key with ${pb.agentName}`, run: () => pb.page.am.useKey(pb.key.id, pb.acct.agent, false) }]
+            : pb.key ? [{ label: `Stop using this key with ${pb.agentName}`, run: () => pb.page.am.useKey(pb.key.id, pb.acct.agent, false, pb.page.noted(pb.accountId, "stop using the key")) }]
             : []
 
         SettingRow {
             topRule: pb.topRule
             clickable: false
             label: (pb.page.accountsOf(pb.acct.agent).length > 1 ? `${pb.acct.label} · ` : "") + pb.page.providerName(pb.pid, pb.prov?.via ?? "oauth")
-            description: pb.flow ? pb.page.flowText(pb.flow, pb.accountId) : pb.facts
+            description: pb.flow ? pb.page.flowText(pb.flow, pb.accountId) : pb.page.accountNotes[pb.accountId] ?? pb.facts
             control: RowLayout {
                 spacing: 4
                 TextButton {
@@ -5573,7 +5990,7 @@ ApplicationWindow {
                     tone: "risk"
                     onPicked: {
                         pb.page.open = "";
-                        pb.page.am.logout(pb.accountId, pb.pid);
+                        pb.page.am.logout(pb.accountId, pb.pid, pb.page.noted(pb.accountId, "sign out"));
                     }
                 }
                 Slab {
@@ -5618,7 +6035,7 @@ ApplicationWindow {
                 return [];
             if (sl.flow === "waiting" && !sl.coding)
                 return [
-                    sl.signin?.url ? { label: "Open it again", run: () => Qt.openUrlExternally(sl.signin.url) } : null,
+                    sl.signin?.url ? { label: sl.signin.opened === false ? "Open the page" : "Open it again", run: () => Qt.openUrlExternally(sl.signin.url) } : null,
                     a.agent === "claude" ? { label: "I have a code", run: () => p.open = `code:${a.id}` } : null
                 ].filter(x => x);
             if (sl.flow === "busy") {
@@ -5727,8 +6144,8 @@ ApplicationWindow {
                 kb.page.saveKey(line, kb.provider, line === kb.line ? kb.key : null, secret);
         }
         readonly property var menu: !kb.key ? [] : [
-            kb.env.pi ? { label: "Use with pi", checked: kb.key.use.includes("pi"), run: () => kb.page.am.useKey(kb.key.id, "pi", !kb.key.use.includes("pi")) } : null,
-            kb.env.opencode ? { label: "Use with opencode", checked: kb.key.use.includes("opencode"), run: () => kb.page.am.useKey(kb.key.id, "opencode", !kb.key.use.includes("opencode")) } : null,
+            kb.env.pi ? { label: "Use with pi", checked: kb.key.use.includes("pi"), run: () => kb.page.am.useKey(kb.key.id, "pi", !kb.key.use.includes("pi"), kb.page.keyNoted(kb.line)) } : null,
+            kb.env.opencode ? { label: "Use with opencode", checked: kb.key.use.includes("opencode"), run: () => kb.page.am.useKey(kb.key.id, "opencode", !kb.key.use.includes("opencode"), kb.page.keyNoted(kb.line)) } : null,
             { label: "Check again", run: () => kb.page.checkKey(kb.key, kb.line) },
             { label: "Replace…", run: () => kb.page.toggle(kb.line) },
             { label: "Remove", run: () => kb.page.removeKey(kb.key, false) }

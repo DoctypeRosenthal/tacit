@@ -71,12 +71,13 @@ Scope {
                 overviewScope.showDock();
         }
     }
-    function showDock(edgeScreen) {
+    // `target` is the screen whose bottom edge was touched; without one (IPC, a carried window)
+    // the dock comes up on the focused screen.
+    function showDock(target) {
         if (GlobalStates.overviewOpen || GlobalStates.screenLocked)
             return;
-        // the edge strip that was touched names its screen; otherwise the focused one
-        if (edgeScreen)
-            panelWindow.screen = edgeScreen;
+        if (target)
+            overviewScope.moveToScreen(target);
         else
             overviewScope.moveToFocusedScreen();
         overviewScope.paletteMode = true;
@@ -114,13 +115,17 @@ Scope {
     }
 
     // The window is a single instance, so it stays wherever it was last shown. Same lookup
-    // as DesktopMenu.openCentered, and only while the window is down: reassigning the screen
-    // of a mapped layer surface would move the palette out from under the pointer.
+    // as DesktopMenu.openCentered, and only while the window is down (not open, and not still
+    // sliding out): reassigning the screen of a mapped layer surface would move the palette or
+    // the dock out from under the pointer.
     function moveToFocusedScreen() {
-        if (GlobalStates.overviewOpen)
-            return;
         const focusedName = Hyprland.focusedMonitor?.name;
-        const target = Quickshell.screens.find(s => s.name === focusedName);
+        overviewScope.moveToScreen(Quickshell.screens.find(s => s.name === focusedName));
+    }
+
+    function moveToScreen(target) {
+        if (panelWindow.visible)
+            return;
         if (target && panelWindow.screen !== target)
             panelWindow.screen = target;
     }
@@ -145,6 +150,9 @@ Scope {
             GlobalStates.overviewOpen = false;
             return;
         }
+        // switched off in Settings: nothing to show, and the scrim and the keyboard grab would stay
+        if (!(Config?.options.overview.enable ?? true))
+            return;
         overviewScope.paletteMode = false;
         overviewScope.paletteAlive = false;
         overviewScope.dockShown = false;
@@ -249,8 +257,14 @@ Scope {
     Connections {
         target: GlobalStates
         function onOverviewOpenChanged() {
-            if (GlobalStates.overviewOpen && !overviewScope.gridRequested)
+            if (GlobalStates.overviewOpen && !overviewScope.gridRequested) {
                 overviewScope.paletteMode = true;
+                // Opened by the corner, the launcher button or a corner action (they set overviewOpen directly): the
+                // search, not the dock. Super then Esc left searchActive false, so the next such open slid nothing
+                // out and still held the keyboard. Super's own dock (openDock) is opened with dockByKeys already set.
+                if (!overviewScope.dockByKeys)
+                    overviewScope.searchActive = true;
+            }
             // closed by a click, the focus grab or Super+Tab while switching: nothing is chosen any more
             if (!GlobalStates.overviewOpen && overviewScope.switching)
                 overviewScope.switcherEnd();
@@ -274,7 +288,11 @@ Scope {
         visible: GlobalStates.overviewOpen || overviewScope.gridAlive || overviewScope.paletteAlive || overviewScope.dockAlive
 
         WlrLayershell.namespace: "quickshell:overview"
-        WlrLayershell.layer: WlrLayer.Top
+        // Hyprland buries the Top layer under a fullscreen window: opened there (Super, Super+Tab), the palette, the dock
+        // and the grid took the keyboard unseen. While open over a fullscreen window they come up on Overlay, as the
+        // notch does for its media
+        readonly property bool overFullscreen: WM.fullscreenOnMonitor(panelWindow.monitor?.name)
+        WlrLayershell.layer: GlobalStates.overviewOpen && panelWindow.overFullscreen ? WlrLayer.Overlay : WlrLayer.Top
         WlrLayershell.keyboardFocus: GlobalStates.overviewOpen ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
         // The workspace sheet docks into the top edge over the notch, so the window must not start
         // below the notch's reserved band.
@@ -311,7 +329,7 @@ Scope {
                     // the palette is back in the edge (onClosed below).
                     if (!overviewScope.paletteAlive)
                         searchWidget.cancelSearch();
-                    GlobalFocusGrab.dismiss();
+                    GlobalFocusGrab.removeDismissable(panelWindow);
                     // the dock Super raised goes with it
                     if (overviewScope.dockByKeys) {
                         overviewScope.dockByKeys = false;
@@ -495,8 +513,8 @@ Scope {
         }
     }
 
-    // The bottom edge, under the dock's place: resting the pointer on it raises the dock. Not over a
-    // fullscreen window, not while the palette or the dock is up.
+    // The bottom edge of every screen, under the dock's place: resting the pointer on it raises the
+    // dock on that screen. Not over a fullscreen window, not while the palette or the dock is up.
     Variants {
         model: Quickshell.screens
         PanelWindow {

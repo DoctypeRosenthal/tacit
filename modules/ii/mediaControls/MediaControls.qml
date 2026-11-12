@@ -56,8 +56,11 @@ Scope {
 
             // Find duplicates by trackTitle prefix
             for (let j = i + 1; j < players.length; ++j) {
+                if (used.has(j))
+                    continue;
                 let p2 = players[j];
-                if ((p1.trackTitle && p2.trackTitle && (p1.trackTitle.includes(p2.trackTitle) || p2.trackTitle.includes(p1.trackTitle))) || (Math.abs(p1.position - p2.position) <= 2 && Math.abs(p1.length - p2.length) <= 2)) {
+                // A player that publishes no length reads 0 / 0, which says nothing about what it plays
+                if ((p1.trackTitle && p2.trackTitle && (p1.trackTitle.includes(p2.trackTitle) || p2.trackTitle.includes(p1.trackTitle))) || (p1.length > 0 && p2.length > 0 && Math.abs(p1.position - p2.position) <= 2 && Math.abs(p1.length - p2.length) <= 2)) {
                     group.push(j);
                 }
             }
@@ -119,7 +122,9 @@ Scope {
             exclusionMode: ExclusionMode.Ignore
             exclusiveZone: 0
             implicitWidth: root.widgetWidth
-            implicitHeight: playerColumnLayout.implicitHeight
+            // One size for the window's whole life: lyrics, a second player or none would resize it
+            // and Hyprland animates that. The cards move inside it and the mask is where it takes clicks.
+            implicitHeight: (panelWindow.screen?.height ?? 0) - root.topReserved
             color: "transparent"
             WlrLayershell.namespace: "quickshell:mediaControls"
 
@@ -131,8 +136,8 @@ Scope {
                 top: root.topReserved
                 left: {
                     if (root.mediaPosition === "left") return 0
-                    if (root.mediaPosition === "right") return panelWindow.screen.width - root.widgetWidth
-                    return (panelWindow.screen.width - root.widgetWidth) / 2
+                    if (root.mediaPosition === "right") return (panelWindow.screen?.width ?? 0) - root.widgetWidth
+                    return ((panelWindow.screen?.width ?? 0) - root.widgetWidth) / 2
                 }
             }
 
@@ -156,10 +161,18 @@ Scope {
                         GlobalStates.mediaControlsOpen = false;
                 }
             }
+            // Esc, through the notch's compositor shortcut: the grab only reports clicks
+            Connections {
+                target: IslandController
+                function onCollapseExpansion() {
+                    if (!Config.options.bar.media.alwaysVisible)
+                        GlobalStates.mediaControlsOpen = false;
+                }
+            }
 
             ColumnLayout {
                 id: playerColumnLayout
-                anchors.fill: parent
+                anchors { top: parent.top; left: parent.left; right: parent.right }
                 spacing: -Appearance.sizes.elevationMargin // Shadow overlap okay
 
                 Repeater {

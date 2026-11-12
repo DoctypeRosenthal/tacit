@@ -67,6 +67,8 @@ Item {
                 Layout.alignment: Qt.AlignVCenter
                 configuration: StyledSlider.Configuration.M
                 stopIndicatorValues: []
+                // a readout: a drag would move the knob off the real value and change nothing
+                enabled: false
                 value: root.value
             }
 

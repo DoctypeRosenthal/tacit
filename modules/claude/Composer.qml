@@ -76,9 +76,15 @@ Item {
     // Flow types what you say into this box
     property bool canDictate: false
     Process {
+        id: flowProbe
         running: true
         command: ["bash", "-c", "[ -S \"$XDG_RUNTIME_DIR/flow.sock\" ] && echo yes"]
         stdout: StdioCollector { onStreamFinished: composer.canDictate = this.text.trim() === "yes" }
+    }
+    // flowd may start (or restart) after Praxis: look again each time the window gets the focus
+    Connections {
+        target: composer.Window.window
+        function onActiveChanged() { if (composer.Window.window.active && !flowProbe.running) flowProbe.running = true; }
     }
     function dictate() {
         input.forceActiveFocus();
@@ -148,7 +154,8 @@ Item {
         const s = composer.accounts.stepOf(composer.agent, composer.acctId);
         return s === "signedOut" && (composer.agent === "pi" || composer.agent === "opencode") ? "noProvider" : s;
     }
-    readonly property bool needsStep: composer.hasAccounts && (composer.accounts.stepWord(composer.step) !== "" || composer.step === "locked")
+    // a started session's process may already hold the key, so a locked keyring only stops a fresh one
+    readonly property bool needsStep: composer.hasAccounts && (composer.accounts.stepWord(composer.step) !== "" || (composer.step === "locked" && composer.fresh))
     // said in the chip row for a fresh session; a started one says it when a send needs it, or
     // when its process ends for want of a sign-in (Conversation)
     readonly property bool showStep: composer.needsStep && composer.fresh
@@ -208,6 +215,12 @@ Item {
     onLockedChanged: if (composer.locked) composer.dismiss()
     function focusInput() { input.forceActiveFocus(); }
     function setText(t) { input.text = t; input.cursorPosition = t.length; input.forceActiveFocus(); }
+    // Like setText, but a draft already in the box is kept: the text goes after it. An empty text changes nothing.
+    function addText(t) {
+        const cur = input.text.replace(/\s+$/, "");
+        if (!t.length || cur === t.trim()) { input.forceActiveFocus(); return; }
+        composer.setText(cur.length ? `${cur}\n\n${t}` : t);
+    }
     readonly property string text: input.text
     // a session's own draft, put back when it is opened again (no focus taken: opening a session is not typing)
     function setDraft(t, files) { input.text = t; input.cursorPosition = t.length; composer.attachments = files; }
@@ -279,7 +292,7 @@ Item {
     property bool clipImage: false
     Process {
         id: clipCheck
-        command: ["bash", "-c", "wl-paste --list-types 2>/dev/null | grep -q '^image/' && echo yes"]
+        command: ["bash", "-c", "wl-paste --list-types 2>/dev/null | grep -qE '^image/(png|jpeg|webp|gif)$' && echo yes"]
         stdout: StdioCollector {
             onStreamFinished: {
                 const had = composer.clipImage;
@@ -341,7 +354,7 @@ Item {
     Timer { id: clearShown; interval: 160; onTriggered: { composer.shown = []; composer.shownKind = ""; } }
     Process {
         id: listFiles
-        command: ["bash", "-c", "cd \"$1\" 2>/dev/null && { git ls-files -co --exclude-standard 2>/dev/null || fd -t f --max-depth 6 . ; } | head -20000", "_", composer.filesFor]
+        command: ["bash", "-c", "cd \"$1\" 2>/dev/null && { { git -c core.quotepath=off ls-files -z -co --exclude-standard 2>/dev/null | tr \"\\0\" \"\\n\"; [ ${PIPESTATUS[0]} -eq 0 ]; } || fd -t f --max-depth 6 . ; } | head -20000", "_", composer.filesFor]
         stdout: StdioCollector {
             onStreamFinished: {
                 composer.files = this.text.split("\n").filter(l => l.length);
@@ -464,12 +477,13 @@ Item {
         else composer.suggest = { kind: "", items: [], start: 0 };
     }
 
-    // Ctrl+V with an image on the clipboard saves it and attaches it; anything else pastes as text
+    // Ctrl+V with an image on the clipboard saves it and attaches it; anything else pastes as text. The first of the
+    // types an agent takes (png, jpeg, webp, gif) is saved under its own extension; a clipboard with only others pastes as text.
     Process {
         id: pasteImage
         // a picture is attached only when there is no text beside it: office apps copy cells as both
         // text and a picture of them, and the table should paste as text
-        command: ["bash", "-c", "t=$(wl-paste --list-types 2>/dev/null); if printf '%s\\n' \"$t\" | grep -q '^image/' && ! printf '%s\\n' \"$t\" | grep -q '^text/plain'; then d=\"$HOME/.cache/agent-host/paste\"; mkdir -p \"$d\"; f=\"$d/$(date +%s%N).png\"; wl-paste --type image/png > \"$f\" && echo \"$f\"; fi"]
+        command: ["bash", "-c", "t=$(wl-paste --list-types 2>/dev/null); if ! printf '%s\\n' \"$t\" | grep -q '^text/plain'; then for ty in image/png image/jpeg image/webp image/gif; do if printf '%s\\n' \"$t\" | grep -qx \"$ty\"; then d=\"$HOME/.cache/agent-host/paste\"; mkdir -p \"$d\"; f=\"$d/$(date +%s%N).${ty#image/}\"; if wl-paste --type \"$ty\" > \"$f\"; then echo \"$f\"; else rm -f \"$f\"; fi; break; fi; done; fi"]
         stdout: StdioCollector {
             onStreamFinished: {
                 const p = this.text.trim();
@@ -485,8 +499,11 @@ Item {
     readonly property bool dragging: drop.containsDrag || slabDrop.containsDrag
     function dropped(d) {
         for (const u of d.urls ?? []) {
+            const url = u.toString();
+            // a link dragged from a browser is text for the message, not a file to read
+            if (/^[a-z][a-z0-9+.-]*:/i.test(url) && !url.startsWith("file:")) { composer.insertAtCursor(`${url} `); continue; }
             // Files does not percent-encode its paths: a literal % in a name throws
-            const raw = u.toString().replace(/^file:\/\//, "");
+            const raw = url.replace(/^file:\/\//, "");
             let path = raw;
             try { path = decodeURIComponent(raw); } catch (e) {}
             composer.attach(path);
@@ -549,7 +566,7 @@ Item {
                     radius: Appearance.rounding.chip
                     clip: true
                     color: ColorUtils.transparentize(Appearance.m3colors.m3onSurface, 0.92)
-                    Image { visible: att.picture; anchors.fill: parent; source: att.picture ? `file://${att.modelData}` : ""; fillMode: Image.PreserveAspectCrop; sourceSize.height: 112; asynchronous: true }
+                    Image { visible: att.picture; anchors.fill: parent; source: att.picture ? FileUtils.fileUrl(att.modelData) : ""; fillMode: Image.PreserveAspectCrop; sourceSize.height: 112; asynchronous: true }
                     // any other file: what kind, and its name
                     Row {
                         id: fileRow
@@ -951,7 +968,7 @@ Item {
     Component {
         id: folderMenu
         ListMenu {
-            rows: composer.folders.map(f => ({ label: f.name, after: f.path.replace(Quickshell.env("HOME"), "~"), middle: true, on: f.path === composer.folder, value: f.path }))
+            rows: composer.folders.map(f => ({ label: f.name, after: f.path === Quickshell.env("HOME") || f.path.startsWith(Quickshell.env("HOME") + "/") ? "~" + f.path.substring(Quickshell.env("HOME").length) : f.path, middle: true, on: f.path === composer.folder, value: f.path }))
             onUsed: value => {
                 composer.closeMenu();
                 composer.folderPicked(value);

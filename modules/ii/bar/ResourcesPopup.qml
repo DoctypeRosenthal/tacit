@@ -18,7 +18,7 @@ StyledPopup {
             spacing: 5
 
             ResourceCard {
-                label: "RAM"
+                label: Translation.tr("RAM")
                 iconText: "memory"
                 iconShape: MaterialShape.Shape.Clover4Leaf
                 value: ResourceUsage.memoryUsed / ResourceUsage.memoryTotal
@@ -26,11 +26,12 @@ StyledPopup {
             }
 
             ResourceCard {
-                label: "CPU"
+                label: Translation.tr("CPU")
                 iconText: "planner_review"
                 iconShape: MaterialShape.Shape.Gem
                 value: ResourceUsage.cpuUsage
-                sublabel: `${Math.round(ResourceUsage.cpuTemp)}°C`
+                // no thermal zone means no reading, and 0 C is not a reading
+                sublabel: ResourceUsage.cpuTempPath !== "" ? `${Math.round(ResourceUsage.cpuTemp)}°C` : Translation.tr("N/A")
                 sublabelColor: ResourceUsage.cpuTemp > 80 ? Appearance.colors.colError
                     : ResourceUsage.cpuTemp > 60 ? Appearance.m3colors.m3tertiary
                     : Appearance.colors.colOnLayer1
@@ -41,7 +42,7 @@ StyledPopup {
             spacing: 5
 
             ResourceCard {
-                label: "Swap"
+                label: Translation.tr("Swap")
                 iconText: "swap_horiz"
                 iconShape: MaterialShape.Shape.Bun
                 value: ResourceUsage.swapUsedPercentage
@@ -49,7 +50,7 @@ StyledPopup {
             }
 
             ResourceCard {
-                label: "Disk"
+                label: Translation.tr("Disk")
                 iconText: "hard_drive"
                 iconShape: MaterialShape.Shape.Circle
                 value: ResourceUsage.diskUsedPercentage

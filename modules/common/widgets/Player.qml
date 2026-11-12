@@ -19,7 +19,8 @@ Item {
     property string artDownloadLocation: Directories.coverArt
     property string artFileName: Qt.md5(artUrl)
     property string artFilePath: `${artDownloadLocation}/${artFileName}`
-    property color artDominantColor: ColorUtils.mix(
+    // No art gives the fallback from this binding: assigning it would drop the binding for good
+    property color artDominantColor: !root.artUrl ? Appearance.m3colors.m3secondaryContainer : ColorUtils.mix(
         (colorQuantizer?.colors[0] ?? Appearance.colors.colPrimary),
         Appearance.colors.colPrimaryContainer,
         0.8) || Appearance.m3colors.m3secondaryContainer
@@ -47,9 +48,10 @@ Item {
         onTriggered: root.player.positionChanged()
     }
 
-    onArtFilePathChanged: {
+    onArtFilePathChanged: root.updateArt()
+
+    function updateArt() {
         if (!root.artUrl || root.artUrl.length === 0) {
-            root.artDominantColor = Appearance.m3colors.m3secondaryContainer
             root.downloaded = false
             return
         }
@@ -75,7 +77,11 @@ Item {
             `[ -f "$2" ] || { curl -4 -fsSL --max-time 15 "$1" -o "$2.tmp" && mv "$2.tmp" "$2"; } || { rm -f "$2.tmp"; exit 1; }`,
             "_", targetFile, artFilePath]
         onExited: (exitCode, exitStatus) => {
-            root.downloaded = exitCode === 0
+            // The track changed while this one downloaded: the start was ignored, so go again
+            if (artFilePath !== root.artFilePath)
+                root.updateArt()
+            else
+                root.downloaded = exitCode === 0
         }
     }
 

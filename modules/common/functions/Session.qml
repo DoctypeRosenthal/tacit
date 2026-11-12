@@ -58,11 +58,15 @@ Singleton {
     // No closeAllWindows() here or below: killing every window raced the poweroff that
     // followed it by milliseconds and bought nothing but the unsaved work. The compositor and
     // logind take the session down on their own.
+    // The login screen is brought back without its service restarting, so its picture and colours are copied again
+    // first (tacit-login-ground.service, started without a password prompt and given a few seconds at most): a
+    // refusal or a missing unit must not stop the log out.
     function logout() {
+        const refresh = "timeout 5 systemctl start --no-ask-password tacit-login-ground.service; ";
         if (WM.compositor === "niri") {
-            root.runAction(Translation.tr("Log out"), "niri msg action quit");
+            root.runAction(Translation.tr("Log out"), refresh + "niri msg action quit");
         } else {
-            root.runAction(Translation.tr("Log out"), "pkill -i Hyprland");
+            root.runAction(Translation.tr("Log out"), refresh + "pkill -i Hyprland");
         }
     }
 

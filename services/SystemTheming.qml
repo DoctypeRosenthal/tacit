@@ -68,8 +68,11 @@ Singleton {
     function applyCursorTheme(theme, size) {
         root.currentCursorTheme = theme
         root.currentCursorSize = size
-        NiriConfig.options.cursor.theme = theme
-        NiriConfig.options.cursor.size = size
+        // Only on niri: touching NiriConfig makes it write ~/.config/niri on any compositor
+        if (WM.compositor === "niri") {
+            NiriConfig.options.cursor.theme = theme
+            NiriConfig.options.cursor.size = size
+        }
         if (theme !== "")
             Quickshell.execDetached(["bash", `${root.scriptDir}/set-cursor-theme.sh`, theme, String(size)])
     }
@@ -136,11 +139,11 @@ Singleton {
         running: true
         command: ["bash", "-c", `
             echo :::ICON
-            find /usr/share/icons "$HOME/.local/share/icons" "$HOME/.icons" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | xargs -r -n1 basename | sort -u | grep -Evx 'hicolor|default'
+            find /usr/share/icons "$HOME/.local/share/icons" "$HOME/.icons" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | xargs -d '\\n' -r -n1 basename | sort -u | grep -Evx 'hicolor|default'
             echo :::GTK
-            find /usr/share/themes "$HOME/.themes" "$HOME/.local/share/themes" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | xargs -r -n1 basename | sort -u
+            find /usr/share/themes "$HOME/.themes" "$HOME/.local/share/themes" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | xargs -d '\\n' -r -n1 basename | sort -u
             echo :::CURSOR
-            find /usr/share/icons "$HOME/.local/share/icons" "$HOME/.icons" -mindepth 2 -maxdepth 2 -type d -name cursors 2>/dev/null | sed 's|/cursors$||' | xargs -r -n1 basename | sort -u
+            find /usr/share/icons "$HOME/.local/share/icons" "$HOME/.icons" -mindepth 2 -maxdepth 2 -type d -name cursors 2>/dev/null | sed 's|/cursors$||' | xargs -d '\\n' -r -n1 basename | sort -u
             echo :::CURRENT
             (gsettings get org.gnome.desktop.interface icon-theme 2>/dev/null || echo) | tr -d "'"
             (gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null || echo) | tr -d "'"

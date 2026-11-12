@@ -55,8 +55,9 @@ StyledOverlayWidget {
 
                 OverlayPill {
                     Layout.fillWidth: true
-                    glyph: "screen_record"
-                    label: Translation.tr("Record region")
+                    glyph: IslandController.recording ? "stop_circle" : "screen_record"
+                    label: IslandController.recording ? Translation.tr("Stop recording") : Translation.tr("Record region")
+                    on: IslandController.recording
                     onClicked: {
                         GlobalStates.overlayOpen = false;
                         Quickshell.execDetached(["qs", "-p", Quickshell.shellPath(""), "ipc", "call", "region", "recordWithSound"]);
@@ -65,8 +66,9 @@ StyledOverlayWidget {
 
                 OverlayPill {
                     Layout.fillWidth: true
-                    glyph: "capture"
-                    label: Translation.tr("Record screen")
+                    glyph: IslandController.recording ? "stop_circle" : "capture"
+                    label: IslandController.recording ? Translation.tr("Stop recording") : Translation.tr("Record screen")
+                    on: IslandController.recording
                     onClicked: {
                         GlobalStates.overlayOpen = false;
                         Quickshell.execDetached([Directories.recordScriptPath, "--fullscreen", "--sound"]);
@@ -92,7 +94,9 @@ StyledOverlayWidget {
                 colBackgroundHover: Appearance.colors.colLayer1Hover
                 onClicked: {
                     GlobalStates.overlayOpen = false;
-                    Qt.openUrlExternally(`file://${Config.options.screenRecord.savePath}`);
+                    // each part encoded, so a # ? or % in the folder's name stays in the path; empty means the Videos folder
+                    const savePath = Config.options.screenRecord.savePath;
+                    Qt.openUrlExternally(savePath ? "file://" + savePath.split("/").map(encodeURIComponent).join("/") : Directories.videos);
                 }
                 contentItem: Row {
                     id: foldersRow

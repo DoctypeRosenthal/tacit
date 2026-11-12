@@ -146,6 +146,11 @@ Scope {
                 target: GlobalFocusGrab
                 function onDismissed() { GlobalStates.equalizerOpen = false }
             }
+            // Esc: the compositor's island shortcut, which arrives even when this window has no keyboard focus
+            Connections {
+                target: IslandController
+                function onCollapseExpansion() { GlobalStates.equalizerOpen = false }
+            }
 
             StyledRectangularShadow {
                 target: cardBackground

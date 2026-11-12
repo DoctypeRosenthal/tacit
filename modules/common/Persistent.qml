@@ -13,6 +13,9 @@ Singleton {
     property string filePath: `${root.fileDir}/${root.fileName}`
 
     property bool ready: false
+    // Nothing writes states.json until it has been read back and parsed once: a truncated file
+    // loads as the defaults, and the next change would write them over what was left.
+    property bool loadedCleanly: false
     property string previousHyprlandInstanceSignature: ""
     property bool isNewHyprlandInstance: previousHyprlandInstanceSignature !== states.hyprlandInstanceSignature
 
@@ -52,8 +55,16 @@ Singleton {
         command: ["mkdir", "-p", root.fileDir]
         onExited: {
             persistentStatesFileView.writeAdapter();
+            root.loadedCleanly = true;
             root.ready = true;
         }
+    }
+
+    // The file holds the hotspot password in plain text, and every save writes a new file with the
+    // default umask: keep the folder to its owner (so a fresh file is never readable in it) and
+    // the file too (so a copy of it keeps the mode).
+    function keepPrivate() {
+        Quickshell.execDetached(["sh", "-c", 'chmod 700 "$0"; chmod 600 "$1"', root.fileDir, root.filePath]);
     }
 
     FileView {
@@ -62,13 +73,31 @@ Singleton {
 
         watchChanges: true
         onFileChanged: fileReloadTimer.restart()
-        onAdapterUpdated: fileWriteTimer.restart()
-        onLoaded: root.ready = true
+        onAdapterUpdated: if (root.loadedCleanly) fileWriteTimer.restart()
+        onSaved: root.keepPrivate()
+        onLoaded: {
+            root.keepPrivate();
+            // A JSON syntax error is not a load failure: this fires and the adapter keeps the
+            // defaults. An empty file has nothing to lose.
+            let clean = false;
+            try {
+                if (persistentStatesFileView.text().trim() !== "") JSON.parse(persistentStatesFileView.text());
+                clean = true;
+            } catch (e) {
+                console.log("Persistent states file is not valid JSON, leaving it alone:", e);
+            }
+            root.loadedCleanly = clean;
+            root.ready = true;
+        }
         onLoadFailed: error => {
             console.log("Failed to load persistent states file:", error);
             if (error == FileViewError.FileNotFound) {
                 stateDirProc.running = true;
+                return;
             }
+            // Unreadable (permissions, a folder in its place): features waiting on ready come up on
+            // the defaults, and the file is left alone.
+            root.ready = true;
         }
 
         adapter: JsonAdapter {
@@ -79,6 +108,8 @@ Singleton {
             property JsonObject notifications: JsonObject {
                 // apps whose notifications go to the centre only, never a popup
                 property list<string> mutedApps: []
+                // Do not disturb: kept over a restart of the shell, as the idle inhibitor is
+                property bool silent: false
             }
             property JsonObject network: JsonObject {
                 property list<string> trusted: []   // networks marked home/work: no VPN needed there

@@ -54,7 +54,8 @@ FocusScope {
         const f = ch.model?.defaults?.folders?.[ch.keepFolder];
         if (!f || f.agent !== ch.current.agent) return false;
         const acct = f.run?.[ch.current.agent]?.account;
-        return !acct || acct === ch.currentId;
+        // a kept entry with no account stands for the agent's default account, not for every one
+        return (acct || (ch.model?.defaultAccount(ch.current.agent)?.id ?? "")) === ch.currentId;
     }
     readonly property bool showKeep: !ch.fixed && !ch.setup && ch.keepFolder.startsWith("/")
     readonly property string folderName: ch.keepFolder.split("/").filter(s => s.length).pop() ?? ""

@@ -1,3 +1,4 @@
+import qs.services
 import qs.modules.common
 import qs.modules.common.widgets
 import QtQuick
@@ -43,7 +44,7 @@ RippleButton {
             color: Appearance.colors.colOnLayer0
         }
         StyledText {
-            text: root.on ? "On" : "Off"
+            text: root.on ? Translation.tr("On") : Translation.tr("Off")
             font.pixelSize: Appearance.font.pixelSize.smallie
             color: root.on ? Appearance.colors.colPrimary : Appearance.colors.colSubtext
         }

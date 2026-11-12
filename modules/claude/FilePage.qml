@@ -16,6 +16,7 @@ PanelPage {
     readonly property var p: fp.pane
     readonly property string path: fp.entry.id ?? ""
     readonly property string home: Quickshell.env("HOME") ?? ""
+    readonly property string dirName: fp.path.split("/").slice(0, -1).join("/")
     readonly property string from: fp.entry.f.from ?? ""
 
     // every read edit to this file: { agent, name, i, item, add, del }
@@ -74,7 +75,7 @@ PanelPage {
         StyledText {
             width: parent.width
             elide: Text.ElideMiddle
-            text: fp.path.split("/").slice(0, -1).join("/").split(fp.home).join("~")
+            text: fp.dirName === fp.home || fp.dirName.startsWith(fp.home + "/") ? "~" + fp.dirName.substring(fp.home.length) : fp.dirName
             font.pixelSize: 14
             color: Appearance.colors.colInkMeta
         }

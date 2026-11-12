@@ -26,6 +26,11 @@ Item {
     readonly property bool isLanded: index === v.landed
     readonly property real s: v.settle * wgt                        // 0 framed in the roll, 1 bare
     readonly property size rs: near ? v.rollSize(index) : Qt.size(0, 0)
+    // The width a picture is decoded at, in device pixels: the window's (the most the bare picture takes), rounded up
+    // to 256 so a resize does not decode again at every pixel, and no more than the zoomed layer's 4096. The roll's
+    // cards are smaller, so 900 logical pixels do for them.
+    readonly property int decodeW: Math.min(4096, Math.ceil(Math.max(1800, v.width * Screen.devicePixelRatio) / 256) * 256)
+    readonly property int rollDecodeW: Math.min(2048, Math.round(900 * Screen.devicePixelRatio))
     readonly property rect br: err.length > 0 && kind !== "audio" ? Qt.rect(0, 0, v.width, v.height) : v.bareRect(kind)
     // why there is nothing to show, in a few plain words; empty when the file is fine
     property bool imageBad: false
@@ -202,7 +207,7 @@ Item {
                             smooth: true
                             mipmap: true
                             autoTransform: true
-                            sourceSize.width: fr.isLanded ? 1800 : 900
+                            sourceSize.width: fr.isLanded ? fr.decodeW : fr.rollDecodeW
                             sourceSize.height: 0
                             onStatusChanged: { fr.imageBad = status === Image.Error; if (status === Image.Ready && implicitHeight > 0) fr.v.setImageSize(fr.e.path, implicitWidth, implicitHeight); }
                         }

@@ -10,8 +10,9 @@ import qs.modules.tacit
  * ones first once there are two, long lists five or six to a group with the rest a line away), the
  * effort levels of the highlighted model and the line that keeps the choice for the folder. Used by
  * the message box and the preferences sheet. Keys: typing filters, ↑↓ Tab PgUp PgDn, ←→ effort
- * (empty filter), Enter uses the line, Ctrl+Enter also keeps it for the folder, Esc clears the
- * filter, then closes. The highlight stays on the last model the pointer or a key reached, so the
+ * (empty filter), Enter uses the line, Ctrl+Enter also keeps it for the folder, Ctrl+, opens
+ * Preferences, Esc clears the filter, then closes. ↓ past the last model reaches the account's
+ * step line (Enter runs it), which Enter also runs when there is no model to use. The highlight stays on the last model the pointer or a key reached, so the
  * effort words and the keep line always act on the model that is lit.
  *
  * With a host that reads no model lists (no "catalog" feature): Claude Code's four model names
@@ -57,7 +58,13 @@ FocusScope {
     // the copy AccountsModel holds; asked for outside the binding (asking writes the request tag)
     readonly property string catKey: mc.catalogs && mc.model?.available ? mc.model.catalogKey(mc.agent, mc.account || (mc.model.defaultAccount(mc.agent)?.id ?? ""), mc.cwd) : ""
     readonly property var cat: mc.catKey ? mc.model.catalogs[mc.catKey] ?? null : null
-    onCatKeyChanged: if (mc.catKey) Qt.callLater(() => mc.model.catalog(mc.agent, mc.account, mc.cwd))
+    onCatKeyChanged: { mc.gaveUp = false; if (mc.catKey) Qt.callLater(() => mc.model.catalog(mc.agent, mc.account, mc.cwd)); }
+    // The host refreshes a stale list in the background and says nothing when that fails, so "Checking" is
+    // shown for a while only; then the footer says the saved list is all there is
+    readonly property bool stale: mc.catalogs && (mc.cat?.stale ?? false)
+    property bool gaveUp: false
+    onStaleChanged: if (!mc.stale) mc.gaveUp = false
+    Timer { interval: 30000; running: mc.stale && !mc.gaveUp; onTriggered: mc.gaveUp = true }
     readonly property var models: mc.catalogs ? (mc.model?.shapeModels?.(mc.cat?.models ?? []) ?? []) : mc.oldList
     readonly property bool multi: mc.agent === "pi" || mc.agent === "opencode"   // one group per provider
     readonly property string accountWord: {
@@ -77,7 +84,7 @@ FocusScope {
     }
     readonly property var currentModel: mc.foundModel ?? mc.missing
     // by id: a list read back from a property is a copy, not the same objects
-    function isCurrent(m) { return !!mc.currentModel && m.id === mc.currentModel.id; }
+    function isCurrent(m) { return !!m && !!mc.currentModel && m.id === mc.currentModel.id; }
     // every word of the filter must start a word of the label (best), sit inside it, or sit in the
     // id or group name; the label alone ranks, so a model never matches through its maker's letters
     function score(m, q) {
@@ -159,6 +166,9 @@ FocusScope {
     function usable(i) { const k = mc.rows[i]?.kind; return k === "model" || k === "typed" || k === "more" || k === "less"; }
     function rowH(r) { return r.kind === "label" ? 26 : r.kind === "rule" ? 9 : 34; }
     property int pick: -1
+    // the key highlight is on the account's step line, below the list
+    property bool onStep: false
+    readonly property bool stepPicked: mc.onStep && mc.stepRow
     // the highlight is drawn once a key or the pointer has moved it; before that it only marks where Enter lands
     property bool touched: false
     // the current model's line, or the best match while filtering; with no current model, none
@@ -275,6 +285,7 @@ FocusScope {
         field.text = "";
         mc.opened = ({});
         mc.touched = false;
+        mc.onStep = false;
         mc.level = mc.effort;
         mc.pick = mc.firstPick();
         list.positionViewAtBeginning();
@@ -290,11 +301,18 @@ FocusScope {
         if (mc.tipRow !== mc.pick) mc.tipRow = -1;
     }
     function step(d, by) {
+        if (mc.stepPicked) {
+            if (d < 0) mc.onStep = false;
+            return;
+        }
         let i = mc.pick;
         for (let n = 0; n < (by ?? 1); n++) {
             let j = i + d;
             while (j >= 0 && j < mc.rows.length && !mc.usable(j)) j += d;
-            if (j < 0 || j >= mc.rows.length) break;
+            if (j < 0 || j >= mc.rows.length) {
+                if (d > 0 && mc.stepRow) { mc.onStep = true; mc.touched = true; return; }
+                break;
+            }
             i = j;
         }
         mc.touched = true;
@@ -302,6 +320,7 @@ FocusScope {
     }
     function use(i, keep) {
         const r = mc.rows[i];
+        if (mc.stepPicked || (!r && mc.stepRow && !mc.rows.some((x, j) => mc.usable(j)))) { mc.stepRequested(); return; }
         if (!r) return;
         if (r.kind === "more" || r.kind === "less") {
             mc.opened = Object.assign({}, mc.opened, { [r.group]: r.kind === "more" });
@@ -374,7 +393,8 @@ FocusScope {
         else if ((e.key === Qt.Key_Left || e.key === Qt.Key_Right) && !field.text.length && mc.levels.length) {
             const i = mc.levels.indexOf(mc.litLevel) + (e.key === Qt.Key_Right ? 1 : -1);
             if (i >= 0 && i < mc.levels.length) mc.setLevel(mc.levels[i], false);
-        } else if (e.key === Qt.Key_Return || e.key === Qt.Key_Enter) mc.use(mc.pick, ctrl);
+        } else if (e.key === Qt.Key_Comma && ctrl && mc.keepShown) mc.allDefaults();
+        else if (e.key === Qt.Key_Return || e.key === Qt.Key_Enter) mc.use(mc.pick, ctrl);
         else e.accepted = false;
     }
 
@@ -394,7 +414,7 @@ FocusScope {
             color: Appearance.colors.colInkMain
             selectionColor: Appearance.colors.colSecondaryContainer
             selectedTextColor: Appearance.m3colors.m3onSecondaryContainer
-            onTextChanged: { mc.filter = field.text; mc.pick = mc.firstPick(); }
+            onTextChanged: { mc.filter = field.text; mc.onStep = false; mc.pick = mc.firstPick(); }
             Keys.forwardTo: [mc]
         }
         StyledText {
@@ -486,8 +506,8 @@ FocusScope {
                 ink: row.r.kind === "more" || row.r.kind === "less" ? Appearance.colors.colInkSecondary : Appearance.colors.colInkMain
                 on: row.r.kind === "model" && mc.isCurrent(row.r.m)
                 strong: line.on
-                picked: mc.pick === row.index && (mc.touched || mc.filter.trim().length > 0)
-                onEntered: { mc.touched = true; mc.pick = row.index; tipTimer.restart(); }
+                picked: mc.pick === row.index && !mc.stepPicked && (mc.touched || mc.filter.trim().length > 0)
+                onEntered: { mc.touched = true; mc.onStep = false; mc.pick = row.index; tipTimer.restart(); }
                 onClicked: mc.use(row.index, false)
                 Loader {
                     anchors.fill: parent
@@ -542,6 +562,8 @@ FocusScope {
             tail: mc.stepWord
             dot: true
             ink: Appearance.colors.colInkSecondary
+            picked: mc.stepPicked
+            onEntered: { mc.touched = true; mc.onStep = true; }
             onClicked: mc.stepRequested()
         }
         Item {
@@ -649,11 +671,16 @@ FocusScope {
             }
         }
         StyledText {
-            visible: !mc.catalogs || (mc.cat?.stale ?? false)
+            visible: !mc.catalogs || mc.stale
             x: 10
+            width: parent.width - 20
             height: 26
+            elide: Text.ElideRight
             verticalAlignment: Text.AlignVCenter
-            text: mc.catalogs ? "Checking for new models…" : "Update the agent helper to see every model"
+            text: !mc.catalogs ? "Update the agent helper to see every model"
+                : !mc.gaveUp ? "Checking for new models…"
+                : (mc.cat?.at ?? 0) > 0 ? `Could not check for new models; list from ${Qt.formatDateTime(new Date(mc.cat.at), "d MMM")}`
+                : "Could not check for new models"
             font.family: Appearance.font.family.compact
             font.pixelSize: 13
             color: Appearance.colors.colInkMeta

@@ -25,27 +25,36 @@ Item {
     readonly property bool shown: think.progress > 0
     implicitHeight: row.height + (body.height + 4) * think.progress
 
+    function toggle() {
+        if (think.key.length) think.toggled(think.key);
+        else think.selfOpen = !think.selfOpen;
+    }
+
     Item {
         id: row
         visible: !think.bare
         width: parent.width
         height: think.bare ? 0 : 34
         HoverHandler { id: hover }
+        activeFocusOnTab: !think.bare
+        Keys.onReturnPressed: think.toggle()
+        Keys.onEnterPressed: think.toggle()
+        Keys.onSpacePressed: think.toggle()
         Rectangle {
             anchors { fill: parent; leftMargin: -6; rightMargin: -6 }
             radius: Appearance.rounding.small
-            color: hover.hovered ? ColorUtils.transparentize(Appearance.m3colors.m3onSurface, 0.95) : "transparent"
+            color: hover.hovered || row.activeFocus ? ColorUtils.transparentize(Appearance.m3colors.m3onSurface, 0.95) : "transparent"
         }
         MaterialSymbol {
             id: icon
             anchors { left: parent.left; verticalCenter: parent.verticalCenter }
-            visible: !think.live || hover.hovered
-            text: hover.hovered || think.open ? (think.open ? "expand_more" : "chevron_right") : "neurology"
+            visible: !think.live || hover.hovered || row.activeFocus
+            text: hover.hovered || row.activeFocus || think.open ? (think.open ? "expand_more" : "chevron_right") : "neurology"
             iconSize: 17
             color: Appearance.colors.colInkSecondary
         }
         LiveDot {
-            visible: think.live && !hover.hovered
+            visible: think.live && !hover.hovered && !row.activeFocus
             anchors { horizontalCenter: icon.horizontalCenter; verticalCenter: parent.verticalCenter }
         }
         ShineText {
@@ -71,10 +80,7 @@ Item {
         MouseArea {
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
-            onClicked: {
-                if (think.key.length) think.toggled(think.key);
-                else think.selfOpen = !think.selfOpen;
-            }
+            onClicked: think.toggle()
         }
     }
 

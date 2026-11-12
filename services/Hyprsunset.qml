@@ -22,6 +22,7 @@ Singleton {
     property bool shouldBeOn
     property bool firstEvaluation: true
     property bool temperatureActive: false
+    property bool loaded: false   // the start's reset (load) is done: the schedule may apply a tint after it
 
     property int fromHour: Number(from.split(":")[0])
     property int fromMinute: Number(from.split(":")[1])
@@ -61,10 +62,9 @@ Singleton {
         }
         root.shouldBeOn = inBetween(t, from, to);
 
-        if (firstEvaluation) {
-            firstEvaluation = false;
-            return;
-        }
+        // The first evaluation (the shell starting, Automatic switched on) applies here, once: its change of
+        // shouldBeOn is skipped below, and waiting for the next minute left the screen cold meanwhile.
+        firstEvaluation = false;
         root.ensureState();
     }
 
@@ -74,7 +74,7 @@ Singleton {
     }
 
     function ensureState() {
-        if (!root.automatic || root.manualActive !== undefined)
+        if (!root.loaded || !root.automatic || root.manualActive !== undefined)
             return;
         if (root.shouldBeOn) {
             root.enableTemperature();
@@ -115,13 +115,20 @@ Singleton {
         }
     }
 
+    // Starts from no tint, whatever the last session left, then lets the schedule apply: a tint set
+    // before the reset would be wiped by it.
     function load() {
+        root.temperatureActive = false;
         if (root.isNiri) {
             root.disableTemperature();
+            root.loaded = true;
+            root.ensureState();
             return;
         }
-        Quickshell.execDetached(["bash", "-c", `pidof hyprsunset || hyprsunset & disown; sleep 0.3; hyprctl hyprsunset identity`]);
-        root.temperatureActive = false;
+        root.applyHyprsunset("identity", () => {
+            root.loaded = true;
+            root.ensureState();
+        });
     }
 
     function enableTemperature() {

@@ -24,6 +24,7 @@ AbstractBackgroundWidget {
     property string mode: "list" // "list" | "edit"
     property string editingText: ""
     onModeChanged: GlobalStates.desktopWidgetKeyboardFocus = (mode === "edit")
+    Component.onDestruction: if (root.mode === "edit") GlobalStates.desktopWidgetKeyboardFocus = false
 
     function toggleFlip() { flipAnim.start() }
 
@@ -106,6 +107,7 @@ AbstractBackgroundWidget {
                     Item { Layout.fillWidth: true }
 
                     ToolbarPairedFab {
+                        visible: !Todo.broken   // nothing can be saved while the list cannot be read
                         Layout.rightMargin: 4
                         Layout.alignment: Qt.AlignVCenter
                         baseSize: 38

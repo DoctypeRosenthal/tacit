@@ -176,8 +176,8 @@ Item {
                 placeholderTextColor: Appearance.colors.colSubtext
                 font.pixelSize: 15
                 onAccepted: {
-                    if (text.length > 0) {
-                        Todo.addTask(text);
+                    if (text.trim().length > 0) {
+                        Todo.addTask(text.trim());
                         text = "";
                     }
                 }
@@ -399,8 +399,19 @@ Item {
                 }
             }
             AddLine {
+                visible: !Todo.broken
                 Layout.topMargin: 6
                 Layout.bottomMargin: 6
+            }
+            StyledText {
+                visible: Todo.broken
+                Layout.fillWidth: true
+                Layout.topMargin: 6
+                Layout.bottomMargin: 6
+                text: Translation.tr("Your task list could not be read. Nothing you add would be saved.")
+                wrapMode: Text.Wrap
+                font.pixelSize: Appearance.font.pixelSize.small
+                color: Appearance.colors.colError
             }
             Repeater {
                 model: ScriptModel {
@@ -416,6 +427,7 @@ Item {
                         Layout.fillWidth: true
                         Layout.topMargin: 8
                         text: row.modelData.content
+                        textFormat: Text.PlainText
                         wrapMode: Text.Wrap
                         font.pixelSize: 15
                         color: Appearance.colors.colOnLayer0
@@ -436,7 +448,7 @@ Item {
                 }
             }
             StyledText {
-                visible: (root.showDone ? root.finished : root.open).length === 0
+                visible: !Todo.broken && (root.showDone ? root.finished : root.open).length === 0
                 Layout.topMargin: 8
                 Layout.bottomMargin: 8
                 text: root.showDone ? Translation.tr("Finished tasks will go here") : Translation.tr("Nothing here!")

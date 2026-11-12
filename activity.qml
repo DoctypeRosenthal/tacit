@@ -38,13 +38,28 @@ ApplicationWindow {
     onWantHeightChanged: fitTimer.restart()
     // short: the window follows a page switch with it, not a beat after; scripts/activity/fit-window keeps
     // the top edge (and the tabs under the pointer) where it is
+    // A height the person dragged the window to is kept while the page stays: only a page or tab switch fits it again.
+    // Heights seen while fit-window works (and for a moment after, and at start) are its own.
+    property bool fitting: false
+    property bool fitted: false
+    property bool manual: false
+    onHeightChanged: if (root.fitted && !root.fitting) root.manual = true
     Timer {
         id: fitTimer
         interval: 60
         onTriggered: {
-            if (root.renderDir === "" && root.visible && Math.abs(root.height - root.wantHeight) > 8)
+            if (root.renderDir !== "" || !root.visible || root.manual)
+                return;
+            root.fitting = true;
+            fitDone.restart();
+            if (Math.abs(root.height - root.wantHeight) > 8)
                 Quickshell.execDetached(["python3", "-I", Quickshell.shellPath("scripts/activity/fit-window"), String(root.wantHeight)]);
         }
+    }
+    Timer {
+        id: fitDone
+        interval: 700
+        onTriggered: { root.fitting = false; root.fitted = true; }
     }
     color: "transparent"
     onClosing: Qt.quit()
@@ -152,6 +167,10 @@ ApplicationWindow {
 
     // a page switch comes in from the top, rising 6 px as it fades in (Settings' page switch)
     function reveal() {
+        if (root.manual) {
+            root.manual = false;
+            fitTimer.restart();
+        }
         pageIn.stop();
         pages.opacity = 0;
         pages.y = 6;
@@ -225,7 +244,7 @@ ApplicationWindow {
         Headline { text: parent.headline; alarm: parent.alarm }
         Gap { h: 10 }
         Sentence { visible: text !== ""; cause: parent.cause; rest: parent.rest }
-        Sentence { visible: facts.problem !== ""; rest: facts.problem; color: Ink.sand; topPadding: 8 }
+        Sentence { visible: facts.problem !== "" || facts.notice !== ""; rest: facts.problem || facts.notice; color: facts.problem !== "" ? Ink.sand : Ink.sec; topPadding: 8 }
         Gap { h: 22 }
         Gauge {
             visible: !!parent.gauge && parent.verbs.length === 0
@@ -296,7 +315,7 @@ ApplicationWindow {
                     visible: root.tab === "Now" && root.drill === null
                     readonly property var p: facts.now
                     Head {
-                        visible: !!nowPage.p
+                        visible: !!nowPage.p && !facts.readerFailed
                         headline: nowPage.p?.headline ?? ""
                         alarm: nowPage.p?.alarm ?? false
                         cause: nowPage.p?.cause ?? ""
@@ -305,7 +324,7 @@ ApplicationWindow {
                         verbs: nowPage.p?.verbs ?? []
                     }
                     T {
-                        visible: !nowPage.p
+                        visible: !nowPage.p || facts.readerFailed
                         text: facts.readerFailed ? "Activity can't read the system right now." : "Looking…"
                         font.pixelSize: 30
                         color: Ink.sec

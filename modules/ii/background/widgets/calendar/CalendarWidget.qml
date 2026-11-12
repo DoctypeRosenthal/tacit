@@ -57,20 +57,43 @@ AbstractBackgroundWidget {
     }
 
     property int monthShift: 0
-    readonly property var today: new Date()
+    property var today: new Date()
+
+    // Follows the clock, but is replaced only when the day turns over, so the grid is not
+    // rebuilt on every tick
+    Connections {
+        target: DateTime.clock
+        function onDateChanged() {
+            const now = DateTime.clock.date
+            if (now.toDateString() !== root.today.toDateString())
+                root.today = now
+        }
+    }
 
     property var viewingDate: {
-        let d = new Date()
+        let d = new Date(root.today)
         d.setDate(1)
         d.setMonth(d.getMonth() + monthShift)
         return d
+    }
+
+    // The week starts where the person's locale says (0 = Sunday, as Date.getDay()), and the headers
+    // are the locale's day names. Latin short names are cut to two letters to fit the columns, as
+    // they were; names in other scripts are kept whole and shrink to fit instead.
+    readonly property int weekStart: Qt.locale().firstDayOfWeek
+    readonly property var dayHeads: {
+        const l = Qt.locale();
+        return [0, 1, 2, 3, 4, 5, 6].map(i => {
+            const name = l.dayName((root.weekStart + i) % 7, Locale.ShortFormat);
+            return /^[A-Za-z]{3,}$/.test(name) ? name.substring(0, 2) : name;
+        });
     }
 
     function getMonthMatrix(date) {
         const year  = date.getFullYear()
         const month = date.getMonth()
         const firstOfMonth   = new Date(year, month, 1)
-        const startOffset    = (firstOfMonth.getDay() + 6) % 7
+        const startOffset    = (firstOfMonth.getDay() - root.weekStart + 7) % 7
         const daysInMonth    = new Date(year, month + 1, 0).getDate()
         const daysInPrevMonth = new Date(year, month, 0).getDate()
 
@@ -258,12 +281,16 @@ AbstractBackgroundWidget {
                     Layout.topMargin: 4
 
                     Repeater {
-                        model: ["Mo","Tu","We","Th","Fr","Sa","Su"]
+                        model: root.dayHeads
                         delegate: Item {
                             implicitWidth: (card.implicitWidth - 28) / 7
                             implicitHeight: 20
                             StyledText {
                                 anchors.centerIn: parent
+                                width: parent.width
+                                horizontalAlignment: Text.AlignHCenter
+                                fontSizeMode: Text.HorizontalFit
+                                minimumPixelSize: 9
                                 text: modelData
                                 font.pixelSize: Appearance.font.pixelSize.smaller
                                 font.weight: Font.Bold
@@ -365,10 +392,12 @@ AbstractBackgroundWidget {
                     Layout.alignment: Qt.AlignHCenter
                     spacing: 4
                     Repeater {
-                        model: ["Mo","Tu","We","Th","Fr","Sa","Su"]
+                        model: root.dayHeads
                         delegate: StyledText {
                             Layout.preferredWidth: 28
                             horizontalAlignment: Text.AlignHCenter
+                            fontSizeMode: Text.HorizontalFit
+                            minimumPixelSize: 9
                             font.pixelSize: Appearance.font.pixelSize.smaller
                             font.weight: Font.Bold
                             color: Appearance.colors.colOnPrimaryContainer
@@ -473,10 +502,12 @@ AbstractBackgroundWidget {
                             Layout.topMargin: 10
                             spacing: 4
                             Repeater {
-                                model: ["Mo","Tu","We","Th","Fr","Sa","Su"]
+                                model: root.dayHeads
                                 delegate: StyledText {
                                     Layout.preferredWidth: 24
                                     horizontalAlignment: Text.AlignHCenter
+                                    fontSizeMode: Text.HorizontalFit
+                                    minimumPixelSize: 9
                                     font.pixelSize: Appearance.font.pixelSize.smaller
                                     font.weight: Font.Bold
                                     color: Appearance.colors.colOnPrimaryContainer
@@ -522,6 +553,8 @@ AbstractBackgroundWidget {
             onResizedXY: (dx, dy, startWidth) => { root.sizeMode = root.modeForDrag(dx, dy, startWidth) }
             onResizeFinished: {
                 root.configEntry.sizeMode = root.sizeMode
+                // The drag assigned sizeMode and so cut its link to the config; join it again
+                root.sizeMode = Qt.binding(() => root.configEntry.sizeMode ?? "2x2")
             }
         }
     }

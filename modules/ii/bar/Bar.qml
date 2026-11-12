@@ -51,30 +51,35 @@ Scope {
                     }
                 }
 
-                property bool showCorners: !Config.options.bar.autoHide.enable || mustShow
+                // The pill corners follow the bar: gone as soon as it hides, back a beat after it shows.
+                // A binding on purpose: assigning showCorners would lose it, and it would then stay
+                // stuck when auto-hide is turned off.
+                property bool cornersWaiting: false
+                property bool showCorners: !Config.options.bar.autoHide.enable || (mustShow && !cornersWaiting)
 
                 Timer {
                     id: cornerRevealTimer
                     interval: 65
-                    onTriggered: barRoot.showCorners = true
+                    onTriggered: barRoot.cornersWaiting = false
                 }
 
                 onMustShowChanged: {
                     if (!Config.options.bar.autoHide.enable) return;
                     if (mustShow) {
+                        barRoot.cornersWaiting = true
                         cornerRevealTimer.restart()
                     } else {
                         cornerRevealTimer.stop()
-                        barRoot.showCorners = false
+                        barRoot.cornersWaiting = false
                     }
                 }
                 property bool superShow: false
-                property bool mustShow: hoverRegion.containsMouse || superShow
+                property bool mustShow: hoverRegion.containsMouse || superShow || (GlobalStates.barHolds[barRoot.screen?.name] ?? 0) > 0
                 property var thisMonitorData: HyprlandData.monitors.find(m => m.name === barRoot.screen?.name)
                 property bool monitorHasFullscreen: HyprlandData.workspaceById[thisMonitorData?.activeWorkspace?.id]?.hasfullscreen ?? false
                 property bool monitorHasSpecialOpen: (thisMonitorData?.specialWorkspace?.name ?? "") !== ""
                 exclusionMode: ExclusionMode.Ignore
-                exclusiveZone: (Config?.options.bar.autoHide.enable && (!mustShow || !Config?.options.bar.autoHide.pushWindows)) ? 0 : Appearance.sizes.baseBarHeight + (Config.options.bar.cornerStyle === 1 ? Appearance.sizes.hyprlandGapsOut : 0) + (Config.options.bar.cornerStyle === 2 ? -6 : 0)
+                exclusiveZone: (Config?.options.bar.autoHide.enable && !Config?.options.bar.autoHide.pushWindows) ? 0 : Appearance.sizes.baseBarHeight + (Config.options.bar.cornerStyle === 1 ? Appearance.sizes.hyprlandGapsOut : 0) + (Config.options.bar.cornerStyle === 2 ? -6 : 0)
                 WlrLayershell.namespace: "quickshell:bar"
                 // Overlay layer only while special workspace sits on top of a fullscreen window on this monitor,
                 // else Top layer so fullscreen apps cover the bar as normal (Hyprland buries Top layer under fullscreen+special).
@@ -83,8 +88,8 @@ Scope {
                 // When Overlay-layer, bar shares a layer with the screen-corner click zones (ScreenCorners.qml)
                 // and same-layer overlap is resolved by stacking, not layer priority - bar was winning and
                 // swallowing the tiny corner-open hit rects. Carve them out of the bar's own mask so clicks
-                // reach the corners underneath. Only relevant on the edge the bar and corners share.
-                property bool cutOutCornerOpenZones: (monitorHasFullscreen && monitorHasSpecialOpen) && (Config.options.bar.bottom === Config.options.sidebar.cornerOpen.bottom)
+                // reach the corners underneath. The bar sits on one edge, so only that edge's two corners are cut.
+                property bool cutOutCornerOpenZones: (monitorHasFullscreen && monitorHasSpecialOpen) && Config.options.sidebar.cornerOpen.enable
                 property int cornerOpenCutWidth: cutOutCornerOpenZones ? Config.options.sidebar.cornerOpen.cornerRegionWidth : 0
                 property int cornerOpenCutHeight: cutOutCornerOpenZones ? Config.options.sidebar.cornerOpen.cornerRegionHeight : 0
                 mask: Region {
@@ -258,7 +263,7 @@ Scope {
                             bottom: undefined
                         }
                         height: Appearance.rounding.screenRounding
-                        active: showBarBackground && Config.options.bar.cornerStyle === 0 && !barContent.centerOnly// Hug
+                        active: showBarBackground && Config.options.bar.cornerStyle === 0 && !barContent.centerOnly && barRoot.showCorners// Hug
 
                         states: State {
                             name: "bottom"

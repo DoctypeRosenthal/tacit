@@ -24,13 +24,33 @@ Singleton {
         return root.cleanTitle(root.app, root.rawTitle);
     }
     readonly property string address: root.top?.HyprlandToplevel?.address ? `0x${root.top.HyprlandToplevel.address}` : ""
-    readonly property bool terminal: ["foot", "footclient", "kitty", "alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty"].includes(root.app)
+    readonly property var terminalApps: ["foot", "footclient", "kitty", "alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty"]
+    readonly property bool terminal: root.terminalApps.includes(root.app)
     // "browser" is Thyris's Qt build, "browser-cef" its CEF build (the one now run and packaged)
     readonly property bool thyris: root.app === "browser" || root.app === "browser-cef"
     readonly property bool browser: root.thyris || ["zen", "zen-browser", "firefox", "chromium", "thorium-browser", "google-chrome"].some(b => root.app.toLowerCase().includes(b))
     // A private window's title is nobody's business: nothing that happens in it is recorded.
-    // Opsis titles a private window "Private · <page>" (RailRows.privateTitle).
-    readonly property bool privateWindow: /private browsing|inprivate|incognito|privat fönster/i.test(root.rawTitle)
+    // Opsis titles a private window "Private · <page>" (RailRows.privateTitle). Firefox, Zen and Chrome put the
+    // mode in the window title in the interface's language and give the window no other mark, so the words are
+    // listed by language (stems, to take in the inflections); a miss records a title, so the list leans to
+    // taking in too much: a page with one of these words in its title is simply not recorded.
+    readonly property var privateWords: [
+        "private browsing", "inprivate", "incognito",                         // en, and the same word in most languages
+        "privater modus", "privates fenster", "inkognito",                    // de
+        "navigation priv[ée]e", "fen[êe]tre priv[ée]e",                       // fr
+        "navegaci[óo]n privada", "ventana privada", "incógnito",              // es
+        "navigazione anonima", "finestra anonima",                            // it
+        "navega[çc][ãa]o (privada|an[ôo]nima)", "janela (privada|an[ôo]nima)", // pt
+        "priv[ée]navigatie", "priv[ée]venster",                               // nl
+        "privat fönster", "privat surfning",                                  // sv
+        "приватн(ое|ый) (окно|просмотр|режим)", "инкогнито",                  // ru, uk
+        "tryb prywatny", "(prywatne|nowe prywatne) okno",                     // pl
+        "gizli (pencere|mod|gezinti)",                                        // tr
+        "プライベートブラウジング", "プライベートウィンドウ", "シークレット",       // ja
+        "无痕", "無痕", "隐私浏览", "隱私瀏覽", "시크릿"                            // zh, ko
+    ]
+    readonly property var privateTitle: new RegExp(root.privateWords.join("|"), "i")
+    readonly property bool privateWindow: root.privateTitle.test(root.rawTitle)
         || (root.thyris && /^Private( · |$)/.test(root.rawTitle))
 
     // "Tiger wallpapers 4k — Zen Browser" -> "Tiger wallpapers 4k"; Opsis's

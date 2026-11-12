@@ -34,12 +34,12 @@ PanelPage {
     function kindOf(it) {
         if ((it.images ?? []).length) return "picture";
         if (["Edit", "MultiEdit", "Write", "apply_patch", "NotebookEdit"].includes(it.tool) || (it.old ?? "").length || (it.patch ?? "").length) return "edit";
-        if (["Bash", "BashOutput", "exec", "shell", "KillShell"].includes(it.tool)) return "command";
+        if (["Bash", "BashOutput", "exec", "shell", "KillShell", "TaskOutput", "TaskStop"].includes(it.tool)) return "command";
         return "read";
     }
     function toolWord(t) {
         return ({ Bash: "Ran", BashOutput: "Output", exec: "Ran", shell: "Ran", KillShell: "Stopped", Grep: "Search", Glob: "Find", WebFetch: "Fetch",
-                  WebSearch: "Web", ToolSearch: "Tools", TodoWrite: "Todo", Task: "Agent", Agent: "Agent", Skill: "Skill", Monitor: "Watch" })[t] ?? (t ?? "");
+                  WebSearch: "Web", grep: "Search", find: "Find", ls: "Find", list: "Find", websearch: "Web", codesearch: "Web", ToolSearch: "Tools", TodoWrite: "Todo", Task: "Agent", Agent: "Agent", Skill: "Skill", Monitor: "Watch", TaskOutput: "Output", TaskStop: "Stopped" })[t] ?? Words.label(t);
     }
     function textOf(it) {
         if ((it.images ?? []).length) return String(it.summary || it.desc || "a picture").replace(/^~\//, "");
@@ -123,7 +123,8 @@ PanelPage {
     function lineKeyOf(block, i) {
         let n = block.lo, line = null, prev = "";
         for (const it of block.tools) {
-            if (it.kind === "thinking") continue;
+            // a thought is a line of its own, and ends the run before it (as ActivityGroup.lines)
+            if (it.kind === "thinking") { prev = "think"; continue; }
             const k = Words.kind(it);
             if (k !== prev) { line = it; prev = k; }
             if (n === i) return [(line.id ?? "").length ? `line:${line.id}` : "", it.id ?? ""];

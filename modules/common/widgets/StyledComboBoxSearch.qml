@@ -26,6 +26,31 @@ ComboBox {
         }).length
     }
 
+    // Whether row i is shown with the current search (the delegate hides the rest)
+    function matchesSearch(i) {
+        const item = root.model[i]
+        const display = typeof item === "object" ? (item[root.textRole] ?? "") : String(item)
+        return display.toLowerCase().includes(root.searchText.toLowerCase())
+    }
+
+    // Up and Down step over the rows the search hides
+    function stepHighlight(dir) {
+        for (let i = listView.currentIndex + dir; i >= 0 && i < (root.model?.length ?? 0); i += dir) {
+            if (root.matchesSearch(i)) {
+                listView.currentIndex = i
+                return
+            }
+        }
+    }
+
+    // Enter picks the row like a click does: the delegate's click sets the index, emits
+    // activated for the page to save it, and closes the popup
+    function activateHighlighted() {
+        const i = listView.currentIndex
+        if (i >= 0 && root.matchesSearch(i))
+            listView.currentItem?.clicked()
+    }
+
     implicitHeight: 40
     Layout.fillWidth: true
 
@@ -245,14 +270,10 @@ ComboBox {
                         font.family: Appearance.font.family.main
                         font.pixelSize: Appearance.font.pixelSize.normal
                         onTextChanged: root.searchText = text
-                        Keys.onDownPressed: listView.incrementCurrentIndex()
-                        Keys.onUpPressed: listView.decrementCurrentIndex()
-                        Keys.onReturnPressed: {
-                            if (listView.currentIndex >= 0) {
-                                root.currentIndex = listView.currentIndex
-                                root.popup.close()
-                            }
-                        }
+                        Keys.onDownPressed: root.stepHighlight(1)
+                        Keys.onUpPressed: root.stepHighlight(-1)
+                        Keys.onReturnPressed: root.activateHighlighted()
+                        Keys.onEnterPressed: root.activateHighlighted()
                     }
 
                     MaterialSymbol {

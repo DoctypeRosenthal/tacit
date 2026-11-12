@@ -80,7 +80,10 @@ FocusScope {
         const s = r.session ?? {};
         if (s.resume)
             return s.resume;
-        return (r.tool || s.tool) === "codex" ? `codex resume ${r.id}` : `claude --resume ${r.id}`;
+        // as Conversation.resumeCommand: each agent's own command, from the session's folder (they look sessions up per folder)
+        const run = { codex: `codex resume ${r.id}`, pi: `pi --session ${r.id}`, opencode: `opencode --session ${r.id}` }[r.tool || s.tool] ?? `claude --resume ${r.id}`;
+        const cwd = s.cwd || r.cwd || "";
+        return cwd ? `cd '${cwd.replace(/'/g, "'\\''")}' && ${run}` : run;
     }
 
     // line: {kind: "row", verb, arg, label, key, detail, note, mono, why, dirty, middle} or {kind: "rule"}.
@@ -121,7 +124,7 @@ FocusScope {
             menu.line({ verb: "archive", arg: id, label: r.archived ? "Unarchive" : "Archive" }),
             // Codex and opencode keep their sessions: the delete archives them (FolderModel.sendDelete)
             menu.line({ verb: "delete", arg: id, label: "Delete", key: "Del", why: host || (!menu.caps?.delete ? no : held),
-                        note: tool === "codex" || tool === "opencode" ? `${agent} keeps it: it goes to Archived` : "" })
+                        note: tool !== "codex" && tool !== "opencode" ? "" : r.archived ? `${agent} keeps it: it leaves Praxis` : `${agent} keeps it: it goes to Archived` })
         ];
     }
     function folderLines(r) {

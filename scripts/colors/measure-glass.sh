@@ -10,7 +10,8 @@ generated="$XDG_STATE_HOME/quickshell/user/generated"
 [ -e "$generated/seethrough.json" ] && exit 0
 config="$XDG_CONFIG_HOME/illogical-impulse/config.json"
 wall=$(jq -r '.background.wallpaperPath // ""' "$config" 2>/dev/null)
-case "${wall##*.}" in mp4|webm|mkv|avi|mov) wall=$(jq -r '.background.thumbnailPath // ""' "$config" 2>/dev/null) ;; esac
+ext="${wall##*.}"
+case "${ext,,}" in mp4|webm|mkv|avi|mov) wall=$(jq -r '.background.thumbnailPath // ""' "$config" 2>/dev/null) ;; esac
 # a new account has no wallpaper yet: its first start picks dusk through switchwall.sh, which measures it
 [ -f "$wall" ] && [ -f "$generated/colors.json" ] || exit 0
 source "$SCRIPT_DIR/../venv.sh"

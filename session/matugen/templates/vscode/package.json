@@ -1,0 +1,14 @@
+{
+  "name": "martida-theme",
+  "displayName": "Martida",
+  "description": "Martida colours, made from the wallpaper by matugen",
+  "version": "1.0.0",
+  "publisher": "tacit",
+  "engines": { "vscode": "^1.60.0" },
+  "categories": ["Themes"],
+  "contributes": {
+    "themes": [
+      { "label": "Martida", "uiTheme": "vs-dark", "path": "./themes/martida-color-theme.json" }
+    ]
+  }
+}

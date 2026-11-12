@@ -12,7 +12,11 @@ Rectangle {
     implicitWidth: label.implicitWidth + 28
     implicitHeight: 28
     radius: 14
-    color: ColorUtils.transparentize(Appearance.m3colors.m3onSurface, area.pressed ? 0.8 : area.containsMouse ? 0.84 : 0.9)
+    activeFocusOnTab: true
+    Keys.onReturnPressed: button.clicked()
+    Keys.onEnterPressed: button.clicked()
+    Keys.onSpacePressed: button.clicked()
+    color: ColorUtils.transparentize(Appearance.m3colors.m3onSurface, area.pressed ? 0.8 : area.containsMouse || button.activeFocus ? 0.84 : 0.9)
     Behavior on color { ColorAnimation { duration: 140 } }
     StyledText {
         id: label

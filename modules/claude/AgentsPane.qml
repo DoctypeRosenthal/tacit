@@ -28,11 +28,13 @@ Item {
     property var tabs: []
     property string root: "agents"    // the tab showing: "agents" or "results"
     property var files: null          // the side panel: a step's file opens there
+    property string cwd: ""           // the session's folder, where a report's relative file is looked for
     signal tabPicked(string key)
     signal closeRequested()
     signal stopRequested(string task)
     signal pictureRequested(string path)
     signal reviewRequested()          // Results: the session's changes in the review
+    signal restartHostRequested()     // Results: the background service is too old for them
 
     // ── the trail ───────────────────────────────────────────────────────────
     // entries: { k: "results" | "finding" | "list" | "run" | "agent" | "file", id, y, f: {folds, filter, ...}, came }
@@ -109,6 +111,18 @@ Item {
     function openStep(agent, i) { pane.push({ k: "agent", id: agent, f: { jump: i } }); }
     // a finding is known by its first source and its title; the page keeps the finding as it was
     function openFinding(f) { pane.push({ k: "finding", id: `${f.sources?.[0]?.source ?? ""}|${f.title}`, f: { finding: f } }); }
+    // A finding's file as the report wrote it ("F.qml", "F.qml:14", "dir/F.qml", "/abs/F.qml:14", "~/F.qml")
+    // placed: its absolute path (a file the agents changed first, else the session's folder) and line;
+    // path "" when it cannot be placed.
+    function fileOf(raw, line) {
+        const m = /^(.*?)(?::(\d+)(?::\d+)?)?$/.exec(String(raw ?? "").trim());
+        const rel = m[1].replace(/^\.\//, "");
+        const at = Number(m[2]) || Number(line) || 0;
+        if (!rel.length) return { path: "", line: 0 };
+        if (rel.startsWith("/") || rel.startsWith("~/")) return { path: rel, line: at };
+        const changed = (pane.results?.changes ?? []).find(c => c.path === rel || c.path.endsWith("/" + rel));
+        return { path: changed ? changed.path : pane.cwd.length ? `${pane.cwd}/${rel}` : "", line: at };
+    }
     // a file the session's agents changed: their steps are read so the file page can show each edit
     function openFileBy(path, by) {
         for (const b of (by ?? []).slice(0, 12)) if (!pane.stepsBy[b.source] && !String(b.source).startsWith("turn-")) pane.loadSteps(b.source);
@@ -309,16 +323,17 @@ Item {
     }
     function took(a) { return a && a.started > 0 ? Words.span((a.state === "running" ? pane.now : (a.ended || a.started)) - a.started) : ""; }
     function firstSentence(t) { const s = String(t ?? "").replace(/\s+/g, " ").trim(); const m = s.match(/^.*?[.!?](\s|$)/); return (m ? m[0] : s).trim(); }
-    // the line under an agent's name: the step it is on, what stopped it, or how it went
+    // the line under an agent's name: the step it is on, what stopped it (the host's outcome: the first sentence of its report), or how it went
     function lineOf(a) {
         if (!a) return "";
         if (a.state === "running") return a.last ? `${a.last.desc || a.last.summary || a.last.tool || ""}` : "Starting";
         if (a.state === "failed") {
             const run = a.inRun ? pane.runs.find(r => r.run === a.inRun) : null;
-            return [pane.firstSentence(a.error ?? "It stopped with an error"), run ? `in ${pane.runName(run)}` : ""].filter(x => x).join(" · ");
+            return [pane.firstSentence(a.error ?? a.outcome ?? "It stopped with an error"), run ? `in ${pane.runName(run)}` : ""].filter(x => x).join(" · ");
         }
         if (a.state === "stopped") return "Stopped";
-        return `${a.steps ?? 0} steps`;
+        const n = a.steps ?? 0;
+        return `${n} ${n === 1 ? "step" : "steps"}`;
     }
 
     // ── who started whom, built once per reply ─────────────────────────────

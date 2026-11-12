@@ -7,12 +7,13 @@ import qs.services
 QuickToggleModel {
     id: root
     name: Translation.tr("Game mode")
-    toggled: !confOpt.value
+    // Hyprland's own answer decides, not the click: assigning toggled here would drop this binding for good,
+    // and until the first answer value is undefined, which must not read as animations off
+    toggled: confOpt.value === 0
     icon: "gamepad"
 
     mainAction: () => {
-        root.toggled = !root.toggled;
-        if (root.toggled) {
+        if (!root.toggled) {
             HyprlandConfig.setMany({
                 "animations:enabled": 0,
                 "decoration:shadow:enabled": 0,

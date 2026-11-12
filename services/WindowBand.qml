@@ -159,11 +159,12 @@ Singleton {
     signal menuReleased(string address)
 
     // where the held window goes, for the plugin's flight: the dock's button (on the dock's screen, from PaletteDock)
-    // or the notch as it is (it goes in under their glass)
-    function reportHide(x, y, w, h) {
+    // or the notch as it is (it goes in under their glass). x and y are in the dock's window, so they are placed by the
+    // screen that window is on, which is not always the held window's (the dock rises on the focused one).
+    function reportHide(x, y, w, h, screen = null) {
         if (root.dragAddress.length === 0)
             return;
-        const s = root.screenOf(root.dragAddress);
+        const s = screen ?? root.screenOf(root.dragAddress);
         Quickshell.execDetached(["hyprctl", "tacitgrip", "target", root.dragAddress, "hide",
                                  `${s.x + x}`, `${s.y + y}`, `${w}`, `${h}`]);
     }

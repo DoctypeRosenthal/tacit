@@ -48,9 +48,9 @@ Scope {
                     }
                 }
                 property bool superShow: false
-                property bool mustShow: hoverRegion.containsMouse || superShow
+                property bool mustShow: hoverRegion.containsMouse || superShow || (GlobalStates.barHolds[barRoot.screen?.name] ?? 0) > 0
                 exclusionMode: ExclusionMode.Ignore
-                exclusiveZone: (Config?.options.bar.autoHide.enable && (!mustShow || !Config?.options.bar.autoHide.pushWindows)) ? 0 :
+                exclusiveZone: (Config?.options.bar.autoHide.enable && !Config?.options.bar.autoHide.pushWindows) ? 0 :
                     Appearance.sizes.baseVerticalBarWidth + (Config.options.bar.cornerStyle === 1 ? Appearance.sizes.hyprlandGapsOut : 0)
                     + (Config.options.bar.cornerStyle === 3 ? (Appearance.sizes.hyprlandGapsOut || 5) : 0)
                 WlrLayershell.namespace: "quickshell:verticalBar"
@@ -178,7 +178,7 @@ Scope {
                                 target: barContent
                                 anchors.topMargin: 0
                                 anchors.rightMargin: (Config?.options.bar.autoHide.enable && !mustShow)
-                                    ? -Appearance.sizes.barHeight
+                                    ? -Appearance.sizes.verticalBarWidth
                                     : (Config.options.bar.cornerStyle === 3 ? (Appearance.sizes.hyprlandGapsOut || 5) : 0)
                             }
                         }

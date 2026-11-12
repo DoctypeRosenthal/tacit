@@ -7,8 +7,9 @@ import qs.services
 import qs.modules.common
 
 /**
- * Removable disks as the desktop sees them: a stick, a card, a phone's storage, a mounted
- * image. udisks says when one comes or goes; lsblk says what it is. Files' rail lists them,
+ * Disks as the desktop sees them: a stick, a card, a phone's storage, a mounted image, and the
+ * computer's other internal drives (not the system's own partitions). udisks says when one comes
+ * or goes; lsblk says what it is. Files' rail lists them,
  * a click mounts and enters, the eject glyph unmounts (and powers a USB device off, so it is
  * safe to pull); the notch peeks when one appears. Nothing is mounted by itself.
  */
@@ -34,7 +35,7 @@ Singleton {
 
     Process {
         id: lsblk
-        command: ["lsblk", "-J", "-o", "NAME,PATH,LABEL,MOUNTPOINT,RM,HOTPLUG,SIZE,TYPE,FSTYPE,TRAN"]
+        command: ["lsblk", "-J", "-o", "NAME,PATH,LABEL,MOUNTPOINT,MOUNTPOINTS,RM,HOTPLUG,SIZE,TYPE,FSTYPE,TRAN,PARTTYPE"]
         stdout: StdioCollector {
             onStreamFinished: root.absorb(text)
         }
@@ -48,7 +49,7 @@ Singleton {
     Process {
         id: findRootDisk
         running: true
-        command: ["bash", "-c", 'src=$(findmnt -no SOURCE --nofsroot /) || exit 0; pk=$(lsblk -no PKNAME "$src" 2>/dev/null | head -1); [ -n "$pk" ] && echo "$pk" || lsblk -no KNAME "$src" 2>/dev/null | head -1']
+        command: ["bash", "-c", 'src=$(findmnt -no SOURCE --nofsroot /) || exit 0; lsblk -nso KNAME,TYPE "$src" 2>/dev/null | awk \'$2=="disk"||$2=="loop"{print $1; exit}\'']
         stdout: StdioCollector {
             id: rootDiskCollector
             onStreamFinished: {
@@ -71,21 +72,35 @@ Singleton {
             return;
         }
         let next = [];
-        const walk = (d, parent, onRootDisk) => {
-            const usb = d.tran === "usb" || parent?.tran === "usb";
-            const removable = d.rm === true || d.hotplug === true || parent?.rm === true || parent?.hotplug === true;
+        // An internal drive is listed unless it is the system's: mounted at / or under /boot, /efi, /home, /usr,
+        // /var and the like, a boot (ESP), reserved or recovery partition, or a container (LUKS, LVM, RAID member)
+        // that has nothing to mount until it is opened.
+        const systemMount = m => m === "/" || m === "[SWAP]" || /^\/(boot|efi|home|usr|var|etc|opt|srv|nix|tmp)(\/|$)/.test(m);
+        const hiddenPart = new Set(["c12a7328-f81f-11d2-ba4b-00a0c93ec93b", "e3c9e316-0b5c-4db8-817d-f92df00215ae",
+            "de94bba4-06d1-4d40-a16a-bfd50179d6ac", "21686148-6449-6e6f-744e-656564454649", "0xef", "0x27"]);
+        const walk = (d, onRootDisk, upUsb, upRemovable) => {
+            const usb = upUsb || d.tran === "usb";
+            const removable = upRemovable || d.rm === true || d.hotplug === true;
             const loop = d.type === "loop";
-            // Partition names carry their disk's name (sda -> sda2, nvme0n1 -> nvme0n1p2), and
-            // the flag is handed down so a mapper or a child of a partition is caught too.
-            const onBootDisk = onRootDisk || (root.rootDisk.length > 0 && (d.name ?? "").startsWith(root.rootDisk));
-            if (!onBootDisk && (d.fstype ?? "").length > 0 && (usb || removable || loop) && d.fstype !== "swap" && d.mountpoint !== "/") {
-                next.push({ "path": d.path, "name": d.name, "label": d.label ?? "", "mountpoint": d.mountpoint ?? "", "size": d.size ?? "", "fstype": d.fstype, "usb": usb, "loop": loop });
+            // rootDisk is the whole disk under the root (through a mapper or LVM too), and the flag is
+            // handed down so every partition and mapper on it is caught.
+            const onBootDisk = onRootDisk || (root.rootDisk.length > 0 && d.name === root.rootDisk);
+            const fs = d.fstype ?? "";
+            const mounts = (d.mountpoints ?? [d.mountpoint]).filter(m => (m ?? "").length > 0);
+            let listed = false;
+            if (fs.length > 0 && fs !== "swap" && d.mountpoint !== "/") {
+                if (usb || removable || loop)
+                    listed = !onBootDisk;   // on a USB install its other partitions (/boot, the ESP, /home) look removable
+                else
+                    listed = !mounts.some(systemMount) && !hiddenPart.has((d.parttype ?? "").toLowerCase()) && !/_member$|^crypto_LUKS$|^bcache$/.test(fs);
             }
+            if (listed)
+                next.push({ "path": d.path, "name": d.name, "label": d.label ?? "", "mountpoint": d.mountpoint ?? "", "size": d.size ?? "", "fstype": fs, "usb": usb, "loop": loop });
             for (const c of d.children ?? [])
-                walk(c, d, onBootDisk);
+                walk(c, onBootDisk, usb, removable);
         };
         for (const d of tree)
-            walk(d, null, false);
+            walk(d, false, false, false);
         const before = root.list;
         const now = Date.now();
         for (const d of next) {

@@ -182,8 +182,12 @@ Variants {
             right: true
         }
         color: {
-            if (!bgRoot.wallpaperSafetyTriggered || bgRoot.wallpaperIsVideo)
+            // A video is drawn under this window, so it stays clear; a picture that is late or
+            // cannot load shows the palette's ground, not the compositor's background.
+            if (bgRoot.wallpaperIsVideo)
                 return "transparent";
+            if (!bgRoot.wallpaperSafetyTriggered)
+                return Appearance.m3colors.m3background;
             return CF.ColorUtils.mix(Appearance.colors.colLayer0, Appearance.colors.colPrimary, 0.75);
         }
         Behavior on color {
@@ -192,8 +196,8 @@ Variants {
 
         Component.onCompleted: {
             previousWallpaper.target = ""
-            wallpaper.target = bgRoot.wallpaperSafetyTriggered ? "" : bgRoot.wallpaperPath
-            bgRoot.currentWallpaperSource = bgRoot.wallpaperPath
+            wallpaper.target = bgRoot.wallpaperSafetyTriggered ? "" : bgRoot.pictureOf(bgRoot.wallpaperPath)
+            bgRoot.currentWallpaperSource = bgRoot.pictureOf(bgRoot.wallpaperPath)
             bgRoot.previousWallpaperSource = ""
             bgRoot.transitionProgress = 1.0
             if (bgRoot.wallpaperAnimation !== "") {
@@ -202,6 +206,18 @@ Variants {
                     : bgRoot.wallpaperAnimation
             }
             bgRoot.videoRevealed = bgRoot.wallpaperIsVideo
+        }
+
+        // The hiding follows the network as well as the picture: joining a flagged network hides a
+        // picture already on screen, and leaving it brings the picture back (the path has not
+        // changed then, so nothing else would load it).
+        onWallpaperSafetyTriggeredChanged: {
+            transitionAnim.stop()
+            previousWallpaper.target = ""
+            bgRoot.previousWallpaperSource = ""
+            bgRoot.transitionProgress = 1.0
+            wallpaper.target = wallpaperSafetyTriggered ? "" : bgRoot.pictureOf(wallpaperPath)
+            bgRoot.currentWallpaperSource = bgRoot.pictureOf(wallpaperPath)
         }
 
         onWallpaperPathChanged: {
@@ -213,16 +229,16 @@ Variants {
                 return
             }
             if (bgRoot.wallpaperAnimation === "") {
-                wallpaper.target = wallpaperPath
-                bgRoot.currentWallpaperSource = wallpaperPath
+                wallpaper.target = bgRoot.pictureOf(wallpaperPath)
+                bgRoot.currentWallpaperSource = bgRoot.pictureOf(wallpaperPath)
                 if (!bgRoot.wallpaperIsVideo) return
                 bgRoot.videoRevealed = true
                 return
             }
 
             previousWallpaper.target = bgRoot.currentWallpaperSource
-            wallpaper.target = wallpaperPath
-            bgRoot.currentWallpaperSource = wallpaperPath
+            wallpaper.target = bgRoot.pictureOf(wallpaperPath)
+            bgRoot.currentWallpaperSource = bgRoot.pictureOf(wallpaperPath)
             if (bgRoot.wallpaperAnimation === "random") {
                 bgRoot.currentShader = bgRoot.shaderList[Math.floor(Math.random() * bgRoot.shaderList.length)]
             } else {
@@ -237,6 +253,13 @@ Variants {
                 transitionAnim.restart()
         }
 
+        // An empty path (nothing chosen yet, or a video whose thumbnail is not made) is Tacit's own
+        // wallpaper, as BootLockSurface.qml does, so the desktop never sits without a picture.
+        readonly property string defaultWallpaper: Quickshell.shellPath("assets/wallpapers/dusk.jpg")
+        function pictureOf(path) {
+            return path === "" ? bgRoot.defaultWallpaper : path;
+        }
+
         // A picture Qt cannot decode (missing, truncated, an unknown format, or past Qt's image
         // allocation limit) never reaches Image.Ready, so the crossfade would sit at 0 forever
         // with a full-screen shader on top of it. Keep what is on screen and say what failed.
@@ -247,10 +270,16 @@ Variants {
             if (keep.length > 0) {
                 wallpaper.target = keep;
                 bgRoot.currentWallpaperSource = keep;
+            } else if (wallpaper.target !== bgRoot.defaultWallpaper) {
+                // nothing to keep (the first picture failed, or the file is gone): show the default
+                // one, unless that is the one that failed.
+                wallpaper.target = bgRoot.defaultWallpaper;
+                bgRoot.currentWallpaperSource = bgRoot.defaultWallpaper;
             }
             previousWallpaper.target = "";
             bgRoot.previousWallpaperSource = "";
-            Wallpapers.reportUnloadable(CF.FileUtils.trimFileProtocol(String(failedSource)));
+            if (String(failedSource).length > 0)
+                Wallpapers.reportUnloadable(CF.FileUtils.trimFileProtocol(String(failedSource)));
         }
 
         Timer {
@@ -303,12 +332,11 @@ Variants {
         Item {
             id: backgroundContent
             anchors.fill: parent
+            // No fade either way: leaving a full-screen desktop, a fade-in from nothing shows what is
+            // under the picture (the window's ground, or the boot still on a video) for its length,
+            // and going in, the full-screen window covers the picture already.
             opacity: bgRoot.hiddenForFullscreen ? 0 : 1
             enabled: !bgRoot.hiddenForFullscreen
-
-            Behavior on opacity {
-                NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
-            }
 
             // The picture is decoded at the size that covers the panel's own pixels and cut to them
             // (WallpaperImage): a high-megapixel picture never decodes at native size, and during a
@@ -510,13 +538,14 @@ Variants {
 
                 StyledImage {
                     anchors.fill: parent
-                    source: bgRoot.wallpaperPath
+                    source: CF.FileUtils.fileUrl(bgRoot.pictureOf(bgRoot.wallpaperPath))
                     fillMode: Image.PreserveAspectCrop
                     cache: false
                     mipmap: true
                     antialiasing: true
-                    sourceSize.width: parent.width
-                    sourceSize.height: parent.height
+                    // device pixels at the compositor's scale (panelPixels), as the main picture
+                    sourceSize.width: parent.width * bgRoot.panelPixels.width / bgRoot.screen.width
+                    sourceSize.height: parent.height * bgRoot.panelPixels.height / bgRoot.screen.height
                 }
             }
 
@@ -887,15 +916,25 @@ Variants {
                 anchors.fill: parent
                 z: -2
                 acceptedButtons: Qt.LeftButton | Qt.RightButton
+                // On the press as well as the click: a touchpad's two-finger tap sends its press and release in the same
+                // instant, and the menu did not open for it where a mouse's click did (Discord, ://VIProto). Both do the
+                // same, so a press that opened it and a click after it leave it open.
+                function openMenu(mouse) {
+                    GlobalStates.desktopMenuScreen = bgRoot.screen
+                    GlobalStates.desktopMenuX = mouse.x
+                    GlobalStates.desktopMenuY = mouse.y
+                    GlobalStates.desktopMenuOpen = true
+                }
+                onPressed: (mouse) => {
+                    if (mouse.button === Qt.RightButton)
+                        desktopRightClickArea.openMenu(mouse)
+                }
                 onClicked: (mouse) => {
                     if (mouse.button === Qt.LeftButton) {
                         DesktopIcons.clear()
                         return
                     }
-                    GlobalStates.desktopMenuScreen = bgRoot.screen
-                    GlobalStates.desktopMenuX = mouse.x
-                    GlobalStates.desktopMenuY = mouse.y
-                    GlobalStates.desktopMenuOpen = true
+                    desktopRightClickArea.openMenu(mouse)
                 }
             }
         }

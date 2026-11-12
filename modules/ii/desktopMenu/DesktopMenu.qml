@@ -47,6 +47,7 @@ Scope {
         }
         showDirs: false
         nameFilters: ["*.jpg", "*.jpeg", "*.png", "*.webp"]
+        caseSensitive: false
     }
 
     property int carouselExtraCount: 5
@@ -207,8 +208,10 @@ Scope {
                     MenuPictures {
                         Layout.fillWidth: true
                         model: root.carouselModel
-                        onPicked: (path) => {
-                            Wallpapers.select(path, Appearance.m3colors.darkmode)
+                        onPicked: (path, index) => {
+                            // The first card shows a live wallpaper as its thumbnail: apply the wallpaper itself
+                            const current = FileUtils.trimFileProtocol(Config.options.background.wallpaperPath)
+                            Wallpapers.select(index === 0 && current ? current : path, Appearance.m3colors.darkmode)
                             GlobalStates.desktopMenuOpen = false
                         }
                     }
@@ -219,7 +222,7 @@ Scope {
                     MenuRow {
                         id: wallpaperRow
                         glyph: "format_paint"
-                        label: "Wallpaper & style"
+                        label: Translation.tr("Wallpaper & style")
                         trail: "chevron_right"
                         open: menuWindow.openSubmenuComponent === wallpaperSubmenu
                         Component {
@@ -236,7 +239,7 @@ Scope {
                     MenuRow {
                         id: widgetsRow
                         glyph: "widgets"
-                        label: "Widgets"
+                        label: Translation.tr("Widgets")
                         trail: "chevron_right"
                         open: menuWindow.openSubmenuComponent === widgetsSubmenu
                         Component {
@@ -251,7 +254,7 @@ Scope {
 
                     MenuRow {
                         glyph: "desktop_windows"
-                        label: DesktopIcons.hidden ? "Show icons" : "Hide icons"
+                        label: DesktopIcons.hidden ? Translation.tr("Show icons") : Translation.tr("Hide icons")
                         onClicked: {
                             GlobalStates.desktopMenuOpen = false
                             DesktopIcons.setHidden(!DesktopIcons.hidden)
@@ -260,7 +263,7 @@ Scope {
 
                     MenuRow {
                         glyph: "stacks"
-                        label: "Shelf"
+                        label: Translation.tr("Shelf")
                         hint: DropShelf.items.length > 0 ? String(DropShelf.items.length) : ""
                         trail: DropShelf.items.length > 0 ? "" : "chevron_right"
                         onClicked: {
@@ -274,7 +277,7 @@ Scope {
 
                     MenuRow {
                         glyph: "video_template"
-                        label: "Live wallpaper"
+                        label: Translation.tr("Live wallpaper")
                         onClicked: {
                             GlobalStates.desktopMenuOpen = false
                             Wallpapers.openFallbackPicker(
@@ -288,7 +291,7 @@ Scope {
 
                     MenuRow {
                         glyph: "settings"
-                        label: "Settings"
+                        label: Translation.tr("Settings")
                         onClicked: {
                             GlobalStates.desktopMenuOpen = false
                             SettingsApp.open("")

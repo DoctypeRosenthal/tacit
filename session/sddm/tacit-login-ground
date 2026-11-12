@@ -1,15 +1,25 @@
 #!/usr/bin/env python3
-"""tacit-login-ground: the person's lock ground and colours for Tacit's login screen. Run as root by SDDM before the
-greeter starts (sddm.service.d/tacit-login.conf): the greeter runs as the sddm user, who cannot read home folders.
+"""tacit-login-ground: the person's lock ground and colours for Tacit's login screen. Run as root before the first
+greeter (sddm.service.d/tacit-login.conf) and again as a person logs out (tacit-login-ground.service, started by the
+shell), so the greeter that comes back shows the wallpaper chosen since: the greeter runs as the sddm user, who cannot
+read home folders.
 
 Takes the newest lock ground among the people on this computer (with one person, theirs; tacit-boot-ground writes it
 on every wallpaper change) and their colours, into /var/lib/tacit-login: ground.png and theme.conf, which the theme's
 theme.conf.user links to. Only a plain file the person owns is read, never a link, a pipe or someone else's file.
 Nothing found: the theme's own fallbacks (Tacit's palette, no picture).
+
+It also gives the greeter's compositor (weston) the keyboard layout Setup chose, from /etc/vconsole.conf, as a [keyboard]
+section in /etc/xdg/weston/weston.ini; weston reads that file when it is there and starts without it when it is not
+(--config would refuse to start). A file of someone else's at that path is left alone.
 """
-import json, os, pwd, shutil, stat, tempfile
+import json, os, pwd, re, shutil, stat, tempfile
 
 OUT = "/var/lib/tacit-login"
+VCONSOLE = "/etc/vconsole.conf"
+XKB = "/usr/share/X11/xkb/symbols"
+WESTON_INI = "/etc/xdg/weston/weston.ini"
+MARK = "# written by tacit-login-ground"
 KEYS = {"surface": "surface", "surfaceContainerHigh": "surface_container_high", "onSurface": "on_surface",
         "onSurfaceVariant": "on_surface_variant", "primary": "primary", "error": "error"}
 
@@ -25,7 +35,56 @@ def owned(path, uid):
         return None
     return os.fdopen(fd, "rb")
 
+def vconsole(key):
+    try:
+        with open(VCONSOLE) as f:
+            m = re.search(r"^" + key + r"=[\"']?([^\"'\n]*)", f.read(), re.M)
+    except OSError:
+        return ""
+    return m.group(1) if m else ""
+
+def keyboard():
+    """the keyboard section of the greeter's weston.ini, from what Setup wrote to /etc/vconsole.conf; None when it
+    names no layout this computer has: a keymap weston cannot build would leave the greeter with no keys at all"""
+    layout = vconsole("XKBLAYOUT")
+    layouts = layout.split(",")
+    if not re.fullmatch(r"[A-Za-z0-9_]+(,[A-Za-z0-9_]+)*", layout) \
+            or not all(os.path.isfile(os.path.join(XKB, l)) for l in layouts):
+        return None
+    section = ["[keyboard]", f"keymap_layout={layout}"]
+    # one variant for each layout, each one the layout's file has (an empty one is the layout's own)
+    variant = vconsole("XKBVARIANT")
+    variants = variant.split(",")
+    if len(variants) == len(layouts) and any(variants) and all(
+            re.fullmatch(r"[A-Za-z0-9_]*", v) and (not v or re.search(r'xkb_symbols\s+"' + v + '"', open(os.path.join(XKB, l)).read()))
+            for l, v in zip(layouts, variants)):
+        section.append(f"keymap_variant={variant}")
+    return "\n".join(section)
+
+def weston_keyboard():
+    try:
+        with open(WESTON_INI) as f:
+            ours = f.readline().startswith(MARK)
+    except OSError:
+        ours = False
+    if os.path.lexists(WESTON_INI) and not ours:
+        return
+    section = keyboard()
+    if section is None:
+        if ours:
+            os.remove(WESTON_INI)
+        return
+    os.makedirs(os.path.dirname(WESTON_INI), mode=0o755, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", dir=os.path.dirname(WESTON_INI), delete=False) as tmp:
+        tmp.write(MARK + "\n" + section + "\n")
+    os.chmod(tmp.name, 0o644)
+    os.replace(tmp.name, WESTON_INI)
+
 def main():
+    try:
+        weston_keyboard()
+    except OSError:
+        pass
     best = None
     for p in pwd.getpwall():
         if not 1000 <= p.pw_uid < 60000 or not p.pw_dir.startswith("/"):

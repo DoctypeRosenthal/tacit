@@ -31,7 +31,8 @@ Scope {
         id: cornerPanelWindow
         property var corner
 
-        visible: Config.options.bar.showFrame 
+        // A corner joins two strips, so it shows only where both are drawn.
+        visible: root.frameVisibleFor(cornerWidget.isTop ? "top" : "bottom") && root.frameVisibleFor(cornerWidget.isLeft ? "left" : "right")
         exclusionMode: ExclusionMode.Ignore
         mask: Region {}
         WlrLayershell.namespace: "quickshell:screenframe-corner"

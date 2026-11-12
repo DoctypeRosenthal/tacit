@@ -22,7 +22,7 @@ Flow {
             Image {
                 id: img
                 anchors.centerIn: parent
-                source: `file://${modelData}`
+                source: FileUtils.fileUrl(modelData)
                 asynchronous: true
                 fillMode: Image.PreserveAspectFit
                 sourceSize.height: 400

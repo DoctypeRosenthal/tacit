@@ -16,6 +16,15 @@ Scope {
     property Component regionComponent: Component {
         Region {}
     }
+    // The mask holds only pointers to its Regions, so each rebuild of the list destroys the Regions of the last
+    // one (a Region that is destroyed leaves its parent's list by itself). Mutated in place, not assigned: this
+    // runs inside the mask's binding, and an assignment would re-run it.
+    property var maskRegions: []
+    function regionsFor(widgets) {
+        maskRegions.splice(0).forEach(region => region.destroy());
+        widgets.forEach(widget => maskRegions.push(regionComponent.createObject(root, { item: widget })));
+        return maskRegions.slice();
+    }
     
     // The window outlives the close by the toolbar's close curve (450 ms) so it can retract. Set by
     // hand, not bound: a binding on the open flag would drop the window before the timer could start.
@@ -52,9 +61,7 @@ Scope {
 
             mask: Region {
                 item: GlobalStates.overlayOpen ? overlayContent : null
-                regions: OverlayContext.clickableWidgets.map((widget) => regionComponent.createObject(this, {
-                    item: widget
-                }));
+                regions: root.regionsFor(OverlayContext.clickableWidgets)
             }
 
             anchors {

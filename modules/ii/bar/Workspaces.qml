@@ -60,11 +60,19 @@ ButtonMouseArea {
         else if (mouse.button == Qt.RightButton)
             GlobalStates.overviewOpen = !GlobalStates.overviewOpen;
     }
+    // A wheel notch is 120; a touchpad sends many small deltas, so add them up and
+    // switch once per notch's worth.
+    property real wheelDelta: 0
     onWheel: event => {
-        if (event.angleDelta.y < 0)
+        root.wheelDelta += event.angleDelta.y;
+        while (root.wheelDelta <= -120) {
             WM.switchWorkspaceRelative("next");
-        else if (event.angleDelta.y > 0)
+            root.wheelDelta += 120;
+        }
+        while (root.wheelDelta >= 120) {
             WM.switchWorkspaceRelative("prev");
+            root.wheelDelta -= 120;
+        }
     }
 
     // Indications

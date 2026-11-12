@@ -33,6 +33,7 @@ Item {
     property string query: ""
     property var found: []            // full-text hits, already filtered as history is
     property bool searching: false
+    property string searchError: ""   // set when the transcript search failed: not the same as finding nothing
     property var filter: ({ needs: false, running: false, range: "", agents: [] })   // range: "" | today | week
     property bool frozen: false
     property string selectedId: ""
@@ -321,13 +322,21 @@ Item {
     property var deleting: ({})       // id -> {at, title, tool}; at 0: due, waiting for agent-host
     property var gone: ({})           // id -> true: sent or deleted, out of the rows until history drops it
     property var sent: ({})           // id -> when the delete went to agent-host, until it answers
+    // "archived": a Codex or opencode session nobody is running went to Archived at once (the undo minute held it
+    // out of Archived, so Archive looked empty until the minute, or a restart, had passed); "undo": the undo row
     function scheduleDelete(id) {
         const s = fm.byId[id];
-        if (!s || fm.deleting[id]) return;
+        if (!s || fm.deleting[id]) return "";
+        const tool = s.tool || "claude";
+        if ((tool === "codex" || tool === "opencode") && !fm.archived.includes(id) && fm.stateOf(id) === "past") {
+            fm.toggleArchive(id);
+            return "archived";
+        }
         const d = Object.assign({}, fm.deleting);
-        d[id] = { at: Date.now(), title: fm.titleOf(s), tool: s.tool || "claude" };
+        d[id] = { at: Date.now(), title: fm.titleOf(s), tool: tool };
         fm.deleting = d;
         fm.dirty();
+        return "undo";
     }
     function undoDelete(id) {
         if (!fm.deleting[id]) return;
@@ -344,11 +353,14 @@ Item {
         fm.dirty();
     }
     // Codex and opencode sessions are archived instead: hidden here, kept by the agent (owner, 2026-10-03).
+    // One that is in Archived already is deleted from there for good as far as Praxis goes: the host puts it in the
+    // agent's own archive, which the agent can undo, and it leaves the list. That deleted nothing before: the
+    // session was archived again, so it stayed in Archived and "deleted" was a lie.
     // false while agent-host is not connected: a request then would get no answer, so the undo row
     // stays and a later tick sends it.
     function sendDelete(id, tool) {
-        if (tool === "codex" || tool === "opencode") {
-            if (!fm.archived.includes(id)) fm.toggleArchive(id);
+        if ((tool === "codex" || tool === "opencode") && !fm.archived.includes(id)) {
+            fm.toggleArchive(id);
             return true;
         }
         if (!fm.host) { fm.deleted(id, "the background service is not answering"); return true; }
@@ -360,7 +372,12 @@ Item {
         fm.host.request({ op: "delete", id: id }, m => {
             const waited = id in fm.sent;
             if (waited) { const s2 = Object.assign({}, fm.sent); delete s2[id]; fm.sent = s2; }
-            if (m.ev === "deleted") { fm.setGone(id, true); fm.deleted(id, ""); return; }
+            if (m.ev === "deleted") {
+                fm.setGone(id, true);
+                if (fm.archived.includes(id)) fm.toggleArchive(id);
+                fm.deleted(id, "");
+                return;
+            }
             if (!waited) return;   // timed out: the row is back and the error was given
             fm.setGone(id, false);
             fm.deleted(id, m.message ?? "Not deleted");
@@ -380,8 +397,9 @@ Item {
         running: Object.keys(fm.deleting).length > 0 || Object.keys(fm.sent).length > 0
         onTriggered: {
             const now = Date.now();
-            // no answer within 5 s: the row comes back
-            const late = Object.keys(fm.sent).filter(id => now - fm.sent[id] >= 5000);
+            // no answer within 25 s: the row comes back. The host waits up to 20 s for the session's process to
+            // end before it trashes the files, so a shorter wait gave the row back while the delete went on.
+            const late = Object.keys(fm.sent).filter(id => now - fm.sent[id] >= 25000);
             if (late.length) {
                 const s = Object.assign({}, fm.sent);
                 for (const id of late) delete s[id];
@@ -576,6 +594,7 @@ Item {
     onQueryChanged: fm.dirty()
     onFoundChanged: fm.dirty()
     onSearchingChanged: fm.dirty()
+    onSearchErrorChanged: fm.dirty()
     onFilterChanged: fm.dirty()
     onSelectedIdChanged: fm.dirty()
     onStageChanged: fm.dirty()
@@ -773,7 +792,8 @@ Item {
         for (const n in byName)
             for (const k of byName[n]) {
                 if (byName[n].length < 2 || !k.startsWith("/")) { names[k] = n; continue; }
-                const up = k.substring(0, k.lastIndexOf("/")).replace(fm.home, "~").split("/");
+                const dir = k.substring(0, k.lastIndexOf("/"));
+                const up = (dir === fm.home || dir.startsWith(fm.home + "/") ? "~" + dir.substring(fm.home.length) : dir).split("/");
                 names[k] = `${n} · ${up.length > 2 ? "…/" + up.slice(-2).join("/") : up.join("/")}`;
             }
         const targetsOut = every.map(k => ({ fkey: k, path: fm.pathOf(k), name: nameFor(k), pinned: !!pinnedFolder[k],
@@ -788,7 +808,7 @@ Item {
             const seen = {};
             for (const s of fm.history) {
                 if (named.length >= 50) break;
-                if (!`${fm.titleOf(s)} ${s.prompt} ${s.cwd}`.toLowerCase().includes(q)) continue;
+                if (!`${fm.titleOf(s)} ${s.prompt ?? ""} ${s.cwd ?? ""}`.toLowerCase().includes(q)) continue;
                 seen[s.id] = true;
                 if (filtering && !keep(s, st[s.id] ?? "past")) continue;
                 named.push(s);
@@ -797,6 +817,7 @@ Item {
             if (named.length) { out.push(label("Sessions")); for (const s of named) out.push(sessionRow(s, false)); }
             if (inside.length) { out.push(label("In transcripts")); for (const s of inside) out.push(sessionRow(s, false, s.snippet)); }
             if (fm.searching) out.push(label("Searching transcripts…"));
+            else if (fm.searchError.length) out.push(label(`Couldn't search transcripts: ${fm.searchError}`));
             else if (!out.length && q.length >= 3) out.push(label("Nothing found"));
             return result("q:" + q);
         }

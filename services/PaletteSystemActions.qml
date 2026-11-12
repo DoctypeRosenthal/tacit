@@ -113,7 +113,7 @@ Singleton {
             verb: Translation.tr("Run"),
             icon: "restart_alt",
             keywords: "restart reboot",
-            run: () => Session.reboot()
+            run: () => root.armSession(1)
         },
         {
             name: Translation.tr("Shut down"),
@@ -121,7 +121,7 @@ Singleton {
             verb: Translation.tr("Run"),
             icon: "power_settings_new",
             keywords: "shutdown power off halt",
-            run: () => Session.poweroff()
+            run: () => root.armSession(0)
         },
         {
             name: Translation.tr("Restart shell"),
@@ -138,6 +138,14 @@ Singleton {
      * whole list is returned, so an opened, untyped palette reads as a small control centre
      * with live state in the subtitles instead of an empty box.
      */
+    // Restart and Shut down take every open window with them and have no undo: a palette row reached by typing "re" and
+    // Enter ran them at once. They open the Session screen armed on the action instead, which asks the second time,
+    // waits under its word and says when it was refused.
+    function armSession(i: int): void {
+        GlobalStates.sessionArm = i;
+        GlobalStates.sessionOpen = true;
+    }
+
     function fuzzyQuery(search: string): var {
         const needle = (search ?? "").trim().toLowerCase();
         return root.actions.filter(action => {

@@ -23,7 +23,7 @@ Scope {
     property string lastDispatch: ""
 
     readonly property string script: Quickshell.shellPath("scripts/praxis/presence.sh")
-    readonly property string codeQml: `${Quickshell.env("HOME")}/.config/quickshell/tacit/code.qml`
+    readonly property string codeQml: Quickshell.shellPath("code.qml")
     property string seenWindows: "[]"
     property string seenAgents: "[]"
 

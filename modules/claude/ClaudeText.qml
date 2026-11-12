@@ -62,7 +62,9 @@ TextArea {
     rightPadding: root.compact ? -2 : 0
     background: null
 
-    onLinkActivated: link => Qt.openUrlExternally(link)
+    // only web and mail links open: a reply can be steered by what the agent read, and file: or another scheme
+    // would be handed to whatever program the desktop has for it
+    onLinkActivated: link => { if (/^(https?|mailto):/i.test(link)) Qt.openUrlExternally(link); }
 
     MouseArea {
         anchors.fill: parent

@@ -50,7 +50,8 @@ urlencode() {
 generate_thumbnail() {
     local src="$1"
     local abs_path
-    abs_path="$(realpath "$src")"
+    # -s: the path as it was given, not through its symlinks, for the shell hashes the path it was given
+    abs_path="$(realpath -s "$src")"
     # Skip files with multiple frames (GIFs, videos, etc.)
     case "${abs_path,,}" in
         *.gif|*.mp4|*.webm|*.mkv|*.avi|*.mov)
@@ -65,10 +66,12 @@ generate_thumbnail() {
     hash="$(md5 "$uri")"
     local out="$CACHE_DIR/$hash.png"
     mkdir -p "$CACHE_DIR"
-    if [ -f "$out" ]; then
+    # a thumbnail older than the picture is made again, so an edited picture does not keep its old one
+    if [ -f "$out" ] && [ ! "$abs_path" -nt "$out" ]; then
         return
     fi
-    magick "$abs_path" -resize "${THUMBNAIL_SIZE}x${THUMBNAIL_SIZE}" "$out" || { rm -f "$out"; return 1; }
+    # -auto-orient: a phone photo is stored sideways with a tag; > only shrinks, a small picture is not blown up
+    magick "$abs_path" -auto-orient -resize "${THUMBNAIL_SIZE}x${THUMBNAIL_SIZE}>" "$out" || { rm -f "$out"; return 1; }
 }
 
 # Parse arguments
@@ -100,7 +103,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 THUMBNAIL_SIZE="$(get_thumbnail_size "$SIZE_NAME")"
-CACHE_DIR="$HOME/.cache/thumbnails/$SIZE_NAME"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/thumbnails/$SIZE_NAME"
 
 if [ -z "$MODE" ] || [ -z "$TARGET" ]; then
     usage

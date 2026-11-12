@@ -6,6 +6,7 @@ import qs.services
 import qs.modules.common
 import qs.modules.common.models
 import qs.modules.common.functions
+import "PaletteMath.js" as PaletteMath
 import QtQuick
 import Quickshell
 import Quickshell.Io
@@ -78,6 +79,10 @@ Singleton {
 
     function prefixOf(q) {
         if (!q || q.length === 0)
+            return "";
+        // "./run.sh", "../tool" and "~/bin/x" are paths (the Run row takes them, see runnable), not a symbol or a file
+        // search: no symbol has a "/" in its name, and "~/" is read as home below
+        if (/^(\.{1,2}|~)\//.test(q))
             return "";
         const first = q.charAt(0);
         return root.sectionForPrefix[first] !== undefined ? first : "";
@@ -153,7 +158,7 @@ Singleton {
         const trimmedBody = prefix.length > 0 ? root.query.slice(prefix.length) : root.query;
 
         const filesWanted = root.sectionEnabled("files") && (section === "" || section === "files");
-        PaletteFiles.setQuery(filesWanted ? trimmedBody : "");
+        PaletteFiles.setQuery(filesWanted ? trimmedBody.replace(/^~\//, "") : "");
 
         const mathWanted = root.sectionEnabled("calculator") && (section === "calculator" || (section === "" && /^\d/.test(root.query)));
         if (mathWanted) {
@@ -177,7 +182,9 @@ Singleton {
 
     Process {
         id: mathProc
-        property list<string> baseCommand: ["qalc", "-t"]
+        // 127 when qalc is not installed (the install image did not carry it): onExited then
+        // answers plain arithmetic itself instead of showing nothing
+        property list<string> baseCommand: ["sh", "-c", "command -v qalc >/dev/null || exit 127; exec qalc -t \"$1\"", "sh"]
         property string buffer: ""
         // The expression waiting for a terminated run to be reaped, or null.
         property var queued: null
@@ -216,6 +223,12 @@ Singleton {
                 return;
             }
             root.mathPending = false;
+            if (exitCode === 127 && mathProc.buffer.length === 0) {
+                const own = PaletteMath.evaluate(root.body);
+                root.mathResult = own ?? "";
+                root.mathError = own === null;
+                return;
+            }
             root.mathResult = mathProc.buffer;
             root.mathError = exitCode !== 0 || mathProc.buffer.length === 0 || /^error/i.test(mathProc.buffer);
         }
@@ -492,7 +505,15 @@ Singleton {
                 iconType: LauncherSearchResult.IconType.Text,
                 execute: () => {
                     Emojis.insert(glyph);
-                }
+                },
+                actions: [resultComp.createObject(null, {
+                        name: Translation.tr("Copy"),
+                        iconName: "content_copy",
+                        iconType: LauncherSearchResult.IconType.Material,
+                        execute: () => {
+                            Quickshell.clipboardText = glyph;
+                        }
+                    })]
             });
         });
     }
@@ -739,6 +760,7 @@ Singleton {
                 iconName: "travel_explore",
                 iconType: LauncherSearchResult.IconType.Material,
                 execute: () => {
+                    // Encoded as one value: a raw # or & would end the query there.
                     let query = terms;
                     for (const site of Config.options.search.excludedSites) {
                         query += ` -site:${site}`;

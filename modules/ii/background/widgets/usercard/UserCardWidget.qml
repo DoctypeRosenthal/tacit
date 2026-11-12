@@ -76,9 +76,10 @@ AbstractBackgroundWidget {
                     id: avatar
                     Layout.preferredWidth: 54
                     Layout.preferredHeight: 54
-                    source: Config.options.profile.avatarPath !== ""
+                    // Settings copies the picture to ~/.face and leaves avatarPicture empty
+                    source: Config.options.profile.avatarPicture !== ""
                         ? "file://" + Config.options.profile.avatarPicture
-                        : "file:///home/" + (Quickshell.env("USER") ?? "user") + "/.face"
+                        : "file://" + Directories.userAvatarPathRicersAndWeirdSystems
                     sourceSize: Qt.size(108, 108)
 
                     Rectangle {

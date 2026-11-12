@@ -140,8 +140,9 @@ PanelWindow {
     function targetedRegionValid() {
         return (root.targetedRegionX >= 0 && root.targetedRegionY >= 0)
     }
-    function setRegionToTargeted() {
-        const padding = Config.options.regionSelector.targetRegions.selectionPadding; // Make borders not cut off n stuff
+    // exact: the target's own box, for a recording, which has no borders to cut off
+    function setRegionToTargeted(exact) {
+        const padding = exact ? 0 : Config.options.regionSelector.targetRegions.selectionPadding; // Make borders not cut off n stuff
         root.regionX = root.targetedRegionX - padding;
         root.regionY = root.targetedRegionY - padding;
         root.regionWidth = root.targetedRegionWidth + padding * 2;
@@ -398,7 +399,7 @@ PanelWindow {
                 root.recordTargeted();
                 return;
             }
-            root.setRegionToTargeted();
+            root.setRegionToTargeted(true);
         }
         root.recordReady = root.regionWidth > 20 && root.regionHeight > 20;
     }

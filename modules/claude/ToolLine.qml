@@ -5,11 +5,13 @@ import qs.modules.common
 import qs.modules.common.widgets
 import qs.modules.common.functions
 import qs.modules.tacit
+import "ActivityWords.js" as Words
 
 // One tool call as a single quiet line (OpenChamber's tool row: icon, name, muted detail).
 // A call with something to show turns its icon into a chevron on hover; a click opens it under
 // a thin rail: the diff for an edit, the start of the output otherwise. Edits carry their line
-// counts in the palette's success/error tones and, on hover, a button to open the file in Code.
+// counts in the palette's success/error tones and, on hover or focus, a button to open the file in Code.
+// Tab reaches the line (Enter or Space opens it) and then that button.
 Item {
     id: line
     property var item: ({})
@@ -51,33 +53,47 @@ Item {
     readonly property bool shown: line.progress > 0
     implicitHeight: row.height + (line.pictures.length ? thumbs.height + 8 : 0) + (body.height + 4) * line.progress
 
+    function toggle() {
+        if (!line.opens) return;
+        if (line.callId.length) line.toggled(line.callId);
+        else line.selfOpen = !line.selfOpen;
+    }
+    // at the edit: the first line of what was written is found in the file
+    function openFile(ctrl) {
+        const find = ((line.item.new ?? "").split("\n").find(l => l.trim().length) ?? "").trim();
+        if (line.files && !ctrl) line.files.openFile(line.file, 0, find);
+        else Quickshell.execDetached([`${Directories.tacitBin}/code-file`, line.file, "0", find]);
+    }
+
     function glyph(t) {
         switch (t) {
-        case "Bash": case "shell": case "shell_command": case "exec_command": return "terminal";
-        case "Edit": case "MultiEdit": case "NotebookEdit": case "apply_patch": return "edit_note";
+        case "Bash": case "shell": case "shell_command": case "exec_command": case "TaskOutput": case "TaskStop": return "terminal";
+        case "Edit": case "MultiEdit": case "NotebookEdit": case "apply_patch": case "patch": return "edit_note";
         case "Write": return "note_add";
         case "Read": case "view_image": return "description";
-        case "Grep": case "Glob": return "manage_search";
-        case "WebSearch": case "WebFetch": return "language";
+        case "Grep": case "Glob": case "grep": case "find": case "ls": case "list": return "manage_search";
+        case "WebSearch": case "WebFetch": case "websearch": case "codesearch": return "language";
         case "Agent": case "Task": return "smart_toy";
         case "Skill": return "bolt";
         case "TodoWrite": case "update_plan": return "checklist";
         case "AskUserQuestion": return "help";
+        case "mcp__tacit__choose": case "mcp__tacit__mark": case "mcp__tacit__claim": case "mcp__tacit__hand_over":
+        case "mcp__tacit__wait": case "mcp__tacit__children": return Words.glyph("tool:" + t);
         }
         return "build";
     }
     // Names as OpenChamber shows them: Shell, Read, Edit, Search, Fetch.
     function label(t) {
         switch (t) {
-        case "Bash": case "shell": case "shell_command": case "exec_command": return "Shell";
-        case "Grep": case "Glob": case "WebSearch": return "Search";
+        case "Bash": case "shell": case "shell_command": case "exec_command": case "TaskOutput": case "TaskStop": return "Shell";
+        case "Grep": case "Glob": case "WebSearch": case "grep": case "find": case "ls": case "list": case "websearch": case "codesearch": return "Search";
         case "WebFetch": return "Fetch";
-        case "apply_patch": case "MultiEdit": return "Edit";
+        case "apply_patch": case "patch": case "MultiEdit": return "Edit";
         case "TodoWrite": case "update_plan": return "Plan";
         case "Agent": case "Task": return "Agent";
         case "AskUserQuestion": return "Asked";
         }
-        return t ?? "";
+        return Words.label(t);
     }
 
     Item {
@@ -85,16 +101,20 @@ Item {
         width: parent.width
         height: 34
         HoverHandler { id: hover }
+        activeFocusOnTab: line.opens || line.file.length > 0
+        Keys.onReturnPressed: e => { if (line.opens) line.toggle(); else if (line.file.length) line.openFile(e.modifiers & Qt.ControlModifier); }
+        Keys.onEnterPressed: e => { if (line.opens) line.toggle(); else if (line.file.length) line.openFile(e.modifiers & Qt.ControlModifier); }
+        Keys.onSpacePressed: if (line.opens) line.toggle()
         Rectangle {
             anchors { fill: parent; leftMargin: -6; rightMargin: -6 }
             radius: Appearance.rounding.small
-            color: hover.hovered && line.opens ? ColorUtils.transparentize(Appearance.m3colors.m3onSurface, 0.95) : "transparent"
+            color: (hover.hovered || row.activeFocus) && line.opens ? ColorUtils.transparentize(Appearance.m3colors.m3onSurface, 0.95) : "transparent"
         }
         MaterialSymbol {
             id: icon
             anchors { left: parent.left; verticalCenter: parent.verticalCenter }
             visible: !line.running
-            text: line.item.error ? "error" : (line.opens && (hover.hovered || line.open) ? (line.open ? "expand_more" : "chevron_right") : line.glyph(line.item.tool))
+            text: line.item.error ? "error" : (line.opens && (hover.hovered || row.activeFocus || line.open) ? (line.open ? "expand_more" : "chevron_right") : line.glyph(line.item.tool))
             iconSize: 17
             color: line.item.error ? Appearance.colors.colClay : Appearance.colors.colInkSecondary
         }
@@ -127,11 +147,7 @@ Item {
         MouseArea {
             anchors.fill: parent
             cursorShape: line.opens ? Qt.PointingHandCursor : Qt.ArrowCursor
-            onClicked: {
-                if (!line.opens) return;
-                if (line.callId.length) line.toggled(line.callId);
-                else line.selfOpen = !line.selfOpen;
-            }
+            onClicked: line.toggle()
         }
         Row {
             id: trailing
@@ -154,22 +170,22 @@ Item {
                 color: line.calm ? Appearance.colors.colInkMeta : Appearance.m3colors.m3error
             }
             MaterialSymbol {
-                visible: line.file.length > 0 && hover.hovered
+                id: openIcon
+                visible: line.file.length > 0 && (hover.hovered || line.open || row.activeFocus || openIcon.activeFocus)
                 anchors.verticalCenter: parent.verticalCenter
                 text: "open_in_new"
                 iconSize: 15
-                color: openArea.containsMouse ? Appearance.colors.colInkMain : Appearance.colors.colInkSecondary
+                activeFocusOnTab: true
+                Keys.onReturnPressed: e => line.openFile(e.modifiers & Qt.ControlModifier)
+                Keys.onEnterPressed: e => line.openFile(e.modifiers & Qt.ControlModifier)
+                Keys.onSpacePressed: e => line.openFile(e.modifiers & Qt.ControlModifier)
+                color: openArea.containsMouse || openIcon.activeFocus ? Appearance.colors.colInkMain : Appearance.colors.colInkSecondary
                 MouseArea {
                     id: openArea
                     anchors { fill: parent; margins: -6 }
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    // at the edit: the first line of what was written is found in the file
-                    onClicked: m => {
-                        const find = ((line.item.new ?? "").split("\n").find(l => l.trim().length) ?? "").trim();
-                        if (line.files && !(m.modifiers & Qt.ControlModifier)) line.files.openFile(line.file, 0, find);
-                        else Quickshell.execDetached([`${Directories.tacitBin}/code-file`, line.file, "0", find]);
-                    }
+                    onClicked: m => line.openFile(m.modifiers & Qt.ControlModifier)
                 }
                 StyledToolTip { text: line.files ? "Open (Ctrl: in Graphis)" : "Open in Graphis"; extraVisibleCondition: openArea.containsMouse }
             }

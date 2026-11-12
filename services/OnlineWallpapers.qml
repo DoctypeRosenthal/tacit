@@ -21,7 +21,7 @@ Singleton {
     property string seed:       ""          
     property var    results:    []           // list [ {thumb, full, id, provider} ]
     property int totalPages: 0
-    property bool _refetch: false
+    property bool _refetch: false   // a search was asked for while a request was running
 
     property var _naiveFullResults: []
     property var _blapplesFullResults: []
@@ -118,7 +118,17 @@ Singleton {
         _doFetch();
     }
 
+    // Unsplash and Pexels answer an empty key with an error object, which reads as a parse error
+    function _missingKey() {
+        return (root.provider === "unsplash" && root.unsplashClientId.length === 0)
+            || (root.provider === "pexels" && root.pexelsApiKey.length === 0);
+    }
+
     function _doFetch() {
+        if (root._missingKey()) {
+            root.fetchError("No API key for " + root.provider);
+            return;
+        }
         root.loading = true;
         if (root.provider === "wallhaven") {
             _fetchWallhaven();
@@ -146,18 +156,29 @@ Singleton {
         _doFetch();
     }
 
+    // A request that carries a key. The key stays off curl's command line, which any local user can read from /proc:
+    // curl takes the address and the header from a config file given as a pipe, and the key comes in the environment.
+    // `secret` is added to the address, `header` is a whole header line; both are quote-free (the key is
+    // percent-encoded, or stripped of quotes and backslashes).
+    readonly property string keyedCurl: 'curl -s --fail --connect-timeout 5 --max-time 20 -K <(printf \'url = "%s%s"\\n\' "$FETCH_URL" "$FETCH_SECRET"; '
+        + '[ -n "$FETCH_HEADER" ] && printf \'header = "%s"\\n\' "$FETCH_HEADER")'
+    function _keyedFetch(url, secret, header) {
+        fetchProc.environment = ({ "FETCH_URL": url, "FETCH_SECRET": secret, "FETCH_HEADER": header });
+        fetchProc.command = ["bash", "-c", root.keyedCurl];
+        fetchProc.running = true;
+    }
+
     function _fetchWallhaven() {
         const res      = root.resolutionMap["wallhaven"][root.resolution] ?? "1920x1080";
         const purity   = root.purityMap[root.purity] ?? "100";
-        const apikey   = root.wallhavenApiKey.length > 0 ? `&apikey=${root.wallhavenApiKey}` : "";
+        const apikey   = root.wallhavenApiKey.length > 0 ? `&apikey=${encodeURIComponent(root.wallhavenApiKey)}` : "";
         const q        = root.query.length > 0 ? `&q=${encodeURIComponent(root.query)}` : ""; 
         const seedParam = root.seed.length > 0 ? `&seed=${root.seed}` : "";
 
-        const url = `https://wallhaven.cc/api/v1/search?sorting=random&purity=${purity}&categories=100&ratios=16x9&atleast=${res}&page=${root.page}${seedParam}${q}${apikey}`;
+        const url = `https://wallhaven.cc/api/v1/search?sorting=random&purity=${purity}&categories=100&ratios=16x9&atleast=${res}&page=${root.page}${seedParam}${q}`;
 
         fetchProc.provider = "wallhaven";
-        fetchProc.command = ["curl", "-s", "--fail", "--connect-timeout", "5", "--max-time", "20", url];
-        fetchProc.running = true;
+        root._keyedFetch(url, apikey, "");
     }
 
     function _fetchUnsplash() {
@@ -166,19 +187,17 @@ Singleton {
         const q           = root.query.length > 0 ? `&query=${encodeURIComponent(root.query)}` : `&query=${encodeURIComponent(root.category)}`;  
         const clientId    = root.unsplashClientId;
 
-        const url = `https://api.unsplash.com/photos/random?orientation=${orientation}&count=${count}${q}&client_id=${clientId}`;
+        const url = `https://api.unsplash.com/photos/random?orientation=${orientation}&count=${count}${q}`;
 
         fetchProc.provider = "unsplash";
-        fetchProc.command = ["curl", "-s", "--fail", "--connect-timeout", "5", "--max-time", "20", url];
-        fetchProc.running = true;
+        root._keyedFetch(url, `&client_id=${encodeURIComponent(clientId)}`, "");
     }
 
     function _fetchPexels() {
         const q = root.query.length > 0 ? root.query : "wallpaper landscape";
         const url = `https://api.pexels.com/v1/search?query=${encodeURIComponent(q)}&per_page=24&page=${root.page}`;
         fetchProc.provider = "pexels";
-        fetchProc.command  = ["curl", "-s", "--fail", "--connect-timeout", "5", "--max-time", "20", "-H", `Authorization: ${root.pexelsApiKey}`, url];
-        fetchProc.running  = true;
+        root._keyedFetch(url, "", `Authorization: ${root.pexelsApiKey.replace(/["\\\r\n]/g, "")}`);
     }
 
     function _fetchBlapples() {
@@ -383,6 +402,7 @@ Singleton {
         onExited: (exitCode) => {
             root.loading = false;
             if (root._refetch) {
+                // The keyword or provider changed while this ran: its answer is for the old search.
                 root._refetch = false;
                 root.fetch();
                 return;

@@ -25,7 +25,8 @@ Singleton {
         // Init load will be handled by Component.onCompleted
         if (!tokenReady) return;
         // We just reload if key expired
-        if (new Date() >= root.tokenExpiry) {
+        // (the expiry stays invalid after a failed token fetch: that reloads too)
+        if (isNaN(root.tokenExpiry.getTime()) || new Date() >= root.tokenExpiry) {
             root.tokenReady = false;
             root.keyReady = false;
             loadKeyIfPossible();
@@ -124,9 +125,11 @@ Singleton {
         return Math.max(30000, expiry - Date.now() - 5 * 60 * 1000);
     }
 
+    // A failed token fetch (no network yet at login) tries again every minute; with no key stored
+    // (keyError) there is nothing to retry.
     Timer {
-        interval: root.renewInMs
-        running: root.tokenReady && !root.tokenError
+        interval: root.tokenError ? 60000 : root.renewInMs
+        running: root.tokenReady && (!root.tokenError || !root.keyError)
         repeat: false
         onTriggered: {
             root.tokenReady = false;

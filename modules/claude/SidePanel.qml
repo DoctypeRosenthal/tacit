@@ -36,6 +36,7 @@ Item {
     signal sendRequested(string text)
     signal attachRequested(string path)   // Made: a file for the next message
     signal pictureRequested(string path)  // Agents: a step's picture, in the window's viewer
+    signal restartHostRequested()         // Results: the background service has no Results
 
     readonly property alias review: reviewPanel
     readonly property alias files: filesPane
@@ -131,6 +132,7 @@ Item {
         sessionId: side.sessionId
         info: side.agentsInfo
         files: side
+        cwd: side.cwd
         canStop: side.canStop
         now: side.clock
         tabs: side.tabs
@@ -138,6 +140,7 @@ Item {
         onCloseRequested: side.closeRequested()
         onStopRequested: task => side.stopRequested(task)
         onPictureRequested: p => side.pictureRequested(p)
+        onRestartHostRequested: side.restartHostRequested()
         onReviewRequested: { reviewPanel.showTurn(null); side.tab = "review"; }
     }
     ChangesPanel {

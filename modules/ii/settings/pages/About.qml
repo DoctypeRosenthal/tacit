@@ -16,11 +16,12 @@ ContentPage {
 
     function runSystemUpdate() {
         // The terminal named in apps.update need not exist on this machine, so say so
-        // instead of doing nothing.
+        // instead of doing nothing. Only a command that was not found (exit 127) says it: a
+        // terminal exits with the update's own status, so a cancelled or failed update is not it.
         const title = StringUtils.shellSingleQuoteEscape(Translation.tr("Update didn't start"));
         const body = StringUtils.shellSingleQuoteEscape(Translation.tr("Could not run the update command in the config file (apps.update)."));
         Quickshell.execDetached(["bash", "-c",
-            `${Config.options.apps.update} || notify-send '${title}' '${body}' -a 'Shell'`
+            `${Config.options.apps.update} || { [ $? -eq 127 ] && notify-send '${title}' '${body}' -a 'Shell'; }`
         ])
         Qt.callLater(() => GlobalStates.settingsOpen = false)
     }

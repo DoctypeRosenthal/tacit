@@ -54,6 +54,9 @@ ApplicationWindow {
 
     // hidden, it stops playing and lets go of the pictures
     onVisibleChanged: if (!visible) viewer.release()
+    // Closing ends the process, as Settings, Activity and Apps do: the Viewer kept running with nothing on screen after
+    // every close (Discord, Axy), and holds nothing worth keeping warm.
+    onClosing: Qt.quit()
 
     Rectangle {
         anchors.fill: parent
@@ -65,15 +68,15 @@ ApplicationWindow {
             id: viewer
             anchors.fill: parent
             ground: root.base
-            onCloseRequested: root.visible = false
+            onCloseRequested: root.close()
         }
     }
 
     IpcHandler {
         target: "viewer"
         function open(path: string): void { viewer.open(path); root.visible = true; }
-        // closing the window only hides it; every way in shows it again (viewer-open)
-        function present(): void { root.visible = true; }
+        function present(): void { root.visible = true; }   // viewer-open: the window, when it was hidden by a start in the background
+        function quit(): void { Qt.quit(); }   // the dock's and Activity's Quit
         function state(): string { return viewer.state(); }
     }
 }

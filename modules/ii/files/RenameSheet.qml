@@ -55,8 +55,9 @@ Item {
             if (sheet.mode === "replace") {
                 if (find.text.length > 0) name = old.split(find.text).join(replaceWith.text);
             } else if (first >= 0) {
-                const m = /^(.+?)(\.[A-Za-z0-9]{1,5})?$/.exec(old);
-                const ext = m && m[2] ? m[2] : "";
+                // the extension is the last dot-word, or .tar.<x> whole ('.torrent', '.markdown', '.tar.gz')
+                const m = /^.+?(\.tar\.[^.\s]+|\.[^.\s]+)$/.exec(old);
+                const ext = m ? m[1] : "";
                 name = `${base.text.trim()} ${String(first + i).padStart(digits, "0")}${ext}`;
             }
             name = name.trim();

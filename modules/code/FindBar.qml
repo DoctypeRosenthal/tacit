@@ -16,7 +16,7 @@ Item {
     property string mode: "find"          // "find" | "line"
     property bool replacing: false
     property bool caseSensitive: false
-    readonly property int matches: bar.doc && bar.mode === "find" ? bar.doc.matchCount(needle.text, bar.caseSensitive) : 0
+    readonly property int matches: bar.visible && bar.doc && bar.mode === "find" ? bar.doc.matchCount(needle.text, bar.caseSensitive) : 0
     signal closed()
 
     visible: false

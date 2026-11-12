@@ -36,7 +36,6 @@ ContentPage {
     }
 
     property var allWidgets: [
-        { id: "leftSidebarButton", name: Translation.tr("Left Sidebar Button"),  icon: "left_panel_open" },
         { id: "workspaces",        name: Translation.tr("Workspaces"),           icon: "steppers" },
         { id: "weatherBar",        name: Translation.tr("Weather"),              icon: "flare" },
         { id: "media",             name: Translation.tr("Media"),                icon: "music_note" },
@@ -151,6 +150,8 @@ ContentPage {
                                         if (!list.includes(monitorRow.modelData.name)) list.push(monitorRow.modelData.name)
                                     } else {
                                         list = list.filter(s => s !== monitorRow.modelData.name)
+                                        // an empty list means every screen, so the last one stays on
+                                        if (list.length === 0) return
                                     }
                                     Config.options.bar.screenList = list.length === allNames.length ? [] : list
                                 }

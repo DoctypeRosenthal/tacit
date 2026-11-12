@@ -37,6 +37,7 @@ AbstractBackgroundWidget {
     property int queueTotal: 0
     property int queueDone: 0
     property var batchPaths: []
+    readonly property bool busy: converter.running || pdfMaker.running
 
     implicitWidth: card.implicitWidth
     implicitHeight: card.implicitHeight
@@ -106,6 +107,9 @@ AbstractBackgroundWidget {
     }
 
     function enqueueFiles(urls) {
+        // A drop while one is being converted would overwrite the file in hand and its queue
+        if (root.busy) return
+        resetTimer.stop()
         var valid = []
         for (var i = 0; i < urls.length; i++) {
             var cleanPath
@@ -224,6 +228,10 @@ AbstractBackgroundWidget {
                     anchors.fill: parent
                     keys: ["text/uri-list"]
                     onEntered: (drag) => {
+                        if (root.busy) {
+                            drag.accepted = false
+                            return
+                        }
                         drag.accept(Qt.CopyAction)
                         root.dropStatus = "hover"
                     }

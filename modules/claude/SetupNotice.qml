@@ -19,6 +19,9 @@ Item {
     property bool fresh: false        // the open session is a fresh one: only its box has an agent cove
     property string hostNote: ""      // reconnecting | unreachable | outdated, as the window's host line
     property real reserve: 0          // the height the box and its open cove take at the bottom
+    property bool checking: false     // the CLI is being asked now (the window asks by itself every few seconds too)
+    property bool asked: false        // ...and it was asked by "Check again"
+    onCheckingChanged: if (!notice.checking) notice.asked = false
     signal recheck()
     signal setupRequested()           // no agent is ready: the fresh box opens its agent cove in setup form
 
@@ -145,9 +148,14 @@ Item {
             PillButton {
                 visible: notice.need === "signedOut"
                 text: "Sign in"
-                onClicked: Quickshell.execDetached(["foot", "-T", "Sign in to Claude", "-e", "claude", "auth", "login"])
+                // a login that fails (no network, a port in use) leaves its words up until Enter; the window closed with it
+                onClicked: Quickshell.execDetached(["foot", "-T", "Sign in to Claude", "-e", "sh", "-c",
+                    "claude auth login || { echo; echo 'Sign-in did not finish. Press Enter to close.'; read _; }"])
             }
-            PillButton { text: "Check again"; onClicked: notice.recheck() }
+            PillButton {
+                text: notice.asked && notice.checking ? "Checking…" : "Check again"
+                onClicked: if (!(notice.asked && notice.checking)) { notice.asked = true; notice.recheck(); }
+            }
         }
     }
 }

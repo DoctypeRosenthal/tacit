@@ -23,8 +23,8 @@ for repo in "$@"; do
 		.[] | {
 			repo: $repo, number, title, state, url, updated: .updatedAt,
 			checks: (if (.statusCheckRollup // []) | length == 0 then "none"
-				elif any(.statusCheckRollup[]; (.conclusion // "") == "FAILURE" or (.state // "") == "FAILURE") then "failure"
-				elif any(.statusCheckRollup[]; (.status // "") == "IN_PROGRESS" or (.state // "") == "PENDING" or (.conclusion // "") == "") then "pending"
+				elif any(.statusCheckRollup[]; ((.conclusion // ""), (.state // "")) | IN("FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED")) then "failure"
+				elif any(.statusCheckRollup[]; (.status // "") == "IN_PROGRESS" or (.state // "") == "PENDING" or (.state // "") == "EXPECTED" or ((.status // "") != "" and (.conclusion // "") == "")) then "pending"
 				else "success" end),
 			review: (any((.reviewRequests // [])[]; (.login // "") == $me))
 		}' 2>/dev/null

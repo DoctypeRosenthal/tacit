@@ -4,4 +4,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../venv.sh"
 activate_shell_venv || exit 1
 "$SCRIPT_DIR/least_busy_region.py" "$@"
+rc=$?
 deactivate
+exit $rc

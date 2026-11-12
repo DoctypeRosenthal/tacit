@@ -152,7 +152,7 @@ ShellRoot {
                 anchors.fill: parent
                 context: lockContext
                 holdEntrance: root.skyOn
-                groundPath: root.skyOn ? root.skyState + "/lock-ground.png" : Quickshell.env("HOME") + "/.local/state/martida-boot/lock-ground.png"
+                groundPath: root.skyState + "/lock-ground.png"
                 underlay: root.skyOn ? skyComponent : null
                 // the first key or touch takes the sunrise to its end in half a second
                 onActivity: if (surface.underlayItem) surface.underlayItem.finish()

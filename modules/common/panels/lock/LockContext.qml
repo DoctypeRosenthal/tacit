@@ -124,6 +124,12 @@ Scope {
         onTriggered: root.tryFingerUnlock()
     }
 
+    // fprintd-list ran once at start: a finger enrolled since, or fprintd that was not up yet, was never seen.
+    // Asked again at every lock.
+    function checkFingerprints() {
+        fingerprintCheckProc.running = true;
+    }
+
     Process {
         id: fingerprintCheckProc
         running: true
@@ -142,6 +148,15 @@ Scope {
         }
     }
     
+    // fprintd-list answers long after startup, so a lock soon after the shell starts calls
+    // tryFingerUnlock() while this is still false and never arms the reader: start from the
+    // value instead, but only while the screen is locked.
+    onFingerprintsConfiguredChanged: {
+        if (root.fingerprintsConfigured && GlobalStates.screenLocked) {
+            root.tryFingerUnlock();
+        }
+    }
+
     PamContext {
         id: pam
 

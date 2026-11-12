@@ -216,7 +216,8 @@ Singleton {
         }
     }
 
-    // Entries whose file is gone leave; on load and every hour.
+    // Entries whose file is gone leave; on load and every hour. A file whose folder is missing too (an
+    // unplugged drive, an unmounted share) is kept: it may be back.
     function prune() {
         const paths = Object.keys(root.index);
         if (paths.length === 0)
@@ -226,7 +227,7 @@ Singleton {
     }
     Process {
         id: pruneProc
-        command: ["bash", "-c", `for f in ${Object.keys(root.index).map(p => `'${StringUtils.shellSingleQuoteEscape(p)}'`).join(" ")}; do [ -e "$f" ] || printf '%s\n' "$f"; done`]
+        command: ["bash", "-c", `for f in ${Object.keys(root.index).map(p => `'${StringUtils.shellSingleQuoteEscape(p)}'`).join(" ")}; do [ -e "$f" ] || [ ! -d "$(dirname "$f")" ] || printf '%s\n' "$f"; done`]
         stdout: SplitParser {
             onRead: line => { const p = line.trim(); if (p.length > 0) root.forget(p); }
         }

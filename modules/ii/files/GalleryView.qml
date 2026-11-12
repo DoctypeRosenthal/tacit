@@ -54,7 +54,8 @@ Item {
             id: big
             anchors.fill: parent
             visible: gallery.picture && status === Image.Ready
-            source: gallery.picture ? "file://" + gallery.path : ""
+            // percent-encoded per segment: a name may hold a # ? or %
+            source: gallery.picture ? "file://" + gallery.path.split("/").map(encodeURIComponent).join("/") : ""
             asynchronous: true
             cache: false
             autoTransform: true
@@ -134,7 +135,7 @@ Item {
                     anchors.fill: parent
                     radius: Tacit.radius.row
                     color: Qt.alpha(Tacit.inkMain, Tacit.wash.action)
-                    visible: tile.thing.kind !== "image" || thumb.status !== Image.Ready
+                    visible: !thumb.active || thumb.status !== Image.Ready
                     K.Symbol {
                         anchors.centerIn: parent
                         text: tile.thing.glyph
@@ -145,7 +146,7 @@ Item {
                 Loader {
                     id: thumb
                     anchors.fill: parent
-                    active: tile.thing.kind === "image"
+                    active: tile.thing.kind === "image" || tile.thing.kind === "video"     // a video's thumbnail is a frame
                     readonly property int status: item ? item.status : Image.Null
                     sourceComponent: ThumbnailImage {
                         sourcePath: tile.filePath

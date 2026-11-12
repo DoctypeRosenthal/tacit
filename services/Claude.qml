@@ -34,8 +34,15 @@ Singleton {
         id: host
         roster: false
         onConnectedChanged: {
-            if (!connected)
+            if (!connected) {
+                // The session died with the host and no exit comes over a lost socket: the Live Activity
+                // would run on until its stall timer and end without a word.
+                if (root.activityId.length) {
+                    root.activityId = "";
+                    IslandController.endActivity("fail", "Claude stopped.");
+                }
                 return;
+            }
             root.attach();
             titlesLater.restart();
             // Questions typed while the host was working sit in the queue, and only a turn ending
@@ -498,7 +505,7 @@ Singleton {
                 if (m.ev !== "started") {
                     root.error = m.message ?? "Could not start.";
                     root.pendingQ = "";
-                    if (m.disconnected) root.draftText = q.question;   // nothing was sent: the question stays
+                    root.draftText = q.question;   // nothing was sent: the question stays
                     return;
                 }
                 if (q.ctx.length) root.sentContext[m.id] = q.ctx;
@@ -521,7 +528,7 @@ Singleton {
                 root.pendingQ = "";
                 if (m.disconnected) { root.error = m.message; root.draftText = q.question; return; }   // the socket, not the conversation
                 if (resume) { root.continuing = false; root.note = "Couldn't resume that conversation; this is a new chat."; root.draftText = q.question; }
-                else root.error = m.message ?? "Could not send.";
+                else { root.error = m.message ?? "Could not send."; root.draftText = q.question; }
                 return;
             }
             if (q.ctx.length) root.sentContext[id] = q.ctx;
@@ -629,34 +636,67 @@ Singleton {
         }
         return answer.length ? answer.replace(/[*`_]/g, "") : `${root.titleOf(id)} done`;
     }
+    // A turn cut off by a usage limit: the host marks the session limited:{resetsAt} (unix s) until a turn ends well.
+    // Said as the app's session list says it ("Limited · back 14:30"), after the title, in the error tone and with a
+    // clock, not the check mark of a finished turn.
+    function limitText(id) {
+        const at = host.live[id]?.limited?.resetsAt ?? 0;
+        let back = "";
+        if (at > 0) {
+            const d = new Date(at * 1000), now = new Date();
+            const hm = Qt.formatTime(d, "HH:mm");
+            // whole days between the two midnights (a day across a clock change is 23 or 25 hours)
+            const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+            back = days <= 0 ? ` · back ${hm}` : days === 1 ? ` · back tomorrow ${hm}` : ` · back ${Qt.formatDate(d, "MMM d")} ${hm}`;
+        }
+        return `${root.titleOf(id)} limited${back}`;
+    }
     function finished(id) {
-        const text = root.doneText(id);
+        const limited = !!host.live[id]?.limited;
+        const text = limited ? root.limitText(id) : root.doneText(id);
         if (id === root.activityId) {
             root.activityId = "";
             if (IslandController.activityRunning) {
                 root.whenOffScreen(id,
-                    () => IslandController.endActivity("ok", text, Notifications.silent ? { silent: true } : { claudeId: id }),
+                    () => limited ? IslandController.endActivity("fail", text, Notifications.silent ? { silent: true } : { claudeId: id, icon: "schedule" })
+                                  : IslandController.endActivity("ok", text, Notifications.silent ? { silent: true } : { claudeId: id }),
                     () => IslandController.endActivity("ok", "", { silent: true }));
                 return;
             }
         }
         if (Notifications.silent) return;
-        root.whenOffScreen(id, () => IslandController.request("activityDone", { icon: "check_circle", text: text, claudeId: id }, 35));
+        root.whenOffScreen(id, () => limited ? IslandController.request("activityFail", { icon: "schedule", text: text, claudeId: id, tone: "error" }, 90)
+                                              : IslandController.request("activityDone", { icon: "check_circle", text: text, claudeId: id }, 35));
     }
     function askLabel(tool) {
         switch (tool) {
         case "Bash": return "Run";
-        case "Edit": case "MultiEdit": return "Edit";
+        case "Edit": case "MultiEdit": case "NotebookEdit": return "Edit";
         case "Write": return "Write";
         case "WebFetch": return "Fetch";
+        case "Skill": return "Run skill";
         }
+        // mcp__server__send_message -> "Use send message (server)"
+        const mcp = /^mcp__(.+?)__(.+)$/.exec(String(tool));
+        if (mcp) return `Use ${mcp[2].replace(/_+/g, " ").trim()} (${mcp[1]})`;
         return `Use ${tool}`;
+    }
+    // What the tool is about to act on, so the peek says more than its name: the usual fields, else what an MCP tool
+    // or a workflow most often says (its text, query, title), else the first text in the input, kept to one short line.
+    function askDetail(i) {
+        const known = i.command ?? i.file_path ?? i.notebook_path ?? i.url ?? i.pattern ?? i.skill;
+        if (known !== undefined) return String(known);
+        const text = v => typeof v === "string" && v.trim().length > 0;
+        const first = ["content", "message", "text", "body", "query", "prompt", "title", "name", "description"].map(k => i[k]).find(text)
+            ?? Object.values(i).find(text);
+        const line = String(first ?? "").replace(/\s+/g, " ").trim();
+        return line.length > 60 ? line.slice(0, 59) + "\u2026" : line;
     }
     function needsYou(id, p) {
         const question = p.tool === "AskUserQuestion";
         const i = p.input ?? {};
         const text = question ? `Claude asks: ${(i.questions ?? [])[0]?.question ?? "a question"}`
-                              : `${root.askLabel(p.tool)} ${i.command ?? i.file_path ?? i.url ?? i.pattern ?? ""}`.trim() + "?";
+                              : `${root.askLabel(p.tool)} ${root.askDetail(i)}`.trim() + "?";
         root.waitingSince[p.request] = { at: Date.now(), text: `${root.titleOf(id)}: ${text}`, notified: false };
         if (Notifications.silent) return;   // the glyph still shows it waits
         // 140: an ask comes first (above the greeting, battery low, a failed job), below only Flow while you speak

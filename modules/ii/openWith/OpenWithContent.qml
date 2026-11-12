@@ -67,7 +67,7 @@ Item {
     readonly property color ink2: Appearance.colors.colInkSecondary
     readonly property color hair: ColorUtils.transparentize(Appearance.colors.colOnLayer0, 0.9)
     // primary fill: colPrimary 30 % toward white, dark text on it (Lc 82)
-    readonly property color accentFill: ColorUtils.mix(Appearance.colors.colPrimary, "#ffffff", 0.7)
+    readonly property color accentFill: ColorUtils.mix(Appearance.colors.colPrimary, root.ink, 0.7)
     readonly property color onAccent: Appearance.m3colors.m3surfaceContainerLowest
 
     // a click outside the menu cancels
@@ -85,6 +85,9 @@ Item {
         y: Math.max(12, Math.min(root.height - height - 12, areaY + (areaH - height) / 2))
         color: root.slab; radius: 14
         border.width: 1; border.color: ColorUtils.transparentize(Appearance.colors.colOnLayer0, 0.72)
+
+        // a press on the menu's own title or padding is not a click away
+        MouseArea { anchors.fill: parent }
 
         ColumnLayout {
             id: col

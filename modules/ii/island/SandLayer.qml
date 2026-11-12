@@ -4,7 +4,7 @@ import qs.services
 
 // The voice as sand (2026-10-15): Flow's three bands lift grains in a thin glass tank behind the time; when you stop,
 // the bed levels flat and the notch closes over it. The component and its physics: native/sand (build.sh installs it
-// into ~/.local/lib/qml, found through shell.qml's QML_IMPORT_PATH).
+// into ~/.local/lib/qml, found through the session's QML_IMPORT_PATH).
 Sand {
     // writing (Flow turning the words into text: usually under a second, ~10 s when its live stream fails and the
     // recording is heard again): the sand keeps breathing, a slow rise and fall of the bed, so the notch never sits

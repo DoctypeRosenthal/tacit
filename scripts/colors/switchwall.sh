@@ -99,8 +99,10 @@ post_process() {
 
 check_and_prompt_upscale() {
     local img="$1"
-    min_width_desired="$(hyprctl monitors -j | jq '([.[].width] | max)' | xargs)"
-    min_height_desired="$(hyprctl monitors -j | jq '([.[].height] | max)' | xargs)"
+    # the width and the height of one monitor, the largest: the widest and the tallest taken apart could be two
+    # screens, and a picture that fills the biggest one always looked too small
+    local min_width_desired min_height_desired
+    read -r min_width_desired min_height_desired < <(hyprctl monitors -j 2>/dev/null | jq -r 'max_by(.width * .height) | "\(.width) \(.height)"' 2>/dev/null)
 
     if command -v identify &>/dev/null && [ -f "$img" ]; then
         local img_width img_height
@@ -108,9 +110,11 @@ check_and_prompt_upscale() {
             img_width=$min_width_desired
             img_height=$min_height_desired
         else
-            img_width=$(identify -format "%w" "$img" 2>/dev/null)
-            img_height=$(identify -format "%h" "$img" 2>/dev/null)
+            # the first frame only: an animated picture prints a size per frame
+            read -r img_width img_height < <(identify -format "%w %h\n" "$img[0]" 2>/dev/null)
         fi
+        # a size that could not be read (a format identify cannot open) is no reason to say the picture is small
+        [[ "$img_width" =~ ^[0-9]+$ && "$img_height" =~ ^[0-9]+$ && "$min_width_desired" =~ ^[0-9]+$ && "$min_height_desired" =~ ^[0-9]+$ ]] || return 0
         if [[ "$img_width" -lt "$min_width_desired" || "$img_height" -lt "$min_height_desired" ]]; then
             # Upscayl is offered only when it is installed; nothing is installed from here.
             local small_title="The picture is smaller than the screen"
@@ -159,6 +163,7 @@ start_video_wallpaper() { # video path
 
 is_video() {
     local extension="${1##*.}"
+    extension="${extension,,}"
     [[ "$extension" == "mp4" || "$extension" == "webm" || "$extension" == "mkv" || "$extension" == "avi" || "$extension" == "mov" ]] && return 0 || return 1
 }
 
@@ -608,7 +613,7 @@ regen_ground() {
     local args=(--ground)
     # a video wallpaper is drawn from its still, which tacit-boot-ground can read (the video failed every time)
     local still="$imgpath"
-    [[ "$imgpath" =~ \.(mp4|webm|mkv|avi|mov)$ ]] && still="$THUMBNAIL_DIR/$(basename "$imgpath").jpg"
+    is_video "$imgpath" && still="$THUMBNAIL_DIR/$(basename "$imgpath").jpg"
     [[ "$mkassets" == /usr/lib/tacit/tacit-boot-ground && -n "$still" && -f "$still" ]] && args=(--wallpaper "$still")
     # A silent failure here leaves the splash and the lock ground on the previous wallpaper.
     {

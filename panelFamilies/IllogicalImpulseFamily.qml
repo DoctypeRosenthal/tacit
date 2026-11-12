@@ -98,10 +98,10 @@ Scope {
     // the popup, and the shipped defaults (island on, its notification state on) meant a fresh
     // install had no centre at all. The popup itself stands down for the island inside the file.
     PanelLoader { component: NotificationPopup {} }
-    // Loaded only when the notch does not show both volume and brightness (states/IslandMeter.qml):
-    // two surfaces for one event otherwise. The notch also says "Volume held back"; with the OSD
-    // loaded, exactly one of them says it (IslandController, OnScreenDisplay.qml).
-    PanelLoader { extraCondition: !(Config.options.island.enable && Config.options.island.states.volume && Config.options.island.states.brightness); component: OnScreenDisplay {} }
+    // Always loaded: the notch is suppressed on the lock and session screens, and the volume and
+    // brightness keys would give no feedback there. The file mutes its own triggers (meters, gamma,
+    // the sink-protection warning) while the notch can answer, so exactly one of them says each.
+    PanelLoader { component: OnScreenDisplay {} }
     PanelLoader { component: OnScreenKeyboard {} }
     PanelLoader { component: Overlay {} }
     PanelLoader { component: Overview {} }

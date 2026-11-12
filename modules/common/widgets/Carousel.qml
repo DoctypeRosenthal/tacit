@@ -140,6 +140,9 @@ Item {
                 MouseArea {
                     anchors.fill: parent
                     hoverEnabled: true
+                    // A custom delegate owns its presses (the shelf's tiles are dragged out); this
+                    // area sits above it and would take them, so it only hovers for such a carousel.
+                    acceptedButtons: root.delegate ? Qt.NoButton : Qt.LeftButton
                     cursorShape: Qt.PointingHandCursor
                     onEntered: root.hoveredIndex = itemRoot.index
                     onExited: if (root.hoveredIndex === itemRoot.index)
@@ -157,8 +160,9 @@ Item {
             property real fixedWidth: parent?.fixedWidth ?? width
             property real fixedHeight: parent?.fixedHeight ?? height
             // An empty model entry resolved to "file:///", which QQuickImage reports as
-            // "Path is a directory" on every rebuild. No path, no source.
-            source: (modelData && String(modelData).length > 0) ? "file://" + FileUtils.trimFileProtocol(modelData) : ""
+            // "Path is a directory" on every rebuild. No path, no source. The path is encoded,
+            // or a "#" or "?" in a name would end the file name there.
+            source: (modelData && String(modelData).length > 0) ? "file://" + FileUtils.trimFileProtocol(modelData).split("/").map(encodeURIComponent).join("/") : ""
             fillMode: Image.PreserveAspectCrop
             cache: true
             asynchronous: true

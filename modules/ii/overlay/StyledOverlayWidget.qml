@@ -85,8 +85,14 @@ AbstractOverlayWidget {
     }
 
     // Positioning & sizing
-    x: Math.round(persistentStateEntry.x) // Round or it'll be blurry
-    y: Math.round(persistentStateEntry.y) // Round or it'll be blurry
+    // The saved spot may be for a bigger screen (the defaults are picked on 1920x1080): shown inside
+    // this one, whole and so within reach of its title bar. The saved value is left as it is, so a
+    // larger screen gets the widget back where it was put. Not before the screen's size is known.
+    function onScreen(pos, size, limit) {
+        return limit > 0 ? Math.max(0, Math.min(pos, limit - size)) : pos;
+    }
+    x: Math.round(onScreen(persistentStateEntry.x, root.width, root.parent?.width ?? 0)) // Round or it'll be blurry
+    y: Math.round(onScreen(persistentStateEntry.y, root.height, root.parent?.height ?? 0)) // Round or it'll be blurry
     pinned: persistentStateEntry.pinned
     clickthrough: persistentStateEntry.clickthrough
     drag {

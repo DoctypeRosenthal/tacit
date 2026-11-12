@@ -34,7 +34,8 @@ Singleton {
     property real cpuTemp: 0
     // The x86-only labels `sensors` was grepped for (Package id 0/Tctl/Tdie) print nothing on
     // this hardware, so parseFloat("") landed in cpuTemp as NaN. The thermal zones carry the
-    // same reading and cost no process per tick.
+    // same reading and cost no process per tick. AMD chips show it only through hwmon (k10temp), so that
+    // is the fallback.
     property string cpuTempPath: ""
 
     property real diskTotal: 1
@@ -47,7 +48,7 @@ Singleton {
     Process {
         id: findCpuThermalZone
         running: true
-        command: ["bash", "-c", 'best=""; for z in /sys/class/thermal/thermal_zone*; do t=$(cat "$z/type" 2>/dev/null) || continue; case "$t" in x86_pkg_temp|*cpu*top*) echo "$z/temp"; exit 0 ;; *cpu*) [ -n "$best" ] || best="$z/temp" ;; esac; done; echo "$best"']
+        command: ["bash", "-c", 'best=""; for z in /sys/class/thermal/thermal_zone*; do t=$(cat "$z/type" 2>/dev/null) || continue; case "$t" in x86_pkg_temp|*cpu*top*) echo "$z/temp"; exit 0 ;; *cpu*) [ -n "$best" ] || best="$z/temp" ;; esac; done; [ -n "$best" ] || for h in /sys/class/hwmon/hwmon*; do case "$(cat "$h/name" 2>/dev/null)" in k10temp|coretemp|zenpower) best="$h/temp1_input"; break ;; esac; done; echo "$best"']
         stdout: StdioCollector {
             id: thermalZoneCollector
             onStreamFinished: {

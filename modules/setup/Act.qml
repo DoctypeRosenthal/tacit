@@ -10,9 +10,10 @@ Item {
     width: Math.max(Look.px(240), at.width + Look.px(80))
     height: Look.px(58)
     activeFocusOnTab: !later
-    Keys.onReturnPressed: if (!later) clicked()
-    Keys.onEnterPressed: if (!later) clicked()
-    Keys.onSpacePressed: if (!later) clicked()
+    // a held key's repeats are not presses: one held Enter went through two pages, the second of them Erase
+    Keys.onReturnPressed: event => { if (!later && !event.isAutoRepeat) clicked(); }
+    Keys.onEnterPressed: event => { if (!later && !event.isAutoRepeat) clicked(); }
+    Keys.onSpacePressed: event => { if (!later && !event.isAutoRepeat) clicked(); }
     scale: ma.pressed && !later ? 0.97 : 1
     Behavior on scale { Anim { type: Anim.FastEffects } }
     Rectangle {

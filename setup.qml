@@ -14,7 +14,7 @@
 //
 //   qs -p setup.qml                          full screen, as on the stick
 //   TACIT_SETUP_WINDOWED=1 qs -p setup.qml   in a window, to look at it on the desktop
-//   TACIT_SETUP_SCENARIO=windows|bitlocker|full|empty|linux, TACIT_SETUP_FAIL=1   cases this computer does not have
+//   TACIT_SETUP_SCENARIO=windows|bitlocker|asleep|check|nouefi|full|empty|linux, TACIT_SETUP_FAIL=1   cases this computer does not have
 
 import QtQuick
 import QtQuick.Controls
@@ -37,6 +37,9 @@ ApplicationWindow {
     // a window opened over it on the stick (a key that starts the terminal) takes the full screen away (Hyprland's
     // on_focus_under_fullscreen), and the practice run's rule then made Setup a card: it takes it back when in front again
     onActiveChanged: if (active && !windowed && visibility !== Window.FullScreen) visibility = Window.FullScreen
+    // closing the window (Super+Q, Alt+F4) mid-install would stop the helper while the installer, as root, goes on to a disk
+    // already erased or shrunk with nobody to give it the account: refused while a real install runs
+    onClosing: close => { if (!backend.practice && setup.installState === "running") close.accepted = false; }
     Binding { target: Quickshell; property: "watchFiles"; value: false }
     Binding { target: Look; property: "u"; value: Math.min(root.width / 1920, root.height / 1080) }
     Component.onCompleted: MaterialThemeLoader.reapplyTheme()
@@ -48,6 +51,7 @@ ApplicationWindow {
         id: backend
         property var languages: []
         property var layouts: []
+        property var nonLatin: []       // layouts that cannot type Latin letters
         property bool wired: false      // a cable connects this computer (no Wi-Fi needed)
         property var wifi: []
         property var disk: ({})
@@ -68,27 +72,33 @@ ApplicationWindow {
         command: ["python3", "-I", Quickshell.shellPath("scripts/setup/setupd.py")]
         stdinEnabled: true
         stdout: SplitParser { onRead: line => root.receive(line) }
+        // the helper going away mid-install would leave "Installing" on the page for good (Back and Esc are blocked)
+        onExited: {
+            setup.joining = false;
+            if (setup.installState !== "running") return;
+            setup.installUntouched = false; setup.installReason = "Setup's helper stopped"; setup.installState = "failed"; setup.go("failed");
+        }
     }
     function receive(line) {
         let m;
         try { m = JSON.parse(line); } catch (e) { return; }
         if (m.ev === "hello") {
-            backend.languages = m.languages; backend.layouts = m.layouts; backend.wifi = m.wifi; backend.wired = m.wired === true;
+            backend.languages = m.languages; backend.layouts = m.layouts; backend.nonLatin = m.nonLatin ?? []; backend.wifi = m.wifi; backend.wired = m.wired === true;
             backend.power = m.power; backend.scenario = m.scenario;
             backend.practice = m.practice !== false;
             backend.ready = true;
-            if (setup.language === "") { setup.language = m.languages[0].code; setup.layout = m.languages[0].layout; }
+            if (setup.language === "") { setup.language = m.languages[0].code; setup.layout = m.keyboard || m.languages[0].layout; }
             const here = m.wifi.find(w => w.inUse);
             if (here) setup.network = here.ssid;
         } else if (m.ev === "disks") { backend.disk = m.disk; backend.plan = m.plan; backend.disks = m.disks ?? []; backend.parts = m.parts ?? []; backend.disksRead = true; root.keepParts(); }
         else if (m.ev === "editorClosed") backend.editing = false;
         else if (m.ev === "wifi") { backend.wifi = m.wifi; backend.wired = m.wired === true; }
-        else if (m.ev === "disk") { backend.disk = m.disk; backend.plan = m.plan; setup.place = "next"; }
+        else if (m.ev === "disk") { backend.disk = m.disk; backend.plan = m.plan; }
         else if (m.ev === "power") backend.power = m.power;
         else if (m.ev === "join") {
             setup.joining = false;
-            if (m.ok) { setup.joined = m.ssid; setup.joinError = ""; setup.go("where"); }
-            else setup.joinError = "That password didn't work. Check it and try again.";
+            if (m.ok) { setup.joined = m.ssid; setup.joinError = ""; if (setup.page === "wifi") setup.go("where"); }
+            else setup.joinError = m.why === "password" ? "That password didn't work. Check it and try again." : `Could not connect to ${m.ssid}. Try again, or connect later.`;
         } else if (m.ev === "install") {
             setup.installDone = m.done; setup.installLeft = m.left ?? -1; setup.installState = m.state;
             if (m.other) setup.otherSystem = m.other;
@@ -98,7 +108,7 @@ ApplicationWindow {
             else if (m.state === "done" && setup.page === "almost") setup.go("ready");
         }
     }
-    Timer { interval: 10000; repeat: true; running: setup.page === "wifi"; onTriggered: backend.send({ op: "wifi" }) }
+    Timer { interval: 10000; repeat: true; running: setup.page === "wifi"; triggeredOnStart: true; onTriggered: backend.send({ op: "wifi" }) }
 
     // ── where we are, and what has been chosen
     QtObject {
@@ -107,14 +117,22 @@ ApplicationWindow {
         property var trail: []
         property string language: ""
         property string layout: ""
+        property bool layoutPicked: false       // a keyboard chosen from the list: a language chosen after it leaves it be
+        // a layout that cannot type Latin letters (Russian, Arabic ...) comes second to US, so a Wi-Fi name or password
+        // can still be typed; Alt + Shift switches (tacit-install writes the same pair for the installed system)
+        readonly property bool paired: backend.nonLatin.includes(layout)
+        readonly property string kbLayout: paired ? `us,${layout}` : layout
+        readonly property string kbTag: kbLayout.replace(",", " / ")      // on the password fields
         // the live system types in the layout chosen, so a password made here is typed the same at the installed
         // system's lock (which reads the layout tacit-install writes); not in the practice run, which runs on this desktop
-        onLayoutChanged: if (!backend.practice && /^[a-z]{2,8}$/.test(layout))
-            Quickshell.execDetached(["hyprctl", "eval", `hl.config({ input = { kb_layout = "${layout}" } })`])
+        onKbLayoutChanged: if (!backend.practice && /^[a-z]{2,8}(,[a-z]{2,8})?$/.test(kbLayout))
+            Quickshell.execDetached(["hyprctl", "eval", `hl.config({ input = { kb_layout = "${kbLayout}", kb_options = "${paired ? "grp:alt_shift_toggle" : ""}" } })`])
         property string installReason: ""   // what stopped an install, in the installer's words
         property string network: ""
         property string joined: ""
         property bool joining: false
+        property string joinName: ""            // the network being joined
+        property bool otherNet: false           // "Other network…": its name and password typed in
         property string joinError: ""
         property string place: "next"          // next | instead | manual
         // "Choose partitions myself": Tacit's partition (erased), the EFI partition (kept), a boot partition (erased) or ""
@@ -131,11 +149,16 @@ ApplicationWindow {
         readonly property bool installing: installState === "running" || installState === "done"
         function go(p) { trail = trail.concat([page]); page = p; }
         function back() {
-            if (installing || trail.length === 0) return;
+            // the failed page's way out is Try again: Back would land on a page of an install that is not running
+            if (installing || page === "failed" || trail.length === 0) return;
             const t = trail.slice(); page = t.pop(); trail = t;
         }
-        function startInstall() { backend.send({ op: "install", place: place }); installState = "running"; trail = []; go("you"); }
+        function startInstall() {
+            if (installing) return;
+            backend.send({ op: "install", place: place }); installState = "running"; trail = []; go("you");
+        }
         function startManual() {
+            if (installing) return;
             place = "manual";
             backend.send({ op: "install", place: "manual", root: partRoot, efi: partEfi, boot: partBoot || null });
             installState = "running"; trail = []; go("you");
@@ -149,7 +172,11 @@ ApplicationWindow {
     property string shownPage: "welcome"
     Connections {
         target: setup
-        function onPageChanged() { swapOut.restart(); }
+        function onPageChanged() {
+            swapOut.restart();
+            // no disk was found when the disks were read: one that came up since (a slow drive) is looked for again
+            if (setup.page === "where" && backend.disksRead && (backend.disk.case ?? "none") === "none") backend.send({ op: "disks" });
+        }
     }
     SequentialAnimation {
         id: swapOut
@@ -164,6 +191,9 @@ ApplicationWindow {
         Qt.callLater(() => {
             if (root.shownPage === "you") nameField.focusIn();
             else if (root.shownPage === "wifi" && root.pwFieldRef) root.pwFieldRef.focusIn();
+            // Erase can't be undone: the page opens on Back, so a doubled Enter from the page before goes back, and
+            // erasing takes a choice (Tab or a click) after "This can't be undone" has been seen
+            else if (root.shownPage === "erase" || root.shownPage === "eraseparts") otherWay.forceActiveFocus();
             else primary.forceActiveFocus();
         });
     }
@@ -202,6 +232,8 @@ ApplicationWindow {
                     visible: root.shownPage === "welcome"
                     anchors.fill: parent
                     T { x: (parent.width - width) / 2 + Look.px(14); y: Look.px(196); text: "TACIT"; font.family: Look.display; font.pixelSize: Look.fs(60); font.weight: Font.Light; font.variableAxes: { "wght": 300 }; font.letterSpacing: Look.px(28) }
+                    // a language Tacit has no words in (Setup itself is in English for all): said once chosen, not left to be found out
+                    Sentence { visible: setup.lang?.translated === false; text: root.notTranslated }
                     Column {
                         x: (parent.width - width) / 2; y: Look.px(330); width: Look.px(600)
                         Repeater {
@@ -228,6 +260,7 @@ ApplicationWindow {
                         Link { anchors.horizontalCenter: parent.horizontalCenter; glyph: "language"; text: "More languages ›"; onClicked: setup.go("languages") }
                     }
                     Link { x: (parent.width - width) / 2; y: Look.px(646); text: `Keyboard: ${setup.layoutName}  ›`; bright: true; onClicked: setup.go("keyboards") }
+                    T { visible: setup.paired; x: (parent.width - width) / 2; y: Look.px(684); text: "Press Alt + Shift to switch to the US keyboard."; font.pixelSize: Look.fs(16); color: Look.meta }
                 }
 
                 // ── a long list to pick from: every language, or every keyboard
@@ -236,7 +269,8 @@ ApplicationWindow {
                     anchors.fill: parent
                     readonly property bool langs: root.shownPage === "languages"
                     Headline { text: parent.langs ? "Choose a language." : "Choose a keyboard." }
-                    Sentence { text: parent.langs ? "Everything after this is in it." : "Type a few letters to find yours." }
+                    Sentence { text: !parent.langs ? "Type a few letters to find yours."
+                                   : setup.lang?.translated === false ? root.notTranslated : "Tacit starts in it. Setup stays in English." }
                     Rectangle {
                         visible: !parent.langs
                         x: (parent.width - width) / 2; y: Look.px(340); width: Look.px(600); height: Look.px(56); radius: Look.px(18)
@@ -277,66 +311,116 @@ ApplicationWindow {
                     anchors.fill: parent
                     Headline { text: "Connect to the internet." }
                     Sentence { text: "Tacit uses it to set the clock and look for updates. You can connect later." }
-                    Column {
-                        x: (parent.width - width) / 2; y: Look.px(360); width: Look.px(600)
-                        Repeater {
-                            // four, so an open password field never reaches the buttons
-                            model: backend.wifi.slice(0, 4)
-                            Column {
-                                id: net
-                                required property var modelData
-                                readonly property bool on: modelData.ssid === setup.network
-                                width: Look.px(600)
-                                Item {
-                                    width: Look.px(600); height: Look.px(52)
-                                    activeFocusOnTab: true
-                                    Keys.onReturnPressed: root.pickNetwork(net.modelData)
-                                    MaterialSymbol { anchors.verticalCenter: parent.verticalCenter; iconSize: Look.fs(24)
-                                        text: net.modelData.signal > 66 ? "wifi" : net.modelData.signal > 33 ? "wifi_2_bar" : "wifi_1_bar"; color: net.on ? Look.main : Look.meta }
-                                    T { x: Look.px(44); anchors.verticalCenter: parent.verticalCenter; text: net.modelData.ssid; font.pixelSize: Look.fs(22)
-                                        font.weight: net.on || parent.activeFocus ? Font.DemiBold : Font.Normal; color: net.on || parent.activeFocus || nma.containsMouse ? Look.main : Look.meta }
-                                    T { visible: net.modelData.inUse; anchors.right: parent.right; anchors.rightMargin: Look.px(20); anchors.verticalCenter: parent.verticalCenter
-                                        text: "Connected"; font.pixelSize: Look.fs(16); color: Look.sec }
-                                    MaterialSymbol { visible: net.modelData.secure && !net.modelData.inUse; anchors.right: parent.right; anchors.rightMargin: Look.px(20); anchors.verticalCenter: parent.verticalCenter
-                                        text: "lock"; iconSize: Look.fs(18); color: Look.meta }
-                                    MouseArea { id: nma; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.pickNetwork(net.modelData) }
-                                }
-                                Loader {
-                                    active: net.on && net.modelData.secure && !net.modelData.inUse
-                                    visible: active
-                                    sourceComponent: Column {
-                                        width: Look.px(600)
-                                        Field {
-                                            id: pwField
+                    // a list longer than its window scrolls (the wheel, a drag, Tab); the window is where four rows and an open
+                    // password field fitted above the buttons
+                    Flickable {
+                        id: netList
+                        x: (parent.width - width) / 2; y: Look.px(360); width: Look.px(600); height: Look.px(300)
+                        contentWidth: width; contentHeight: netCol.height
+                        clip: true
+                        boundsBehavior: Flickable.StopAtBounds
+                        Column {
+                            id: netCol
+                            width: Look.px(600)
+                            Repeater {
+                                // kept by name, so a rescan every 10 s keeps the row (and the password being typed in it)
+                                model: ScriptModel { values: backend.wifi; objectProp: "ssid" }
+                                Column {
+                                    id: net
+                                    required property var modelData
+                                    readonly property bool on: modelData.ssid === setup.network
+                                    width: Look.px(600)
+                                    onOnChanged: if (on) root.reveal(net)
+                                    onHeightChanged: if (on) root.reveal(net)
+                                    Item {
+                                        id: nrow
+                                        width: Look.px(600); height: Look.px(52)
+                                        activeFocusOnTab: true
+                                        Keys.onReturnPressed: root.pickNetwork(net.modelData)
+                                        onActiveFocusChanged: if (activeFocus) root.reveal(nrow)
+                                        MaterialSymbol { anchors.verticalCenter: parent.verticalCenter; iconSize: Look.fs(24)
+                                            text: net.modelData.signal > 66 ? "wifi" : net.modelData.signal > 33 ? "wifi_2_bar" : "wifi_1_bar"; color: net.on ? Look.main : Look.meta }
+                                        T { x: Look.px(44); anchors.verticalCenter: parent.verticalCenter; text: net.modelData.ssid; font.pixelSize: Look.fs(22)
+                                            font.weight: net.on || parent.activeFocus ? Font.DemiBold : Font.Normal; color: net.on || parent.activeFocus || nma.containsMouse ? Look.main : Look.meta }
+                                        T { visible: net.modelData.inUse; anchors.right: parent.right; anchors.rightMargin: Look.px(20); anchors.verticalCenter: parent.verticalCenter
+                                            text: "Connected"; font.pixelSize: Look.fs(16); color: Look.sec }
+                                        MaterialSymbol { visible: net.modelData.secure && !net.modelData.inUse; anchors.right: parent.right; anchors.rightMargin: Look.px(20); anchors.verticalCenter: parent.verticalCenter
+                                            text: "lock"; iconSize: Look.fs(18); color: Look.meta }
+                                        MouseArea { id: nma; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.pickNetwork(net.modelData) }
+                                    }
+                                    Loader {
+                                        active: net.on && net.modelData.secure && !net.modelData.inUse
+                                        visible: active
+                                        sourceComponent: Column {
                                             width: Look.px(600)
-                                            label: `Password for ${net.modelData.ssid}`
-                                            secret: true
-                                            layout: setup.layout
-                                            error: setup.joinError
-                                            onAccepted: root.forward()
-                                            Component.onCompleted: { root.pwFieldRef = pwField; pwField.focusIn(); }
+                                            Field {
+                                                id: pwField
+                                                width: Look.px(600)
+                                                label: `Password for ${net.modelData.ssid}`
+                                                secret: true
+                                                layout: setup.kbTag
+                                                error: setup.joinError
+                                                onAccepted: root.forward()
+                                                Component.onCompleted: { root.pwFieldRef = pwField; pwField.focusIn(); }
+                                            }
+                                            Item { width: 1; height: Look.px(14) }
                                         }
-                                        Item { width: 1; height: Look.px(14) }
                                     }
                                 }
                             }
+                            T { visible: backend.wired || backend.wifi.length === 0; text: backend.wired ? "Connected by cable." : "No networks found. You can connect later."; font.pixelSize: Look.fs(19); color: Look.sec }
+                            // a network that is not in the list (a hidden one, or one out of the scan's reach): its name and password
+                            Item {
+                                id: orow
+                                width: Look.px(600); height: Look.px(52)
+                                activeFocusOnTab: true
+                                Keys.onReturnPressed: root.pickOther()
+                                onActiveFocusChanged: if (activeFocus) root.reveal(orow)
+                                MaterialSymbol { anchors.verticalCenter: parent.verticalCenter; iconSize: Look.fs(24); text: "add"; color: setup.otherNet ? Look.main : Look.meta }
+                                T { x: Look.px(44); anchors.verticalCenter: parent.verticalCenter; text: "Other network…"; font.pixelSize: Look.fs(22)
+                                    font.weight: setup.otherNet || orow.activeFocus ? Font.DemiBold : Font.Normal; color: setup.otherNet || orow.activeFocus || oma2.containsMouse ? Look.main : Look.meta }
+                                MouseArea { id: oma2; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.pickOther() }
+                            }
+                            Column {
+                                id: otherForm
+                                visible: setup.otherNet
+                                width: Look.px(600)
+                                onHeightChanged: if (visible) root.reveal(otherForm)
+                                Field { id: otherName; width: Look.px(600); label: "Network name"; onAccepted: otherPass.focusIn() }
+                                Item { width: 1; height: Look.px(8) }
+                                Field { id: otherPass; width: Look.px(600); label: "Password (if it has one)"; secret: true; layout: setup.kbTag
+                                    error: setup.joinError; onAccepted: root.forward() }
+                                Item { width: 1; height: Look.px(14) }
+                            }
                         }
-                        T { visible: backend.wifi.length === 0; text: backend.wired ? "Connected by cable." : "No networks found. You can connect later."; font.pixelSize: Look.fs(19); color: Look.sec }
                     }
+                    // while it joins (up to 45 s the button is grey and nothing else moved), and why it did not: the
+                    // error is drawn in the password field, which an open network has none of
+                    T { visible: setup.joining || (setup.joinError !== "" && !root.pwFieldShown)
+                        x: netList.x + Look.px(44); y: netList.y + netList.height + Look.px(8); width: Look.px(556); wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
+                        text: setup.joining ? `Connecting to ${setup.joinName}…` : setup.joinError; font.pixelSize: Look.fs(19); color: setup.joining ? Look.sec : Look.light }
                 }
 
                 // ── where Tacit goes
                 Item {
+                    id: wherePage
                     visible: root.shownPage === "where"
                     anchors.fill: parent
+                    // where the page ends, for the buttons below it to keep clear of (they move down for Larger text); not
+                    // "bottom", which Item has as a FINAL property and Setup would not load
+                    readonly property real endY: Math.max(whereCol.y + whereCol.height, diskLinks.visible ? diskLinks.y + diskLinks.height : 0)
                     // "looking" until the disks have been read: it said "no disk" while they were still being read
                     readonly property string c: backend.disksRead ? (backend.disk.case ?? "none") : "looking"
                     readonly property bool room: backend.plan?.room ?? false
                     readonly property bool locked: c === "bitlocker" || c === "asleep"
                     readonly property string size: `${Math.round((backend.disk.size ?? 0) / 1e9)} GB`
+                    // why "next to" is not offered, where the sentence does not already say (setupd's words)
+                    readonly property string noNext: (backend.disk.noNext ?? "") === "" ? ""
+                        : ` ${root.other === "it" ? "Next to what is on it" : `Next to ${root.other}`} is not possible: ${backend.disk.noNext}.`
                     Headline {
                         text: parent.c === "looking" ? "Looking at the disks…"
                             : parent.c === "choose" ? "Which disk should Tacit go on?"
+                            : parent.c === "nouefi" ? "Tacit needs UEFI."
                             : parent.c === "bitlocker" ? "Windows is locked."
                             : parent.c === "asleep" && backend.disk.why === "check" ? "Windows has a disk check waiting."
                             : parent.c === "asleep" && backend.disk.why === "other" ? "Tacit can't read the Windows disk yet."
@@ -347,23 +431,28 @@ ApplicationWindow {
                             : "Where should Tacit go?"
                     }
                     Sentence {
+                        id: whereSentence
                         text: parent.c === "looking" ? "Tacit is reading what is on each disk inside this computer. With several drives this can take a minute. Nothing on them is changed."
                             : parent.c === "choose" ? "This computer has more than one disk with files on it. Choose the one for Tacit. The others stay as they are."
+                            : parent.c === "nouefi" ? "This computer started the USB stick in the older BIOS mode, so Tacit can't be installed. Restart, and start the stick from the UEFI entry in the boot menu."
                             : parent.c === "bitlocker" ? "This disk is locked with BitLocker, so Tacit can't make room next to Windows. Start Windows, turn BitLocker off in Settings, then start from this USB stick again."
                             : parent.c === "asleep" && backend.disk.why === "check" ? "Windows marked its disk to be checked, so Tacit can't make room next to it yet. Start Windows and restart it twice so the check runs, then shut it down and start from this USB stick again."
                             : parent.c === "asleep" && backend.disk.why === "other" ? `Tacit can't make room next to Windows until it can read the disk safely. Start Windows, restart it, shut it down, then start from this USB stick again. The disk said: “${backend.disk.says}”`
                             : parent.c === "asleep" ? "Windows is paused rather than shut down, so Tacit can't make room next to it yet. Start Windows, hold Shift while you choose Shut down, then start from this USB stick again."
+                            : parent.c === "windows" && backend.plan && !parent.room && backend.disk.used == null ? `Setup could not read how much of the ${parent.size} disk Windows uses, so it can't make room next to it. You can install instead of Windows.`
                             : parent.c === "windows" && backend.plan && !parent.room ? `Windows and your files use ${Math.round(backend.disk.used / 1e9)} GB of the ${parent.size} disk. Free up space in Windows, or install instead of Windows.`
-                            : parent.c === "windows" && backend.plan ? `This computer has Windows on its ${parent.size} disk, with ${Math.round(backend.disk.used / 1e9)} GB in use.`
-                            : parent.c === "windows" ? `This computer has Windows on its ${parent.size} disk.`
-                            : parent.c === "linux" ? `This computer has Linux on its ${parent.size} disk.`
+                            : parent.c === "windows" && backend.plan && backend.disk.used != null ? `This computer has Windows on its ${parent.size} disk, with ${Math.round(backend.disk.used / 1e9)} GB in use.`
+                            : parent.c === "windows" ? `This computer has Windows on its ${parent.size} disk.${parent.noNext}`
+                            : parent.c === "linux" ? `This computer has Linux on its ${parent.size} disk.${parent.noNext}`
                             : parent.c === "empty" && root.windowsElsewhere ? `This ${parent.size} disk is empty. Windows, on the other disk, stays as it is.`
                             : parent.c === "empty" ? `This computer's ${parent.size} disk is empty.`
                             : parent.c === "none" ? "Tacit found no disk inside this computer. The USB stick it runs from can't be used."
-                            : `This computer's disk is ${parent.size}.`
+                            : `This computer's disk is ${parent.size}.${parent.noNext}`
                     }
                     Column {
-                        x: (parent.width - width) / 2; y: Look.px(360); width: Look.px(600)
+                        id: whereCol
+                        // under the sentence when Larger text makes it run past the usual line
+                        x: (parent.width - width) / 2; y: Math.max(Look.px(360), whereSentence.y + whereSentence.height + Look.px(32)); width: Look.px(600)
                         spacing: Look.px(30)
                         Choice {
                             visible: parent.parent.room
@@ -375,17 +464,26 @@ ApplicationWindow {
                                     + (root.other === "it" ? "" : ` To use ${root.other}, hold the Space bar while the computer starts.`)
                             onPicked: setup.place = "next"
                         }
-                        // one way only (an empty disk) is no choice: the headline says it
+                        // a Windows that has to be started first (locked, paused, due a check): the safe way, and the one chosen
                         Choice {
-                            visible: !["none", "looking", "choose", "empty"].includes(parent.parent.c) && !parent.parent.locked
+                            visible: parent.parent.locked
                             width: Look.px(600)
-                            name: parent.parent.c === "windows" ? "Instead of Windows" : parent.parent.c === "empty" ? "Use the whole disk" : "Instead of what is on it"
-                            on: setup.place === "instead" || !parent.parent.room
-                            detail: parent.parent.c === "empty" ? "" : parent.parent.c === "windows" ? "Windows and every file on this disk will be erased." : "Everything on this disk will be erased."
+                            name: "Start Windows first"; on: setup.place !== "instead"
+                            detail: "Your Windows files stay as they are. When the screen goes dark, take out the USB stick."
+                            onPicked: setup.place = "next"
+                        }
+                        // one way only (an empty disk) is no choice: the headline says it. A locked Windows can be erased too,
+                        // which needs nothing read from it (the erase page asks once more)
+                        Choice {
+                            visible: !["none", "looking", "choose", "nouefi", "empty"].includes(parent.parent.c)
+                            width: Look.px(600)
+                            name: root.isWindows(backend.disk) ? "Instead of Windows" : "Instead of what is on it"
+                            on: setup.place === "instead" || (!parent.parent.room && !parent.parent.locked)
+                            detail: root.isWindows(backend.disk) ? "Windows and every file on this disk will be erased." : "Everything on this disk will be erased."
                             onPicked: setup.place = "instead"
                         }
                         T {
-                            visible: !(backend.power.ac ?? true) && !["none", "looking", "choose"].includes(parent.parent.c) && !parent.parent.locked
+                            visible: !(backend.power.ac ?? true) && !["none", "looking", "choose", "nouefi"].includes(parent.parent.c) && (!parent.parent.locked || setup.place === "instead")
                             width: Look.px(600); wrapMode: Text.Wrap
                             horizontalAlignment: parent.parent.c === "empty" ? Text.AlignHCenter : Text.AlignLeft
                             text: "Plug in the charger. Installing takes about 10 minutes."
@@ -393,13 +491,13 @@ ApplicationWindow {
                         }
                     }
 
-                    // with more than one disk inside: which one, as the first page names the keyboard
                     // with more than one disk inside: which one, as the first page names the keyboard; and for people who set up
                     // their own partitions, their own way
                     Row {
-                        x: (parent.width - width) / 2; y: Look.px(646)
+                        id: diskLinks
+                        x: (parent.width - width) / 2; y: Math.max(Look.px(646), whereCol.y + whereCol.height + Look.px(20))
                         spacing: Look.px(40)
-                        visible: backend.disksRead
+                        visible: backend.disksRead && parent.c !== "nouefi"
                         Link { visible: backend.disks.length > 1 && parent.parent.c !== "choose"; bright: true
                             text: `Disk: ${root.diskName(backend.disk)}  ›`; onClicked: setup.go("disks") }
                         Link { visible: backend.parts.length > 0; text: "Choose partitions myself  ›"; onClicked: setup.go("parts") }
@@ -503,12 +601,12 @@ ApplicationWindow {
                     visible: root.shownPage === "erase"
                     anchors.fill: parent
                     Headline { text: "Erase this disk?" }
-                    Sentence { text: (backend.disk.case === "windows" ? "Windows and every file" : "Everything") + " on this disk will be erased. This can't be undone." }
+                    Sentence { text: (root.isWindows(backend.disk) ? "Windows and every file" : "Everything") + " on this disk will be erased. This can't be undone." }
                     Column {
                         x: (parent.width - width) / 2; y: Look.px(360); width: Look.px(600); spacing: Look.px(10)
                         T { anchors.horizontalCenter: parent.horizontalCenter; text: `${backend.disk.model ?? "This disk"} · ${Math.round((backend.disk.size ?? 0) / 1e9)} GB`; font.pixelSize: Look.fs(22) }
                         T { width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap; font.pixelSize: Look.fs(18); color: Look.sec
-                            text: backend.disk.case === "windows" ? "To keep any files, restart into Windows and copy them to a USB drive first." : "To keep any files, copy them somewhere else first." }
+                            text: root.isWindows(backend.disk) ? "To keep any files, restart into Windows and copy them to a USB drive first." : "To keep any files, copy them somewhere else first." }
                     }
                 }
 
@@ -532,10 +630,10 @@ ApplicationWindow {
                         Item { width: 1; height: Look.px(22) }
                         Field { id: nameField; width: Look.px(600); label: "Your name"; onAccepted: passField.focusIn() }
                         Item { width: 1; height: Look.px(8) }
-                        Field { id: passField; width: Look.px(600); label: "Password for this computer"; secret: true; layout: setup.layout; onAccepted: againField.focusIn() }
+                        Field { id: passField; width: Look.px(600); label: "Password for this computer"; secret: true; layout: setup.kbTag; onAccepted: againField.focusIn() }
                         Item { width: 1; height: Look.px(8) }
                         Field {
-                            id: againField; width: Look.px(600); label: "Type it again"; secret: true; layout: setup.layout
+                            id: againField; width: Look.px(600); label: "Type it again"; secret: true; layout: setup.kbTag
                             error: text !== "" && passField.text !== "" && text !== passField.text && text.length >= passField.text.length ? "The two passwords are different." : ""
                             onAccepted: root.forward()
                         }
@@ -556,18 +654,28 @@ ApplicationWindow {
                     visible: ["almost", "ready", "failed"].includes(root.shownPage)
                     anchors.fill: parent
                     Headline { text: root.shownPage === "almost" ? "Almost done." : root.shownPage === "ready" ? "Tacit is ready." : "Tacit didn't finish installing." }
-                    // what stopped it, in the installer's words (all of it in /tmp/tacit-install.log on the live system)
-                    T {
-                        visible: root.shownPage === "failed" && setup.installReason !== ""
-                        x: (parent.width - width) / 2; y: Look.px(430); width: Look.px(780)
-                        horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
-                        text: `What stopped it: ${setup.installReason}.`
-                        font.pixelSize: Look.fs(16); color: Look.meta
+                    // what stopped it, in the installer's words (a tool's failure as its last line), and where all of it is
+                    Column {
+                        visible: root.shownPage === "failed"
+                        x: (parent.width - width) / 2; y: Look.px(430); width: Look.px(780); spacing: Look.px(8)
+                        T {
+                            visible: setup.installReason !== ""
+                            width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
+                            text: `What stopped it: ${setup.installReason}.`
+                            font.pixelSize: Look.fs(16); color: Look.meta
+                        }
+                        T {
+                            visible: !backend.practice
+                            width: parent.width; horizontalAlignment: Text.AlignHCenter
+                            text: "The full record is in /tmp/tacit-install.log."
+                            font.pixelSize: Look.fs(16); color: Look.meta
+                        }
                     }
                     Sentence {
                         text: root.shownPage === "almost" ? "Tacit is finishing on its own. Keep the computer on and the USB stick in."
                             : root.shownPage === "ready" ? ("Restart now. When the screen goes dark, take out the USB stick." + (setup.place === "next" && root.other !== "it" ? ` To use ${root.other}, hold the Space bar while the computer starts.`
-                                                                                                                                : setup.otherSystem !== "" ? ` To use ${setup.otherSystem}, hold the Space bar while the computer starts.` : ""))
+                                                                                                                                : setup.otherSystem !== "" ? ` To use ${setup.otherSystem}, hold the Space bar while the computer starts.` : "")
+                                + (setup.place === "next" || setup.place === "manual" ? " If it starts the old system instead, open the boot menu (often F12 or Esc) and choose Tacit." : "") + root.a11yNote)
                             : setup.installUntouched ? "Nothing on the disk was changed, so the computer starts as before. You can try again."
                             : setup.place === "next" ? `Tacit stopped partway. ${root.other === "it" ? "What was on the disk" : root.other} should start as before${root.other === "Windows" ? ", after it checks its disk" : ""}. You can try again.`
                             : "Tacit stopped partway, after the disk was erased. You can try again."
@@ -580,7 +688,7 @@ ApplicationWindow {
             Act {
                 id: primary
                 visible: root.shownPage !== "almost" && root.shownPage !== "privacy" && root.shownPage !== "languages" && root.shownPage !== "keyboards" && root.shownPage !== "disks"
-                x: (stage.width - width + (otherWay.visible ? otherWay.width + Look.px(18) : 0)) / 2; y: Look.px(720)
+                x: (stage.width - width + (otherWay.visible ? otherWay.width + Look.px(18) : 0)) / 2; y: Math.max(Look.px(720), root.flowBottom + Look.px(40))
                 text: root.primaryText
                 later: root.primaryLater
                 onClicked: root.forward()
@@ -591,7 +699,7 @@ ApplicationWindow {
                 // know they could, and Setup covered the desktop)
                 readonly property bool tryFirst: root.shownPage === "welcome" && !backend.practice && !root.windowed
                 visible: tryFirst || ["wifi", "where", "erase", "parts", "eraseparts"].includes(root.shownPage)
-                x: primary.x - width - Look.px(18); y: Look.px(724)
+                x: primary.x - width - Look.px(18); y: primary.y + Look.px(4)
                 text: tryFirst ? "Try Tacit first" : root.shownPage === "wifi" ? "Not now" : "Back"
                 onClicked: tryFirst ? root.tryTacitFirst() : root.shownPage === "wifi" ? setup.go("where") : setup.back()
             }
@@ -735,33 +843,56 @@ ApplicationWindow {
     }
 
     // ── what the buttons do
+    readonly property string notTranslated: "Tacit isn't in this language yet, so it starts in English."
     property Item pwFieldRef: null
+    // the bottom of what the page above the buttons holds, 0 where it is short; only the disk page can grow past them
+    readonly property real flowBottom: shownPage === "where" ? wherePage.endY : 0
+    // the accessibility button's choices are Setup's own: the installed desktop starts at normal size and motion
+    readonly property string a11yNote: {
+        const on = [Look.text > 1 ? "Text size" : "", Look.lessMotion ? "Reduce motion" : ""].filter(t => t !== "");
+        return on.length === 0 ? "" : ` What you chose with the accessibility button is not kept: Settings, under Accessibility, has ${on.join(" and ")}.`;
+    }
+    // a password field is on the page: the chosen network asks for one, or its name is being typed in
+    readonly property bool pwFieldShown: { const n = backend.wifi.find(w => w.ssid === setup.network); return setup.otherNet || (n !== undefined && n.secure && !n.inUse); }
     // the system Tacit goes next to
     readonly property string other: backend.disk.case === "windows" ? "Windows" : backend.disk.case === "linux" ? "Linux" : "it"
     readonly property string primaryText: ({
         welcome: "Continue", wifi: "Continue", erase: "Erase and install", parts: "Continue", eraseparts: "Erase and install", you: "Continue", ready: "Restart", failed: "Try again"
     })[shownPage] ?? (shownPage === "where" ? (!backend.disksRead ? "Continue"
                                                 : backend.disk.case === "choose" ? "Choose a disk"
-                                                : ["bitlocker", "asleep"].includes(backend.disk.case) ? "Restart into Windows"
+                                                : ["bitlocker", "asleep"].includes(backend.disk.case) ? (setup.place === "instead" ? "Continue" : "Restart into Windows")
                                                 : backend.disk.case === "none" ? "Turn off"
+                                                : backend.disk.case === "nouefi" ? "Restart"
                                                 : (backend.plan?.room ?? false) && setup.place === "next" ? (root.other === "it" ? "Install" : `Install next to ${root.other}`)
                                                 : backend.disk.case === "empty" ? "Install" : "Continue") : "Continue")
     readonly property bool primaryLater: shownPage === "you" ? (nameField.text.trim() === "" || passField.text === "" || againField.text !== passField.text)
                                        : shownPage === "wifi" ? setup.joining : shownPage === "where" ? !backend.disksRead
-                                       : shownPage === "parts" ? (setup.partRoot === "" || setup.partEfi === "" || backend.editing || (root.efiSmall && setup.partBoot === "")) : false
-    function pickLanguage(l) { setup.language = l.code; setup.layout = l.layout; }
+                                       : shownPage === "parts" ? (setup.partRoot === "" || setup.partEfi === "" || backend.editing || (root.efiSmall && setup.partBoot === ""))
+                                       : shownPage === "welcome" ? !backend.ready : false
+    // a language sets the keyboard only when it is a different one: tapping the language already shown (English, first
+    // on the page) left the keyboard of the computer for the UK's
+    function pickLanguage(l) { const same = l.code === setup.language; setup.language = l.code; if (!setup.layoutPicked && !same) setup.layout = l.layout; }
     function pickFrom(item) {
-        if (shownPage === "languages") { setup.language = item.code; setup.layout = item.layout; }
-        else setup.layout = item.code;
+        if (shownPage === "languages") { const same = item.code === setup.language; setup.language = item.code; if (!setup.layoutPicked && !same) setup.layout = item.layout; }
+        else { setup.layout = item.code; setup.layoutPicked = true; }
         setup.back();
     }
-    function pickNetwork(n) { setup.network = n.ssid; setup.joinError = ""; }
+    function pickNetwork(n) { setup.otherNet = false; setup.network = n.ssid; setup.joinError = ""; }
+    function pickOther() { setup.otherNet = true; setup.network = ""; setup.joinError = ""; Qt.callLater(() => otherName.focusIn()); }
+    // scroll the Wi-Fi list so that an item in it shows (Tab moves down a list longer than its window); a taller one shows its top
+    function reveal(item) {
+        const top = item.mapToItem(netList.contentItem, 0, 0).y;
+        if (top < netList.contentY) netList.contentY = top;
+        else if (top + item.height > netList.contentY + netList.height) netList.contentY = Math.max(0, Math.min(top, top + item.height - netList.height));
+    }
+    // Windows is on the disk, whether Setup can make room next to it or not
+    function isWindows(d) { return ["windows", "asleep", "bitlocker"].includes(d.case); }
     // a disk in words: its name and size, and what is on it
     function diskName(d) { return `${d.model ?? "Disk"} · ${Math.round((d.size ?? 0) / 1e9)} GB`; }
     function diskHolds(d) {
         return ({ windows: "Windows", asleep: "Windows", bitlocker: "Windows, with BitLocker", linux: "Linux", empty: "Empty" })[d.case] ?? "Other files";
     }
-    readonly property bool windowsElsewhere: backend.disks.some(d => d.name !== backend.disk.name && ["windows", "asleep", "bitlocker"].includes(d.case))
+    readonly property bool windowsElsewhere: backend.disks.some(d => d.name !== backend.disk.name && root.isWindows(d))
     function pickDisk(d) {
         backend.disk = d; backend.plan = d.plan; setup.place = "next";
         backend.send({ op: "disk", name: d.name });
@@ -771,9 +902,17 @@ ApplicationWindow {
         switch (shownPage) {
         case "welcome": setup.go("wifi"); break;
         case "wifi": {
+            if (setup.joining) break;
+            if (setup.otherNet) {
+                const ssid = otherName.text.trim();
+                if (ssid === "" || setup.joined === ssid) { setup.go("where"); break; }
+                setup.joining = true; setup.joinName = ssid; setup.joinError = "";
+                backend.send({ op: "join", ssid: ssid, secure: otherPass.text !== "", hidden: true, password: otherPass.text });
+                break;
+            }
             const n = backend.wifi.find(w => w.ssid === setup.network);
             if (!n || n.inUse || setup.joined === n.ssid) { setup.go("where"); break; }
-            setup.joining = true; setup.joinError = "";
+            setup.joining = true; setup.joinName = n.ssid; setup.joinError = "";
             backend.send({ op: "join", ssid: n.ssid, secure: n.secure, password: root.pwFieldRef?.text ?? "" });
             break;
         }
@@ -782,9 +921,10 @@ ApplicationWindow {
             const c = backend.disk.case ?? "none";
             if (c === "choose") { setup.go("disks"); break; }
             // "Restart into Windows" and "Turn off" do that on the stick (they only closed Setup there)
-            if (c === "bitlocker" || c === "asleep" || c === "none") {
+            if (c === "bitlocker" || c === "asleep" || c === "nouefi" || c === "none") {
+                if (c !== "none" && setup.place === "instead") { setup.go("erase"); break; }
                 if (backend.practice) root.endPractice();
-                else backend.send({ op: c === "none" ? "off" : "restart" });
+                else backend.send({ op: c === "none" ? "off" : "restart", windows: c !== "none" && c !== "nouefi" });
                 break;
             }
             if ((backend.plan?.room ?? false) && setup.place === "next") setup.startInstall();
@@ -797,11 +937,12 @@ ApplicationWindow {
         case "eraseparts": setup.startManual(); break;
         case "you": if (!root.primaryLater) setup.go("privacy"); break;
         case "ready": if (backend.practice) root.endPractice(); else backend.send({ op: "restart" }); break;
-        case "failed": setup.installState = ""; setup.trail = []; setup.page = "where"; break;
+        // the disks are read again (a failed install may have changed them), and Back and Esc lead on from the page it shows
+        case "failed": setup.installState = ""; setup.trail = ["welcome", "wifi"]; setup.page = "where"; backend.send({ op: "disks" }); break;
         }
     }
     function afterQuestions() {
-        backend.send({ op: "answers", language: setup.language, layout: setup.layout, network: setup.joined || setup.network,
+        backend.send({ op: "answers", language: setup.language, layout: setup.kbLayout, network: setup.joined || setup.network,
                        place: setup.place, name: nameField.text.trim(), password: passField.text, picture: setup.picture, reports: setup.reports });
         setup.go(setup.installState === "done" ? "ready" : "almost");
     }

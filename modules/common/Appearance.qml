@@ -36,12 +36,19 @@ Singleton {
     ColorQuantizer {
         id: wallColorQuant
         property string wallpaperPath: Config.options.background.wallpaperPath
-        property bool wallpaperIsVideo: wallpaperPath.endsWith(".mp4") || wallpaperPath.endsWith(".webm") || wallpaperPath.endsWith(".mkv") || wallpaperPath.endsWith(".avi") || wallpaperPath.endsWith(".mov")
-        source: Qt.resolvedUrl(wallpaperIsVideo ? Config.options.background.thumbnailPath : Config.options.background.wallpaperPath)
+        property bool wallpaperIsVideo: /\.(mp4|webm|mkv|avi|mov)$/i.test(wallpaperPath)
+        // a file URL with each part encoded: Qt.resolvedUrl would read a '#' or '?' in the name as a fragment or query
+        property string samplePath: FileUtils.trimFileProtocol(wallpaperIsVideo ? Config.options.background.thumbnailPath : wallpaperPath)
+        source: samplePath.length > 0 ? "file://" + samplePath.split("/").map(encodeURIComponent).join("/") : ""
         depth: 0 // 2^0 = 1 color
         rescaleSize: 10
     }
-    property real wallpaperVibrancy: (wallColorQuant.colors[0]?.hslSaturation + wallColorQuant.colors[0]?.hslLightness) / 2
+    // a middling vibrancy until the sample has loaded (or when it cannot: no wallpaper, an unreadable file), so the
+    // transparency below is a number rather than NaN
+    property real wallpaperVibrancy: {
+        const c = wallColorQuant.colors[0]
+        return c ? (c.hslSaturation + c.hslLightness) / 2 : 0.5
+    }
     property real autoBackgroundTransparency: { // y = 0.5768x^2 - 0.759x + 0.2896
         let x = wallpaperVibrancy
         let y = 0.5768 * (x * x) - 0.759 * (x) + 0.2896

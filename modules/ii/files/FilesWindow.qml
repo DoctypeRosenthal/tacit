@@ -23,7 +23,8 @@ import qs.modules.tacit
  * walk history, Ctrl+L edits the path, Ctrl+F filters this folder, Ctrl+Shift+F searches the
  * tree under it, Ctrl+H shows hidden files, Ctrl+1/2
  * list/grid, Ctrl+Shift+C copies the path, Ctrl+Shift+T opens a terminal here, Ctrl+W
- * closes; typing jumps to a name; Escape clears the filter, then the selection.
+ * closes; typing jumps to a name; Escape clears the filter, then the selection; Ctrl+. stops a
+ * running copy or move (Escape does not: stopping removes what was half written).
  */
 FloatingWindow {
     id: win
@@ -212,6 +213,11 @@ FloatingWindow {
                 dropProbe.running = true;
             }
         }
+        // the app that asked is gone (`files cancelpick`): a picker left open could only choose into the void
+        function onPickingChanged() {
+            if (win.forPick && Files.picking === null && win.visible)
+                win.visible = false;
+        }
     }
     Timer { id: dropTimer; interval: 60; onTriggered: { dropProbe.judge = true; dropProbe.running = true; } }
     Timer { id: lateDropTimer; interval: 800; onTriggered: { dropProbe.judge = true; dropProbe.running = true; } }
@@ -332,7 +338,6 @@ FloatingWindow {
         const cursor_ = { "x": cursor.x - m.x, "y": cursor.y - m.y };
         const cat = [c.at[0] - m.x, c.at[1] - m.y];
         const edge = 14;
-        const cursorAtEdge = cursor_.x <= edge || cursor_.x >= W - 1 - edge || cursor_.y <= top + edge;
         const side = cat[0] <= edge ? "l" : cat[0] + c.size[0] >= W - edge ? "r" : "";
 
         // A tile: the compositor's drag already put it where it was dropped. Dropped in
@@ -571,7 +576,7 @@ FloatingWindow {
                { "id": "terminal", "label": "Open in terminal", "glyph": "terminal", "run": () => Quickshell.execDetached(["foot", "-D", p]) },
                Files.pins.includes(p) ? { "id": "unpin", "label": "Unpin from the rail", "glyph": "keep_off", "run": () => Files.unpin(p) }
                                       : { "id": "pin", "label": "Pin to the rail", "glyph": "push_pin", "run": () => Files.pin(p) },
-               { "id": "park", "label": "Park on the shelf", "glyph": "stacks", "run": () => DropShelf.addItems(["file://" + encodeURI(p + "/")]) },
+               { "id": "park", "label": "Park on the shelf", "glyph": "stacks", "run": () => DropShelf.addItems([win.fileUrl(p) + "/"]) },
                { "id": "hand", "label": "Hand to Praxis", "glyph": "smart_toy", "run": () => Recents.launch(p, "Look around this folder. What is here, and what should I know about it?") },
                { "id": "path", "label": "Copy path", "glyph": "content_copy", "run": () => Things.copyPath(p) }].concat(win.rowOps(p))
             : [];
@@ -648,7 +653,7 @@ FloatingWindow {
            { "id": "copy", "label": "Copy", "glyph": "content_copy", "run": () => win.copySelection(false) },
            { "id": "cut", "label": "Cut", "glyph": "content_cut", "run": () => win.copySelection(true) },
            { "id": "trash", "label": "Move to the trash", "glyph": "delete", "run": () => win.trashSelection() },
-           { "id": "park", "label": "Park on the shelf", "glyph": "stacks", "run": () => DropShelf.addItems(win.selectedPaths.map(p => "file://" + encodeURI(p))) },
+           { "id": "park", "label": "Park on the shelf", "glyph": "stacks", "run": () => DropShelf.addItems(win.selectedPaths.map(p => win.fileUrl(p))) },
            { "id": "hand", "label": "Hand to Praxis", "glyph": "smart_toy", "run": () => Recents.launch(win.folder, `Look at these files: ${win.selectedPaths.join(", ")}. What are they, and what should I do with them?`) },
            { "id": "path", "label": "Copy paths", "glyph": "content_copy", "run": () => win.copyPaths() }]
     readonly property var folderActions: [
@@ -656,7 +661,7 @@ FloatingWindow {
         { "id": "newfolder", "label": "New folder", "glyph": "create_new_folder", "run": () => win.newFolder() },
         { "id": "newfile", "label": "New file", "glyph": "note_add", "run": () => win.newFile() },
         { "id": "paste", "label": "Paste", "glyph": "content_paste", "run": () => win.paste() },
-        { "id": "park", "label": "Park on the shelf", "glyph": "stacks", "run": () => DropShelf.addItems(["file://" + encodeURI(win.folder + "/")]) },
+        { "id": "park", "label": "Park on the shelf", "glyph": "stacks", "run": () => DropShelf.addItems([win.fileUrl(win.folder) + "/"]) },
         { "id": "hand", "label": "Hand to Praxis", "glyph": "smart_toy", "run": () => Recents.launch(win.folder, "Look around this folder. What is here, and what should I know about it?") },
         { "id": "path", "label": "Copy path", "glyph": "content_copy", "run": () => Things.copyPath(win.folder) }
     ].concat(Object.keys(Files.habits).length > 0 ? [{ "id": "forget", "label": "Forget where I file things", "glyph": "visibility_off", "run": () => Files.forgetHabits() }] : [])
@@ -697,7 +702,7 @@ FloatingWindow {
     FolderListModel {
         id: raw
         // a folder back after it was gone is read afresh: the model let go of it, and the same address is not news
-        folder: "file://" + win.folder + (win.reloads % 2 === 1 ? "/" : "")
+        folder: win.fileUrl(win.folder) + (win.reloads % 2 === 1 ? "/" : "")
         showDotAndDotDot: false
         showHidden: win.showHidden
         caseSensitive: false
@@ -1399,6 +1404,14 @@ FloatingWindow {
             return win.cursor < 0 ? dir : pics.vertical(win.cursor, dir) - win.cursor;
         return dir * grid.columns;
     }
+    // The mouse's back and forward buttons walk the history, as Alt+Left and Alt+Right do and as in a browser. Handlers
+    // on an item under everything: a row or button that does not take these buttons lets them through to here.
+    Item {
+        anchors.fill: parent
+        z: -1
+        TapHandler { acceptedButtons: Qt.BackButton; onTapped: win.back() }
+        TapHandler { acceptedButtons: Qt.ForwardButton; onTapped: win.forward() }
+    }
     // One drag source for the whole window. A row or cell delegate can be destroyed while its
     // drag is still out (the folder changed under it, the window closed): Qt keeps a pointer to
     // the source item inside the drag's mime data and reads it when the target asks for the
@@ -1520,8 +1533,8 @@ FloatingWindow {
     Timer { id: rowsSoon; interval: 60; onTriggered: win.relist() }
 
     // Same-as: files in this folder that are byte-for-byte another one here (same size,
-    // same head and tail); the newer is the copy. Found by a process after the folder loads,
-    // only for folders of a reasonable size.
+    // same head and tail, then cmp over the whole of both); the newer is the copy. Found by a
+    // process after the folder loads, only for folders of a reasonable size.
     property var twins: ({})   // copy path -> original name
     property var dismissed: ({})
     Process {
@@ -1539,7 +1552,7 @@ for l in sys.stdin.buffer.read().split(b"\\n"):
             h.update(f.read(65536))
     except OSError:
         continue
-    sys.stdout.buffer.write(size + b":" + h.hexdigest()[:16].encode() + b"\\t" + at + b"\\t" + path + b"\\n")' | sort -t$'\\t' -k1,1 -k2,2n | awk -F'\\t' 'function flush() { if (n > 1) { o=1; for (i=2;i<=n;i++) if (at[i] < at[o] || (at[i] == at[o] && length(nm[i]) < length(nm[o]))) o=i; for (i=1;i<=n;i++) if (i != o) print nm[o] "\\t" nm[i] } n=0 } { if ($1 != key) { flush(); key=$1 } n++; at[n]=$2; nm[n]=$3 } END { flush() }'`]
+    sys.stdout.buffer.write(size + b":" + h.hexdigest()[:16].encode() + b"\\t" + at + b"\\t" + path + b"\\n")' | sort -t$'\\t' -k1,1 -k2,2n | awk -F'\\t' 'function flush() { if (n > 1) { o=1; for (i=2;i<=n;i++) if (at[i] < at[o] || (at[i] == at[o] && length(nm[i]) < length(nm[o]))) o=i; for (i=1;i<=n;i++) if (i != o) print nm[o] "\\t" nm[i] } n=0 } { if ($1 != key) { flush(); key=$1 } n++; at[n]=$2; nm[n]=$3 } END { flush() }' | while IFS=$'\\t' read -r orig copy; do cmp -s -- "$orig" "$copy" && printf '%s\\t%s\\n' "$orig" "$copy"; done`]
         stdout: StdioCollector {
             onStreamFinished: {
                 let t = ({});
@@ -2013,7 +2026,7 @@ for l in sys.stdin.buffer.read().split(b"\\n"):
         let list = [];
         if (PhoneLink.paired)
             list.push({ "id": "phone", "label": `${PhoneLink.phoneName} · on the network`, "glyph": "smartphone", "run": () => PhoneLink.send(paths) });
-        list.push({ "id": "shelf", "label": "The shelf · carry it anywhere", "glyph": "stacks", "run": () => DropShelf.addItems(paths.map(p => "file://" + encodeURI(p))) });
+        list.push({ "id": "shelf", "label": "The shelf · carry it anywhere", "glyph": "stacks", "run": () => DropShelf.addItems(paths.map(p => win.fileUrl(p))) });
         list.push({ "id": "claude", "label": "Praxis · a new session here", "glyph": "smart_toy", "run": () => Recents.launch(win.folder, `Look at ${paths.join(", ")}. What is this, and what should I do about it?`) });
         sheet.title = `Send ${what} to`;
         sheet.lines = [];
@@ -2217,6 +2230,7 @@ for l in sys.stdin.buffer.read().split(b"\\n"):
                 if (ctrl && event.key === Qt.Key_C) { win.copySelection(false); event.accepted = true; return; }
                 if (ctrl && event.key === Qt.Key_X) { win.copySelection(true); event.accepted = true; return; }
                 if (ctrl && event.key === Qt.Key_V) { win.paste(); event.accepted = true; return; }
+                if (ctrl && event.key === Qt.Key_Period) { win.stopJob(); event.accepted = true; return; }
                 if (ctrl && event.key === Qt.Key_Z) { win.undo(); event.accepted = true; return; }
                 if (event.key === Qt.Key_F2) { if (win.selectedPaths.length > 1) win.renameMany(); else win.renameAt(win.cursor); event.accepted = true; return; }
                 if (event.key === Qt.Key_Delete) { if (shift) win.deleteSelection(); else win.trashSelection(); event.accepted = true; return; }
@@ -2260,10 +2274,10 @@ for l in sys.stdin.buffer.read().split(b"\\n"):
                 case Qt.Key_Space:
                     win.previewToggled = !win.previewToggled; event.accepted = true; return;
                 case Qt.Key_Escape:
-                    // the panel first: it is what is in front, and a copy under way is not stopped by a key meant for it
+                    // the panel first: it is what is in front. A copy under way is never stopped here: stopping
+                    // removes what was half written, so it has its own key (Ctrl+.)
                     if (renameSheet.active) renameSheet.close();
                     else if (win.panelShown) win.panelOpen = false;
-                    else if (win.activeJob) win.stopJob();
                     else if (win.cursor >= 0 && win.offerFor(win.pathAt(win.cursor))) win.dismissOffer(win.pathAt(win.cursor));
                     else if (Files.clip?.op === "cut") Files.clip = null;
                     else if (win.query.length > 0) win.query = "";
@@ -2442,11 +2456,16 @@ for l in sys.stdin.buffer.read().split(b"\\n"):
                                     color: Tacit.inkMain
                                     selectionColor: ColorUtils.transparentize(Tacit.accent, 0.6)
                                     selectedTextColor: Tacit.inkMain
+                                    // a click elsewhere puts the crumbs back, and leaves the keys where that click put them
+                                    property bool leftByFocus: false
+                                    onActiveFocusChanged: if (!activeFocus && win.editingPath) { leftByFocus = true; win.editingPath = false; }
                                     onVisibleChanged: {
                                         if (visible) {
                                             text = win.folder;
                                             selectAll();
                                             forceActiveFocus();
+                                        } else if (leftByFocus) {
+                                            leftByFocus = false;
                                         } else {
                                             keys.forceActiveFocus();
                                         }
@@ -3016,6 +3035,8 @@ for l in sys.stdin.buffer.read().split(b"\\n"):
                                     return pics.indexAt(x, y) < 0;
                                 if (win.view === "columns")
                                     return !columnsView.overRow(x, y);
+                                if (win.view === "gallery")
+                                    return false;   // the gallery answers its own presses; the hidden list says nothing of it
                                 if (win.view === "grid")
                                     return grid.indexAt(x + grid.contentX, y + grid.contentY) < 0;
                                 // a day's heading is ground too: only the row under it is the file

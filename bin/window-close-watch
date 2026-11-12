@@ -1,0 +1,23 @@
+#!/bin/sh
+# window-close-watch <address> <pid> <class>
+#
+# Super+Q only asks a window to close. A window that never does (an app stopped on its own error, as Discord does when the
+# terminal it was started from is gone; Discord, FlorpiC) stayed on screen with no way out but a terminal. A few seconds
+# after the key this checks that the same window is still there and says so, with Force quit. Nothing is stopped unless the
+# person presses it; an app that is asking something first (Save changes?) is also still there, so the words allow for it.
+addr=${1#0x} pid=${2:-0} cls=$3
+case $pid in '' | *[!0-9]*) exit 0 ;; esac
+[ "$pid" -gt 1 ] || exit 0
+here() {
+	hyprctl -j clients 2>/dev/null | jq -e --arg a "$addr" 'any(.[]; (.address | ltrimstr("0x")) == $a and .mapped)' >/dev/null 2>&1
+}
+sleep 6
+here || exit 0
+answer=$(notify-send -a Tacit -t 15000 -A "kill=Force quit" "${cls:-An app} did not close" "It may be asking you something first.")
+[ "$answer" = kill ] || exit 0
+# the same window, not one that took its place meanwhile
+here && kill -0 "$pid" 2>/dev/null || exit 0
+kill -TERM "$pid" 2>/dev/null
+sleep 2
+kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null
+exit 0

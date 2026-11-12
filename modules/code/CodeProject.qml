@@ -23,6 +23,11 @@ Item {
     readonly property string name: p.root.length ? p.root.split("/").pop() : ""
     property bool loaded: false
     property bool repo: true            // a plain folder is listed without change tracking
+    // How much of a plain folder is listed: a folder with more than 5000 files (a home folder a loose file was opened
+    // from) is listed to the deepest level that fits, and only its first 5000 files when even one level is too many.
+    property int plainDepth: 6
+    property bool plainCut: false
+    property bool plainFailed: false    // fd is missing or failed: nothing could be listed
     property bool awake: true           // the window is on screen: keep asking git
     // What git ignores (.env, build output, node_modules) is still reachable: listed faint, a folder only one level
     // at a time when it is opened (ignoredKids), so a huge node_modules costs nothing until asked for.
@@ -195,13 +200,17 @@ Item {
 
     // A plain folder (code-file falls back to the file's directory when it is not in a repo):
     // the same rows without the change columns.
+    // The first line is "<depth> <cut>" from the listing script, then one file per line.
     function _finishPlain(t) {
-        const files = t.split("\n").filter(x => x.length).sort();
+        const lines = t.split("\n");
+        const head = lines.shift().split(" ");
+        const files = lines.filter(x => x.length).sort();
         p.loaded = true;
-        const sig = files.join("\n");
-        if (sig === p._sig) { poll.interval = Math.min(30000, poll.interval * 2); return; }
+        p.plainFailed = false;
+        if (t === p._sig) { poll.interval = Math.min(30000, poll.interval * 2); return; }
         poll.interval = 3000;
-        p._sig = sig; p.files = files; p.changes = ({});
+        p._sig = t; p.files = files; p.changes = ({});
+        p.plainDepth = parseInt(head[0]) || 6; p.plainCut = head[1] === "1";
         p.rebuild();
     }
 
@@ -213,8 +222,17 @@ Item {
     Process {
         id: plainLs
         workingDirectory: p.root
-        command: ["fd", "--type", "f", "--hidden", "--max-depth", "6", "--exclude", ".git", "--strip-cwd-prefix"]
-        stdout: StdioCollector { onStreamFinished: p._finishPlain(this.text) }
+        // deepest first: the first depth whose listing fits in 5000 files wins; fd stops at 5001 results, so a huge
+        // tree costs one short run per depth, not a walk of everything
+        command: ["bash", "-c", `for d in 6 4 3 2 1; do
+            out=$(fd --type f --hidden --max-depth $d --max-results 5001 --exclude .git --exclude node_modules --exclude .cache --exclude .local --strip-cwd-prefix) || exit 1
+            [ $(printf '%s\\n' "$out" | wc -l) -le 5000 ] && break
+        done
+        cut=0
+        if [ $(printf '%s\\n' "$out" | wc -l) -gt 5000 ]; then cut=1; out=$(printf '%s\\n' "$out" | head -n 5000); fi
+        printf '%s %s\\n%s\\n' "$d" "$cut" "$out"`]
+        stdout: StdioCollector { onStreamFinished: if (this.text.length > 0) p._finishPlain(this.text) }
+        onExited: (exitCode, exitStatus) => { if (exitCode !== 0) { p.loaded = true; p.plainFailed = true; } }
     }
     Process {
         id: lsAll

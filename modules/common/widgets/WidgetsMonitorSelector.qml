@@ -13,7 +13,7 @@ Flow {
 
     SelectionGroupButton {
         leftmost: true
-        rightmost: Hyprland.monitors.length === 0
+        rightmost: Hyprland.monitors.values.length === 0
         buttonIcon: "tv_displays"
         buttonText: Translation.tr("All")
         toggled: root.configEntry.screenList.length === 0
@@ -26,7 +26,7 @@ Flow {
             required property var modelData
             required property int index
             leftmost: false
-            rightmost: index === Hyprland.monitors.length - 1
+            rightmost: index === Hyprland.monitors.values.length - 1
             buttonIcon: "monitor"
             buttonText: modelData.name
             toggled: root.configEntry.screenList.includes(modelData.name)
@@ -35,18 +35,12 @@ Flow {
                     root.configEntry.screenList = [modelData.name]
                     return
                 }
-                const allNames = Array.from({length: Hyprland.monitors.length}, (_, i) => Hyprland.monitors[i].name)
-                let list = root.configEntry.screenList.length === 0 ? allNames.slice() : root.configEntry.screenList.slice()
+                const allNames = Hyprland.monitors.values.map(m => m.name)
+                let list = root.configEntry.screenList.slice()
                 if (toggled) list = list.filter(s => s !== modelData.name)
                 else list.push(modelData.name)
                 root.configEntry.screenList = list.length === allNames.length ? [] : list
             }
         }
-    }
-    SelectionGroupButton {
-        leftmost: false
-        rightmost: true
-        buttonIcon: "page_footer"
-        buttonText: Translation.tr("")
     }
 }

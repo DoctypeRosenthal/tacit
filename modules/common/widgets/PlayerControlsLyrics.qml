@@ -174,10 +174,8 @@ Item {
                                 trackColor: root.blendedColors.colSecondaryContainer
                                 handleColor: root.blendedColors.colPrimary
                                 value: root.player?.position / root.player?.length
-                                onMoved: {
-                                    root.player.position = value * root.player.length
-                                    lyricsComp.restartLyrics()
-                                }
+                                // LyricsService's sync timer follows the new position within 300 ms; no refetch is needed
+                                onMoved: root.player.position = value * root.player.length
                             }
                         }
 

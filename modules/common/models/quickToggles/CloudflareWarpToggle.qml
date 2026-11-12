@@ -80,7 +80,8 @@ QuickToggleModel {
                 if (warpStatusCollector.text.length > 0) {
                     root.available = true
                 }
-                if (warpStatusCollector.text.includes("Unable")) {
+                // "Unable to connect to CloudflareWARP daemon" means warp-svc is stopped, not that there is no device to register
+                if (warpStatusCollector.text.includes("Unable") && !warpStatusCollector.text.includes("daemon")) {
                     registrationProc.running = true
                 } else if (warpStatusCollector.text.includes("Connected")) {
                     root.toggled = true

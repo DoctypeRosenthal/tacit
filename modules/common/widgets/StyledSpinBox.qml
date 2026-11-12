@@ -34,9 +34,15 @@ SpinBox {
             font.variableAxes: Appearance.font.variableAxes.numbers
             font.pixelSize: Appearance.font.pixelSize.small
             validator: root.validator
+            // An emptied field (or a lone "-") is not a number: keep the value, so the binding above
+            // does not refill the field while the person is retyping it
             onTextChanged: {
-                root.value = parseFloat(text);
+                const typed = parseFloat(text);
+                if (!isNaN(typed))
+                    root.value = typed;
             }
+            // Leaving it blank shows the kept value again
+            onEditingFinished: text = Qt.binding(() => root.value)
         }
     }
 

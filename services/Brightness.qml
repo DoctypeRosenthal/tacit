@@ -29,16 +29,16 @@ Singleton {
     }
 
     function increaseBrightness(): void {
-        const focusedName = Hyprland.focusedMonitor.name;
+        const focusedName = Hyprland.focusedMonitor?.name;
         const monitor = monitors.find(m => focusedName === m.screen.name);
-        if (monitor)
+        if (monitor?.ready)
             monitor.setBrightness(monitor.brightness + 0.05);
     }
 
     function decreaseBrightness(): void {
-        const focusedName = Hyprland.focusedMonitor.name;
+        const focusedName = Hyprland.focusedMonitor?.name;
         const monitor = monitors.find(m => focusedName === m.screen.name);
-        if (monitor)
+        if (monitor?.ready)
             monitor.setBrightness(monitor.brightness - 0.05);
     }
 
@@ -52,6 +52,54 @@ Singleton {
         root.previousMonitors = root.monitors.slice();
         ddcMonitors = [];
         ddcProc.running = true;
+    }
+
+    // Anti-flashbang leaves a screen below the level the person chose, and the device only says where it is now.
+    // For each screen the chosen level is kept with the level written to the device, in the user state folder
+    // (a restart or a reboot starts with the backlight where it was left): a device still at what was written is
+    // at the chosen level dimmed, one found elsewhere was changed by someone else and is taken as it is.
+    // { "eDP-1": { "level": 0.6, "written": 0.3 } }
+    property var dimLevels: null
+    function dimState(): var {
+        if (root.dimLevels === null) {
+            let parsed = null;
+            try {
+                parsed = JSON.parse(dimFile.text());
+            } catch (e) {}
+            root.dimLevels = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : ({});
+        }
+        return root.dimLevels;
+    }
+    function userLevel(name: string, current: real): real {
+        if (!Config.options.light.antiFlashbang.enable)
+            return current;
+        const saved = root.dimState()[name];
+        if (saved && typeof saved.level === "number" && typeof saved.written === "number"
+                && Math.abs(saved.written - current) <= 0.02 && saved.level >= current && saved.level <= 1)
+            return saved.level;
+        return current;
+    }
+    function rememberLevel(name: string, level: real, written: real): void {
+        const state = root.dimState();
+        if (Config.options.light.antiFlashbang.enable)
+            state[name] = { "level": level, "written": written };
+        else if (state[name] === undefined)
+            return;
+        else
+            delete state[name];
+        dimSaveTimer.restart();
+    }
+    FileView {
+        id: dimFile
+        path: `${Directories.userStateDir}/brightness-levels.json`
+        blockLoading: true
+        blockWrites: true
+        printErrors: false
+    }
+    Timer {
+        id: dimSaveTimer
+        interval: 800
+        onTriggered: dimFile.setText(JSON.stringify(root.dimState()))
     }
 
     function initializeMonitor(i: int): void {
@@ -87,10 +135,6 @@ Singleton {
         onExited: root.ddcDetectFinished()
     }
 
-    Process {
-        id: setProc
-    }
-
     component BrightnessMonitor: QtObject {
         id: monitor
 
@@ -101,7 +145,15 @@ Singleton {
         property real brightness
         property real brightnessMultiplier: 1.0
         property real multipliedBrightness: Math.max(0, Math.min(1, brightness * (Config.options.light.antiFlashbang.enable ? brightnessMultiplier : 1)))
+        // The level is read and this screen's brightness can be driven: a DDC monitor that answered, or the
+        // built-in panel with a backlight. A screen with neither stays false, and the keys, the control panel's
+        // slider and the OSD leave it alone.
         property bool ready: false
+        // A DDC monitor that did not answer is asked again a few times (it can be slow to wake after being plugged in)
+        property int ddcTries: 0
+        property bool retrying: false
+        // Only the built-in panel is driven by the backlight: brightnessctl moves that one device, whichever screen is focused
+        readonly property bool isInternal: /^(eDP|LVDS|DSI)/i.test(monitor.screen.name)
         property bool animateChanges: !monitor.isDdc
 
         onBrightnessChanged: {
@@ -132,10 +184,18 @@ Singleton {
 
         function initialize() {
             monitor.ready = false;
+            monitor.ddcTries = 0;
+            monitor.retrying = false;
+            retryTimer.stop();
             const match = root.ddcMonitors.find(m => m.name === screen.name && !root.monitors.slice(0, root.monitors.indexOf(this)).some(mon => mon.busNum === m.busNum));
             isDdc = !!match;
             busNum = match?.busNum ?? "";
-            initProc.command = isDdc ? ["ddcutil", "-b", busNum, "getvcp", "10", "--brief"] : ["sh", "-c", `echo "a b c $(brightnessctl g) $(brightnessctl m)"`];
+            if (!isDdc && !monitor.isInternal) {
+                // The backlight is the laptop's own panel, not this screen: no control rather than one that dims the wrong screen
+                initializeMonitor(root.monitors.indexOf(monitor) + 1);
+                return;
+            }
+            initProc.command = isDdc ? ["ddcutil", "-b", busNum, "getvcp", "10", "--brief"] : ["sh", "-c", `echo "a b c $(brightnessctl --class backlight g) $(brightnessctl --class backlight m)"`];
             initProc.running = true;
         }
 
@@ -143,15 +203,39 @@ Singleton {
             stdout: SplitParser {
                 onRead: data => {
                     const [, , , current, max] = data.split(" ");
-                    monitor.rawMaxBrightness = parseInt(max);
-                    monitor.brightness = parseInt(current) / monitor.rawMaxBrightness;
+                    const rawMax = parseInt(max);
+                    const rawCurrent = parseInt(current);
+                    // No backlight device leaves both empty: nothing to drive
+                    if (!(rawMax > 0) || isNaN(rawCurrent))
+                        return;
+                    monitor.rawMaxBrightness = rawMax;
+                    monitor.brightness = root.userLevel(monitor.screen.name, rawCurrent / rawMax);
                     monitor.ready = true;
                 }
             }
             onExited: (exitCode, exitStatus) => {
-                initializeMonitor(root.monitors.indexOf(monitor) + 1);
+                const wasRetry = monitor.retrying;
+                monitor.retrying = false;
+                if (monitor.isDdc && !monitor.ready && monitor.ddcTries < 3) {
+                    monitor.ddcTries += 1;
+                    retryTimer.restart();
+                }
+                // A retry runs beside the others: the one-after-another read has gone on already
+                if (!wasRetry)
+                    initializeMonitor(root.monitors.indexOf(monitor) + 1);
             }
         }
+
+        property var retryTimer: Timer {
+            interval: 5000
+            onTriggered: {
+                monitor.retrying = true;
+                initProc.running = true;
+            }
+        }
+
+        // One per monitor: exec() ends a write still running, so a shared one lost the other screen's write
+        readonly property Process setProc: Process {}
 
         // We need a delay for DDC monitors because they can be quite slow and might act weird with rapid changes
         property var setTimer: Timer {
@@ -167,16 +251,20 @@ Singleton {
             if (isDdc) {
                 const rawValueRounded = Math.max(Math.floor(brightnessValue * monitor.rawMaxBrightness), 1);
                 setProc.exec(["ddcutil", "-b", busNum, "setvcp", "10", rawValueRounded]);
+                root.rememberLevel(monitor.screen.name, monitor.brightness, rawValueRounded / monitor.rawMaxBrightness);
             } else {
-                const valuePercentNumber = Math.floor(brightnessValue * 100);
-                let valuePercent = `${valuePercentNumber}%`;
-                if (valuePercentNumber == 0) valuePercent = "1"; // Prevent fully black
-                setProc.exec(["brightnessctl", "--class", "backlight", "s", valuePercent, "--quiet"])
+                // Rounded, not floored (0.29 * 100 is 28.999...), and never below 1 %: a bare raw 1 is black on a panel with a large range
+                const valuePercentNumber = Math.max(Math.round(brightnessValue * 100), 1);
+                setProc.exec(["brightnessctl", "--class", "backlight", "s", `${valuePercentNumber}%`, "--quiet"])
+                root.rememberLevel(monitor.screen.name, monitor.brightness, valuePercentNumber / 100);
             }
         }
 
         function setBrightness(value: real): void {
-            value = Math.max(0, Math.min(1, value));
+            if (!monitor.ready)
+                return;
+            // Not below 2 %, as the control panel's slider: the keys stepped down to 0 and the screen went dark
+            value = Math.max(0.02, Math.min(1, value));
             monitor.brightness = value;
         }
 
@@ -243,9 +331,11 @@ Singleton {
                     id: lightnessCollector
                     onStreamFinished: {
                         Quickshell.execDetached(["rm", screenScope.screenshotPath]); // Cleanup
-                        const lightness = lightnessCollector.text
-                        const newMultiplier = root.brightnessMultiplierForLightness(parseFloat(lightness))
-                        Brightness.getMonitorForScreen(screenScope.modelData).setBrightnessMultiplier(newMultiplier)
+                        // A failed grim or magick leaves no text: keep the multiplier as it was
+                        const lightness = parseFloat(lightnessCollector.text);
+                        if (isNaN(lightness))
+                            return;
+                        Brightness.getMonitorForScreen(screenScope.modelData)?.setBrightnessMultiplier(root.brightnessMultiplierForLightness(lightness));
                     }
                 }
             }
@@ -269,8 +359,9 @@ Singleton {
         interval: 100
         onTriggered: root.writePanelLevel()
     }
-    // The one screen not driven over DDC (the built-in panel): the level Settings' slider shows.
-    readonly property var panel: root.monitors.find(m => !m.isDdc) ?? root.monitors[0] ?? null
+    // The one screen not driven over DDC (the built-in panel): the level Settings' slider shows. Only a screen whose
+    // level was read counts; with none, the page shows no slider.
+    readonly property var panel: root.monitors.find(m => m.ready && !m.isDdc) ?? root.monitors.find(m => m.ready) ?? null
     function writePanelLevel(): void {
         if (root.panel?.ready)
             levelFile.setText(`${root.panel.brightness}\n`);
@@ -295,9 +386,10 @@ Singleton {
 
         // The Settings app runs in its own process; a brightnessctl write from there would be
         // undone by the next key press, which steps from the value held here. 0..1, for the
-        // built-in panel: the one screen not driven over DDC.
+        // built-in panel: the one screen not driven over DDC. -1 while there is no panel level
+        // to give (none found, or not read yet): the page then shows no slider.
         function get(): real {
-            return root.panel?.brightness ?? 0;
+            return root.panel?.ready ? root.panel.brightness : -1;
         }
         function set(value: real): void {
             root.panel?.setBrightness(value);

@@ -1,4 +1,5 @@
 import qs
+import qs.services
 import qs.modules.common
 import qs.modules.common.widgets
 import QtQuick
@@ -89,22 +90,6 @@ Item {
                 implicitHeight: btn.implicitHeight
 
                 property bool isRecording: Persistent.states.record.enable
-                property real now: Date.now()
-                // From the start time record.sh stored, so a reloaded bar carries on instead of restarting at 00:00
-                property int elapsedSeconds: isRecording && Persistent.states.record.started > 0
-                    ? Math.max(0, Math.floor((now - Persistent.states.record.started) / 1000)) : 0
-
-                function formatTime(s) {
-                    return Math.floor(s / 60).toString().padStart(2, '0') + ":" + (s % 60).toString().padStart(2, '0')
-                }
-
-                Timer {
-                    interval: 1000
-                    repeat: true
-                    running: recordingItem.isRecording
-                    triggeredOnStart: true
-                    onTriggered: recordingItem.now = Date.now()
-                }
 
                 CircleUtilButton {
                     id: btn
@@ -112,7 +97,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     colBackground: recordingItem.isRecording ? Appearance.colors.colPrimaryContainer : "transparent"
                     buttonRadius: recordingItem.isRecording ? Appearance.rounding.normal : implicitHeight / 2
-                    onClicked: Quickshell.execDetached([Directories.recordScriptPath])
+                    onClicked: IslandController.openRecord()
 
                     // M3 sweep pilot: colour -> CAnim (caelestia: 46/46), radius -> DefaultEffects (15/18)
                     Behavior on colBackground { CAnim {} }
@@ -136,14 +121,12 @@ Item {
                     reveal: recordingItem.isRecording && !root.vertical
 
                     StyledText {
-                        width: implicitWidth
-                        text: recordingItem.formatTime(recordingItem.elapsedSeconds)
+                        text: IslandController.recordElapsed
                         font.pixelSize: Appearance.font.pixelSize.small
                         font.features: { "tnum": 1 }
                         font.letterSpacing: -0.3
                         color: Appearance.colors.colOnLayer2
                         rightPadding: 8
-                        Component.onCompleted: width = implicitWidth
                     }
                 }
             }
@@ -154,7 +137,7 @@ Item {
             UtilButton {
                 iconText: Persistent.states.record.enable ? "stop_circle" : "screen_record"
                 forceHovered: Persistent.states.record.enable
-                onClicked: Quickshell.execDetached([Directories.recordScriptPath])
+                onClicked: IslandController.openRecord()
             }
         }
 

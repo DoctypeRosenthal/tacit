@@ -39,6 +39,8 @@ Item {
     Keys.onDeletePressed: if (quitText !== "") { r.confirming = true; quitVerb.forceActiveFocus(); }
     Keys.onEscapePressed: event => { if (r.confirming) { r.confirming = false; r.forceActiveFocus(); } else event.accepted = false; }
 
+    // a row that goes away under the pointer never reports it left: let go of the list here, or it stays frozen
+    Component.onDestruction: if (Ink.pointerRow !== "" && Ink.pointerRow === (r.item.key ?? "")) Ink.pointerRow = ""
     HoverHandler {
         id: hov
         cursorShape: r.canOpen ? Qt.PointingHandCursor : Qt.ArrowCursor
@@ -55,6 +57,23 @@ Item {
         anchors.fill: parent
         enabled: r.canOpen
         onClicked: r.opened(r.item)
+    }
+    // A finger never hovers, so a row whose Quit or buttons come with the pointer (and has no page to open) shows
+    // them on a tap, for a few seconds; a second tap hides them
+    TapHandler {
+        acceptedDevices: PointerDevice.TouchScreen
+        enabled: !r.canOpen && (r.quitText !== "" || (r.verbsOnHover && r.verbs.length > 0))
+        onTapped: {
+            r.confirming = !r.confirming;
+            if (r.confirming)
+                r.forceActiveFocus();
+            tapHide.restart();
+        }
+    }
+    Timer {
+        id: tapHide
+        interval: 6000
+        onTriggered: r.confirming = false
     }
 
     Item {
@@ -80,12 +99,12 @@ Item {
             visible: !icon.drawn
             anchors.fill: parent
             radius: 8
-            color: "#2b2826"
+            color: Appearance.colors.colSecondaryContainer
             MaterialSymbol {
                 anchors.centerIn: parent
                 text: r.item.sym ?? "apps"
                 iconSize: 18
-                color: "#d9c9bf"
+                color: Appearance.colors.colOnSecondaryContainer
             }
         }
     }

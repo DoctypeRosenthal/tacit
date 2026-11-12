@@ -89,7 +89,7 @@ Scope {
             property bool userMoved: false
             anchors.centerIn: userMoved ? undefined : parent
 
-            // Escape, Tab and the arrow keys below are handled here, so this is what has to hold
+            // Escape, Ctrl+Tab and the arrow keys below are handled here, so this is what has to hold
             // focus while the panel is up.
             focus: true
 
@@ -103,23 +103,34 @@ Scope {
                 NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
             }
 
+            // Tab and Shift+Tab move between the controls on a page, which Qt does when the key is let through; the
+            // pages turn with Ctrl+Tab and Ctrl+Shift+Tab (and Ctrl+PageDown / PageUp below)
+            function turnPage(by) {
+                const count = settingsContent.pages.length;
+                settingsContent.currentPage = (settingsContent.currentPage + by + count) % count;
+                settingsContent.showingProfile = false;
+            }
             Keys.onTabPressed: (event) => {
-            const count = settingsContent.pages.length;
-            settingsContent.currentPage = (settingsContent.currentPage + 1) % count;
-            settingsContent.showingProfile = false;
-            event.accepted = true;
-        }
+                event.accepted = (event.modifiers & Qt.ControlModifier) !== 0;
+                if (event.accepted)
+                    settingsWindow.turnPage(1);
+            }
 
         Keys.onBacktabPressed: (event) => {
-            const count = settingsContent.pages.length;
-            settingsContent.currentPage = (settingsContent.currentPage - 1 + count) % count;
-            settingsContent.showingProfile = false;
-            event.accepted = true;
+            event.accepted = (event.modifiers & Qt.ControlModifier) !== 0;
+            if (event.accepted)
+                settingsWindow.turnPage(-1);
         }
 
         Keys.onPressed: (event) => {
             if (event.key === Qt.Key_Escape) {
                 panelWindow.hide();
+                event.accepted = true;
+                return;
+            }
+
+            if ((event.modifiers & Qt.ControlModifier) && (event.key === Qt.Key_PageDown || event.key === Qt.Key_PageUp)) {
+                settingsWindow.turnPage(event.key === Qt.Key_PageDown ? 1 : -1);
                 event.accepted = true;
                 return;
             }

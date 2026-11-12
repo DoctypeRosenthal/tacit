@@ -709,6 +709,8 @@ Item {
                             Layout.fillWidth: true
                             glyph: "brightness_6"
                             label: Translation.tr("Brightness")
+                            // Not on a screen the backlight does not drive (no backlight, or an external monitor without DDC)
+                            visible: root.brightnessMonitor?.ready ?? false
                             value: root.brightnessMonitor?.brightness ?? 0
                             onMoved: v => {
                                 if (Hyprsunset.gamma !== 100 && (root.brightnessMonitor?.brightness ?? 1) < 0.01)
@@ -722,9 +724,14 @@ Item {
                                 : ((Audio.sink?.audio?.volume ?? 0) < 0.34 ? "volume_down" : "volume_up")
                             label: Translation.tr("Volume")
                             value: Audio.sink?.audio?.volume ?? 0
+                            enabled: Audio.sink?.audio != null   // no output: nothing to set
                             onMoved: v => {
-                                if (Audio.sink?.audio)
+                                if (Audio.sink?.audio) {
                                     Audio.sink.audio.volume = v;
+                                    // dragging up from a muted sink brings the sound back, as the Viewer's volume does
+                                    if (v > 0 && Audio.sink.audio.muted)
+                                        Audio.sink.audio.muted = false;
+                                }
                             }
                         }
                     }

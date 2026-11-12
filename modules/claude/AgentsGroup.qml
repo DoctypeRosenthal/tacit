@@ -14,6 +14,8 @@ Column {
     property var info: null           // agent-host "agents" reply for this session
     property string openAgent: ""     // the agent the side panel shows
     property real now: Date.now()
+    // the host may still say how the calls stand: the session runs, or its agents have not been read
+    property bool pending: false
     signal opened(string agent)
 
     function agentOf(call) {
@@ -33,12 +35,15 @@ Column {
         return out;
     }
     // an agent the host has not read yet (its files appear a moment after the call): the call stands
-    // in. A background launch answers at once ("Async agent launched"): still running.
+    // in. A background launch answers at once ("Async agent launched"): still running. Once the host
+    // has answered and the session is idle, a call it has no record of (pruned, another machine, the
+    // host died) is over as far as anyone can tell: "ended", not running for ever.
     function statusOf(call, a) {
         if (a) return a.state;
-        if (call.result === undefined && !call.error) return "running";
         if (call.error) return "failed";
-        return /^(Async agent launched|Workflow launched)/.test(String(call.result ?? "")) ? "running" : "done";
+        const waiting = group.pending || (call.ts > 0 && group.now - call.ts < 30000);
+        if (call.result === undefined) return waiting ? "running" : "ended";
+        return /^(Async agent launched|Workflow launched)/.test(String(call.result ?? "")) ? (waiting ? "running" : "ended") : "done";
     }
     readonly property int runningCount: group.calls.filter(c => group.statusOf(c, group.agentOf(c)) === "running").length
 

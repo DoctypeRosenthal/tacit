@@ -3,7 +3,8 @@
 
   stored.py home                 the curated page: feature, jobs, picks, with each app's facts
   stored.py search <words>       desktop apps that match, best first
-  stored.py app <package>        one app in full: screenshots, description, what's new, whether it can be got
+  stored.py app <package>        one app in full: screenshots, description, what's new, then again with whether it can be
+                                 got (a second line: working that out can wait on the network); --hero stops at the first
   stored.py install <package>    gets it: progress lines, then {"result": ...}
   stored.py remove <package>     removes it, then {"result": ...}
 
@@ -16,7 +17,7 @@ password prompt is the desktop's own (the shell's polkit agent).
 Never `pacman -Sy`: refreshing the package lists without updating the system is what leaves an Arch system half
 updated. An install that would upgrade anything already installed is refused ("needs a system update first").
 """
-import glob, gzip, hashlib, json, os, re, shutil, subprocess, sys, threading, urllib.parse, urllib.request
+import glob, gzip, hashlib, json, os, re, shutil, signal, subprocess, sys, threading, urllib.parse, urllib.request
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 
@@ -37,6 +38,13 @@ def run(cmd, timeout=60):
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=dict(os.environ, LC_ALL="C")).stdout
     except (OSError, subprocess.TimeoutExpired):
         return ""
+
+
+def scratch(dst):
+    """a name beside dst for this process and thread alone, with dst's extension: a file another helper is still writing
+    is never at dst, so nobody reads half a picture. The finished file is moved onto dst with os.replace"""
+    stem, ext = os.path.splitext(dst)
+    return f"{stem}.{os.getpid()}-{threading.get_ident()}{ext}"
 
 
 # ---- the catalogue ---------------------------------------------------------------------------------------------
@@ -171,6 +179,15 @@ def remember(pkg, keep):
     os.replace(tmp, GOT)
 
 
+def bundle_desktop(pkg):
+    """the launcher a bundle made for itself, for an app the catalogue gives no desktop-id: its own name, else its only one"""
+    try:
+        ids = json.load(open(os.path.join(BUNDLES, pkg, "manifest.json"))).get("ids", [])
+    except (OSError, ValueError):
+        return ""
+    return pkg if pkg in ids else ids[0] if len(ids) == 1 else ""
+
+
 def bundle_plan(pkg):
     """the sandbox's plan in the window's words, or None when the app cannot be a bundle"""
     try:
@@ -187,6 +204,28 @@ def bundle_plan(pkg):
     return {"can": True, "count": len(j["packages"]), "download": round(j["download"] / 1e6), "need": need}
 
 
+# Stop (SIGTERM from the window): the helper under it is told to stop and the result is "stopped". Once the root pacman has
+# started nothing is stopped: it cannot be signalled from here, and breaking its pipe would end it half way through
+STOP = {"asked": False, "child": None, "firm": False}
+
+
+class Stopped(Exception):
+    pass
+
+
+def on_term(sig, frame):
+    STOP["asked"] = True
+    child = STOP["child"]
+    if child is None:
+        if not STOP["firm"]:
+            raise Stopped()       # nothing has been started yet that would need undoing
+        return
+    try:
+        child.terminate()
+    except OSError:
+        pass                      # root's pacman: let it finish
+
+
 def bundle_install(pkg):
     """get `pkg` as a bundle, saying its progress; its outcome, or "system" when it has to go through pacman"""
     # what it says on the way out (a failure's reason, a traceback) is kept rather than dropped: a failure said only "Couldn't
@@ -194,6 +233,7 @@ def bundle_install(pkg):
     log = os.path.join(os.path.expanduser("~"), ".cache/tacit-store/bundle.log")
     os.makedirs(os.path.dirname(log), exist_ok=True)
     proc = subprocess.Popen(BUNDLE + ["install", pkg], stdout=subprocess.PIPE, stderr=open(log, "w"), text=True, errors="replace")
+    STOP["child"] = proc
     result = "failed"
     for line in proc.stdout:
         try:
@@ -212,7 +252,8 @@ def bundle_install(pkg):
         elif st == "refused":
             result = {"installed": "ok"}.get(j["why"], j["why"])
     proc.wait()
-    return result
+    STOP["child"] = None
+    return "stopped" if STOP["asked"] and result not in ("ok", "stopped") else result       # killed by the stop: it said nothing
 
 
 def mib(text):
@@ -256,10 +297,14 @@ def icon_png(src):
     dst = os.path.join(CACHE, "icons", os.path.basename(src).rsplit(".", 1)[0] + ".png")
     if not os.path.exists(dst):
         os.makedirs(os.path.dirname(dst), exist_ok=True)
-        tmp = f"{dst}.{os.getpid()}.{threading.get_ident()}.tmp.png"
-        subprocess.run(["magick", src, tmp], capture_output=True, timeout=30)
-        if os.path.exists(tmp):
-            os.replace(tmp, dst)
+        part = scratch(dst)
+        try:
+            subprocess.run(["magick", src, part], capture_output=True, timeout=30)
+            if os.path.exists(part):
+                os.replace(part, dst)
+        finally:
+            if os.path.exists(part):
+                os.remove(part)
     return dst if os.path.exists(dst) else ""
 
 
@@ -321,7 +366,10 @@ def cropped(path, crop):
             return path
         w, h = int(size[0]), int(size[1])
         x, y, cw, ch = (round(crop[0] * w), round(crop[1] * h), round(crop[2] * w), round(crop[3] * h))
-        subprocess.run(["magick", path, "-crop", f"{cw}x{ch}+{x}+{y}", "+repage", "-quality", "88", dst], capture_output=True, timeout=60)
+        part = scratch(dst)
+        subprocess.run(["magick", path, "-crop", f"{cw}x{ch}+{x}+{y}", "+repage", "-quality", "88", part], capture_output=True, timeout=60)
+        if os.path.exists(part):
+            os.replace(part, dst)
     return dst if os.path.exists(dst) else path
 
 
@@ -338,7 +386,7 @@ def tone(path):
         return known[path]
     known[path] = measure_tone(path)
     try:
-        tmp = store + ".tmp"
+        tmp = scratch(store + ".tmp")
         json.dump(known, open(tmp, "w")); os.replace(tmp, store)
     except OSError:
         pass
@@ -362,7 +410,7 @@ def brightness(path):
         except ValueError:
             known[key] = 0.5
         try:
-            tmp = store + ".tmp"
+            tmp = scratch(store + ".tmp")
             json.dump(known, open(tmp, "w")); os.replace(tmp, store)
         except OSError:
             pass
@@ -449,7 +497,7 @@ def info(pkg, cat, ed, avail, inst, f=None, icon=True):
     f = f or {}
     return {
         "pkg": pkg, "name": e.get("name") or c.get("name") or pkg, "line": e.get("line") or c.get("summary", ""), "like": e.get("like", ""),
-        "developer": c.get("developer", ""), "icon": (icon_png if icon else icon_ready)(c.get("icon", "")), "desktop": c.get("desktop", ""),
+        "developer": c.get("developer", ""), "icon": (icon_png if icon else icon_ready)(c.get("icon", "")), "desktop": c.get("desktop", "") or bundle_desktop(pkg),
         "available": pkg in avail or bool(have), "installed": bool(have), "installedAs": have,
         "version": f.get("version", ""), "download": f.get("download", 0), "size": f.get("size", 0),
         "free": free_license(c.get("license") or f.get("licenses", "")),
@@ -606,11 +654,15 @@ def serve():
         q = str(req.get("q", "")).lower().strip()
         if not q:
             out({"query": q, "apps": [], "done": True}); continue
-        fresh()
-        pkgs = scores(q, state["cat"], state["ed"], state["avail"], state["inst"])
-        with lock:
-            latest["q"], latest["pkgs"] = q, pkgs
-        answer(q, pkgs)
+        try:
+            fresh()
+            pkgs = scores(q, state["cat"], state["ed"], state["avail"], state["inst"])
+            with lock:
+                latest["q"], latest["pkgs"] = q, pkgs
+            answer(q, pkgs)
+        except Exception as e:      # a list being rewritten by an update: this search finds nothing, the next one tries again
+            print(f"stored: search {q!r}: {e}", file=sys.stderr, flush=True)
+            out({"query": q, "apps": [], "done": True})
 
 
 def targets(pkg):
@@ -699,8 +751,10 @@ def app(pkg, with_plan=True):
     # "what's new" only for the version this computer would get: the catalogue can lag the repos
     a["whatsNew"] = [n for n in rel["notes"] if len(n) > 24][:2] if rel and a["version"] and rel["version"] and a["version"].startswith(rel["version"]) else []
     a["homepage"] = c.get("homepage", "")
-    # a job's hero picture needs no plan, which parses the repo lists
-    a["plan"] = {} if not with_plan else {"can": False, "why": "installed"} if a["installed"] else (plan(pkg, inst) if a["available"] else {"can": False, "why": "unavailable"})
+    out(a)      # the page is whole without its plan: pictures and words are shown while the plan waits on the network
+    if not with_plan:
+        return      # a job's hero picture needs no plan, which parses the repo lists
+    a["plan"] = {"can": False, "why": "installed"} if a["installed"] else (plan(pkg, inst) if a["available"] else {"can": False, "why": "unavailable"})
     out(a)
 
 
@@ -711,7 +765,7 @@ def why(code, lines):
     text = "\n".join(lines[-30:]).lower()
     if code == 126:      # pkexec: the password dialog was dismissed
         return "cancelled"
-    if code == 127:      # pkexec: the password was not accepted
+    if code == 127:      # pkexec: no authorisation (a wrong password, an account that may not, no agent)
         return "denied"
     if "unable to lock database" in text:
         return "busy"
@@ -725,6 +779,14 @@ def why(code, lines):
 
 
 def install(pkg, everything=False):
+    signal.signal(signal.SIGTERM, on_term)
+    try:
+        install_(pkg, everything)
+    except Stopped:
+        out({"result": "stopped"})
+
+
+def install_(pkg, everything=False):
     """get one app. With `everything`, the whole system is brought up to date in the same step (pacman -Syu <app>): the
     only safe way to get an app once this computer's list of packages is out of date (never -Sy alone)"""
     inst = installed()
@@ -748,10 +810,15 @@ def install(pkg, everything=False):
     out({"progress": 0.02, "phase": "Waiting for your password"})
     args = ["-Syu", "--noconfirm", "--needed", pkg] if everything else ["-S", "--noconfirm", "--needed", pkg]
     proc = subprocess.Popen(PKEXEC + args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
-    lines = []
+    STOP["child"] = proc
+    lines, begun = [], False
     for line in proc.stdout:
         line = line.rstrip()
         lines.append(line)
+        if not begun:
+            # pacman's first line: the password was given and pacman runs as root from here, so Stop is withdrawn
+            begun, STOP["firm"] = True, True
+            out({"progress": 0.04, "phase": "Starting", "stop": False})
         m = re.match(r"Packages \((\d+)\)", line)
         if m:
             total = max(1, int(m.group(1)))
@@ -768,9 +835,12 @@ def install(pkg, everything=False):
                 done_inst, n = int(m.group(1)), int(m.group(2))
                 out({"progress": 0.7 + 0.28 * done_inst / max(1, n), "phase": f"Installing {what}{done_inst} of {n}"})
     code = proc.wait()
+    STOP["firm"] = True
     if code == 0:
         remember(pkg, True)
-        return out({"result": "ok"})
+        return out({"result": "ok", "restart": True} if everything else {"result": "ok"})     # the system was upgraded under the session
+    if STOP["asked"] and not begun:
+        return out({"result": "stopped"})       # the password prompt was stopped
     out({"result": why(code, lines), "detail": lines[-1] if lines else ""})
 
 

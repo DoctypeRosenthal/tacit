@@ -3,21 +3,25 @@ import Quickshell
 import qs.modules.common
 import qs.modules.common.widgets
 import qs.modules.common.functions
+import "ActivityWords.js" as Words
 
 /**
  * What one turn changed, at its end: files edited with their line counts, View changes (the
  * Review panel) and, on the newest turn, Undo, which puts those files back as they were before
- * the turn (Claude Code's rewind_files; the conversation stays). Undo asks once before it acts.
+ * the turn (Claude Code's rewind_files; the conversation stays). Undo asks once before it acts, and the
+ * question lapses after a few seconds. `undo` is set by whoever remembers the turn was undone.
  */
 Rectangle {
     id: card
-    property var files: []            // [{ path, add, del }]
+    property var files: []            // [{ path, add, del, kind }]
     property int add: 0
     property int del: 0
     property string cwd: ""
     property bool canUndo: false
     property bool open: false
     property string undo: ""          // "" | "ask" | "busy" | "done"
+    // The question stands for a few seconds, then lapses: a stray click a minute later must not rewind files.
+    Timer { running: card.undo === "ask"; interval: 6000; onTriggered: card.undo = "" }
     signal viewChanges()
     signal undoAsked(var done)        // done(ok)
 
@@ -40,7 +44,7 @@ Rectangle {
         StyledText {
             id: title
             anchors { left: glyph.right; leftMargin: 8; verticalCenter: parent.verticalCenter }
-            text: card.undo === "done" ? "Changes undone" : `Edited ${card.files.length} ${card.files.length === 1 ? "file" : "files"}`
+            text: card.undo === "done" ? "Changes undone" : `${Words.changed(card.files)} ${card.files.length} ${card.files.length === 1 ? "file" : "files"}`
             font.pixelSize: 15
             font.weight: Font.Medium
             color: Appearance.colors.colInkMain
@@ -107,13 +111,17 @@ Rectangle {
         visible: card.files.length > 3
         anchors { left: parent.left; right: parent.right; top: list.bottom; leftMargin: 14 }
         height: 30
+        activeFocusOnTab: true
+        Keys.onReturnPressed: card.open = !card.open
+        Keys.onEnterPressed: card.open = !card.open
+        Keys.onSpacePressed: card.open = !card.open
         Row {
             anchors.verticalCenter: parent.verticalCenter
             spacing: 4
             StyledText {
                 text: card.open ? "Show fewer" : `Show ${card.files.length - 3} more ${card.files.length - 3 === 1 ? "file" : "files"}`
                 font.pixelSize: 14
-                color: moreArea.containsMouse ? Appearance.colors.colInkMain : Appearance.colors.colInkSecondary
+                color: moreArea.containsMouse || more.activeFocus ? Appearance.colors.colInkMain : Appearance.colors.colInkSecondary
                 anchors.verticalCenter: parent.verticalCenter
             }
             MaterialSymbol { text: card.open ? "expand_less" : "expand_more"; iconSize: 16; color: Appearance.colors.colInkSecondary; anchors.verticalCenter: parent.verticalCenter }

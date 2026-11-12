@@ -212,7 +212,9 @@ Item {
                         padding: 0
                         colBackground: "transparent"
                         focus: true
-                        enabled: PolkitService.interactionAvailable
+                        // read-only, not disabled: a disabled field drops the keyboard focus, and Esc must
+                        // still cancel while PAM is slow to answer
+                        readOnly: !PolkitService.interactionAvailable
                         placeholderText: root.failed ? Translation.tr("Incorrect password") : PolkitService.cleanPrompt
                         font.pixelSize: Appearance.font.pixelSize.large
                         echoMode: root.usePasswordChars ? TextInput.Password : TextInput.Normal

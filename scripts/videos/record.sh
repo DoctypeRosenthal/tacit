@@ -10,6 +10,7 @@ CUSTOM_PATH=$(jq -r '.screenRecord.savePath // empty' "$CONFIG_FILE" 2>/dev/null
 RECORDING_DIR="${CUSTOM_PATH:-$HOME/Videos}"
 STATE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/quickshell/states.json"
 THUMB_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/quickshell/recordings"
+LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/tacit-record.lock"
 
 say() {
     notify-send "Screen recording" "$1" -a 'Recorder' & disown
@@ -19,7 +20,8 @@ say() {
 set_state() {
     local filter=$1 tmp
     shift
-    tmp=$(mktemp)
+    # beside the state file, so the mv is a rename: the notch never reads a half-copied file
+    tmp=$(mktemp "$STATE_FILE.XXXXXX" 2>/dev/null)
     # Without the file the jq pipeline writes nothing, the `&& mv` never runs, and the shell's
     # recording indicator keeps whatever it had - so it says "recording" when nothing is.
     if [[ ! -f "$STATE_FILE" ]] || ! jq "$@" "$filter" "$STATE_FILE" > "$tmp"; then
@@ -36,8 +38,11 @@ getactivemonitor() {
 
 # The second call: wf-recorder finishes the file on SIGINT, and the call that started it writes the state once it has.
 if [[ "$1" == --stop ]] && ! pgrep -x wf-recorder > /dev/null; then
-    # --stale (shell start after a crash): no file either, a cut-off recording is no "saved" card. A plain --stop keeps it:
-    # the starting call may still be making the thumbnail of a finished recording.
+    # The call that started the recording holds this lock until it has finished the file and written the state: a Stop
+    # pressed again meanwhile has nothing to do, and clearing the state now would raise the card with no length or still.
+    exec 9>"$LOCK_FILE"
+    flock -n 9 || exit 0
+    # --stale (shell start after a crash): no file either, a cut-off recording is no "saved" card. A plain --stop keeps it.
     if [[ "$(jq -r '.record.enable' "$STATE_FILE" 2>/dev/null)" == "true" ]]; then
         if [[ "$2" == --stale ]]; then set_state '.record.enable = false | .record.file = ""'; else set_state '.record.enable = false'; fi
     fi
@@ -45,7 +50,9 @@ if [[ "$1" == --stop ]] && ! pgrep -x wf-recorder > /dev/null; then
 fi
 if pgrep -x wf-recorder > /dev/null; then
     pkill -INT -x wf-recorder
-    for _ in $(seq 50); do
+    # wf-recorder writes the mp4's index when it ends, which takes a while after a long recording: killed
+    # before that the file does not play
+    for _ in $(seq 600); do
         pgrep -x wf-recorder > /dev/null || break
         sleep 0.1
     done
@@ -107,9 +114,18 @@ while [[ -e "$FILE" ]]; do
     n=$((n + 1))
 done
 
+# held until this call exits (the recorder itself is started without it), so --stop can tell a recording that is still
+# being finished from a state left behind
+exec 9>"$LOCK_FILE"
+flock -n 9
 set_state '.record.enable = true | .record.file = $f | .record.started = ($t | tonumber) | .record.stopped = 0 | .record.thumb = ""' \
     --arg f "$FILE" --arg t "$(date +%s%3N)" || exit 1
-wf-recorder "${WHERE[@]}" "${SOUND[@]}" --pixel-format yuv420p -f "$FILE" > /dev/null 2>&1
+# The encoder is the heaviest thing running for as long as the recording lasts. At normal priority with a thread per
+# core, a software encode of a large or fast screen starves the compositor and the shell: the pointer (drawn by the
+# hardware) still moves while the dock, the bar and the windows stall. It runs behind them, on at most half the cores.
+THREADS=$(( $(nproc 2>/dev/null || echo 4) / 2 ))
+(( THREADS < 2 )) && THREADS=2
+nice -n 10 wf-recorder "${WHERE[@]}" "${SOUND[@]}" --pixel-format yuv420p -p "threads=$THREADS" -f "$FILE" > /dev/null 2>&1 9>&-
 code=$?
 STOPPED=$(date +%s%3N)
 

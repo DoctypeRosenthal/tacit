@@ -1,3 +1,5 @@
+import qs
+import qs.services
 import qs.modules.common
 import qs.modules.common.widgets
 import qs.modules.common.functions
@@ -11,7 +13,19 @@ LazyLoader {
     property Item hoverTarget
     default property Item contentItem
     property real popupBackgroundMargin: 0
-    active: hoverTarget && hoverTarget.containsMouse
+    readonly property bool clickToShow: Config.options.bar.tooltips.clickToShow
+    // Hover shows it while the pointer is over the widget. With click to show the pointer is not
+    // tracked (a MouseArea without hover says "contains" only while a button is down), so a click
+    // latches it and it stays until a click elsewhere or Esc (see the window below).
+    active: hoverTarget && (clickToShow ? GlobalStates.latchedPopup === root : hoverTarget.containsMouse)
+
+    readonly property QtObject clickWatch: Connections {
+        target: root.clickToShow ? root.hoverTarget : null
+        function onClicked(mouse) {
+            if (mouse.button !== Qt.LeftButton) return;
+            GlobalStates.latchedPopup = GlobalStates.latchedPopup === root ? null : root;
+        }
+    }
 
     readonly property bool barVertical: Config.options.bar.vertical
     readonly property string barEdge: {
@@ -23,9 +37,35 @@ LazyLoader {
     component: PanelWindow {
         id: popupWindow
 
+        // The window exists only while the popup is shown: it keeps an auto-hide bar shown, since a
+        // popup opened by a click outlives the pointer's stay on the bar.
+        BarHold {
+            holding: true
+            screenName: popupWindow.screen?.name ?? ""
+        }
+
+        // Click to show: the one dismissal rule, a click elsewhere or Esc lets the popup go. The
+        // bar is in the grab, so a click on the widget itself still toggles it.
+        Component.onCompleted: {
+            if (root.clickToShow) GlobalFocusGrab.addDismissable(popupWindow);
+        }
+        Component.onDestruction: GlobalFocusGrab.removeDismissable(popupWindow)
+        Connections {
+            target: GlobalFocusGrab
+            enabled: root.clickToShow
+            function onDismissed() { GlobalStates.latchedPopup = null; }
+        }
+        Connections {
+            target: IslandController
+            enabled: root.clickToShow
+            function onCollapseExpansion() { GlobalStates.latchedPopup = null; }
+        }
+
         // Bring contentItem reference into this scope
         property Item innerContent: root.contentItem
 
+        // on the monitor of the bar that is hovered, so the edge clamp below uses that screen's size
+        screen: root.hoverTarget?.QsWindow.window?.screen ?? null
         color: "transparent"
         anchors.left: root.barEdge !== "right"
         anchors.right: root.barEdge === "right"

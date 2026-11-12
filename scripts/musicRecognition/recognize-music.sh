@@ -15,10 +15,13 @@ if ! command -v songrec >/dev/null 2>&1; then
     exit 1
 fi
 
+# get-default-sink/-source, not a line of `pactl info`: that is translated, and on a computer that is not in English
+# the grep found nothing and the device became ".monitor", which the check below matched against any monitor
 if [ "$SOURCE_TYPE" = "monitor" ]; then
-    AUDIO_DEVICE=$(pactl info | grep "Default Sink:" | awk '{print $3}').monitor
+    AUDIO_DEVICE=$(pactl get-default-sink 2>/dev/null || true)
+    [ -n "$AUDIO_DEVICE" ] && AUDIO_DEVICE="$AUDIO_DEVICE.monitor"
 elif [ "$SOURCE_TYPE" = "input" ]; then
-    AUDIO_DEVICE=$(pactl info | grep "Default Source:" | awk '{print $3}' || true)
+    AUDIO_DEVICE=$(pactl get-default-source 2>/dev/null || true)
 else
     echo "Invalid source type"
     exit 1

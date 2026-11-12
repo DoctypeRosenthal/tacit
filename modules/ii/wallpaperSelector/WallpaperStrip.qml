@@ -23,6 +23,8 @@ Item {
     signal closeRequested()
 
     property bool shown: false
+    // Image.sourceSize is in device pixels, so a screen at 1.5x or 2x needs the picture decoded larger
+    readonly property real pixelRatio: root.Window.window?.devicePixelRatio ?? 1
     property string source: "yours"
     property int pointed: 0
     property bool darkMode: Appearance.m3colors.darkmode
@@ -38,8 +40,9 @@ Item {
     // ------------------------------------------------------------------ the pictures
     property var picturesList: []
     property var downloadsList: []
+    property var yoursList: []   // Wallpapers.used without the pictures that are gone
     property string onlineState: ""   // "", "looking", or what went wrong
-    readonly property var localList: root.source === "yours" ? Wallpapers.used
+    readonly property var localList: root.source === "yours" ? root.yoursList
         : root.source === "pictures" ? root.picturesList
         : root.source === "downloads" ? root.downloadsList : []
     readonly property var items: {
@@ -97,6 +100,18 @@ Item {
             }
         }
     }
+    // Wallpapers.used is never pruned, so a picture deleted or moved since stays in it
+    Process {
+        id: yoursScan
+        stdout: StdioCollector {
+            onStreamFinished: {
+                root.yoursList = text.split("\n").filter(l => l.length > 0);
+                root.yoursLoaded = true;
+                if (root.source === "yours")
+                    root.pointed = Math.max(0, root.yoursList.indexOf(root.wallpaperNow));
+            }
+        }
+    }
     // the folders are only walked once their tab is first shown
     function scanSource() {
         if (root.source === "pictures" && !picturesScan.running && !root.picturesScanned) {
@@ -111,11 +126,14 @@ Item {
     property bool downloadsScanned: false
     property bool picturesLoaded: false
     property bool downloadsLoaded: false
+    property bool yoursLoaded: false
     // the empty message waits for the first scan of the tab being shown
-    readonly property bool scanning: (root.source === "pictures" && !root.picturesLoaded) || (root.source === "downloads" && !root.downloadsLoaded)
+    readonly property bool scanning: (root.source === "yours" && !root.yoursLoaded) || (root.source === "pictures" && !root.picturesLoaded) || (root.source === "downloads" && !root.downloadsLoaded)
     Component.onCompleted: {
+        root.syncTiles();
         root.scanSource();
-        root.pointed = Math.max(0, Wallpapers.used.indexOf(root.wallpaperNow));
+        yoursScan.command = ["bash", "-c", 'for p in "$@"; do [ -f "$p" ] && printf "%s\\n" "$p"; done', "scan"].concat(Wallpapers.used);
+        yoursScan.running = true;
         strip.forceActiveFocus();
     }
 
@@ -125,7 +143,9 @@ Item {
             root.onlineState = "";
         }
         function onFetchError(message) {
-            root.onlineState = "Could not reach " + OnlineWallpapers.provider;
+            root.onlineState = message.startsWith("No API key") ? "Needs an API key: " + Config.options.search.prefix.action + OnlineWallpapers.provider + " in search"
+                : message.startsWith("curl") ? "Could not reach " + OnlineWallpapers.provider
+                : "Could not read " + OnlineWallpapers.provider;
         }
     }
     onSourceChanged: {
@@ -137,6 +157,36 @@ Item {
             root.onlineState = "looking";
             OnlineWallpapers.fetch();
         }
+    }
+
+    // the pointed index was for the old list: a new filter starts at its first match
+    onFilterChanged: root.pointed = 0
+
+    // What the list shows. A new array as the model would reset the view (back to the start, every
+    // tile arriving again) each time more online results come, so only what differs is changed here.
+    ListModel { id: tiles }
+    function syncTiles() {
+        const list = root.items;
+        let same = 0;
+        while (same < tiles.count && same < list.length
+                && tiles.get(same).path === (list[same].path ?? "") && tiles.get(same).thumb === (list[same].thumb ?? ""))
+            same++;
+        if (same < tiles.count)
+            tiles.remove(same, tiles.count - same);
+        for (let i = same; i < list.length; i++)
+            tiles.append({ "path": list[i].path ?? "", "thumb": list[i].thumb ?? "" });
+    }
+    onItemsChanged: root.syncTiles()
+
+    // A tile sliding under a resting pointer (the keys scrolled the strip, or it just opened) also
+    // sends enter, and would take the pointing from the keys. Only a pointer that moved, seen in
+    // the strip's own coordinates, points; the first sighting only notes where it is.
+    property point pointerAt: Qt.point(-1, -1)
+    function pointerMoved(area) {
+        const p = area.mapToItem(strip, area.mouseX, area.mouseY);
+        const moved = root.pointerAt.x >= 0 && (p.x !== root.pointerAt.x || p.y !== root.pointerAt.y);
+        root.pointerAt = p;
+        return moved;
     }
 
     function move(delta) {
@@ -218,7 +268,7 @@ Item {
                 readonly property bool wide: img.aspect > root.width / root.height
                 asynchronous: true
                 source: img.aspect > 0 ? pane.src : ""
-                sourceSize: Qt.size(Math.ceil(width), Math.ceil(height))
+                sourceSize: Qt.size(Math.ceil(width * root.pixelRatio), Math.ceil(height * root.pixelRatio))
                 width: img.wide ? root.height * img.aspect : root.width
                 height: img.aspect <= 0 ? root.height : img.wide ? root.height : root.width / img.aspect
                 x: -(width - root.width) * pane.fx
@@ -250,6 +300,9 @@ Item {
                 into.fx = root.storedFocus().x;
                 into.fy = root.storedFocus().y;
                 into.src = root.previewSource;
+                // stepping back to the picture the idle one still holds loads nothing, so no status change comes
+                if (into.status === Image.Ready)
+                    curtain.useA = into === picA;
             }
         }
         Component.onCompleted: {
@@ -346,7 +399,16 @@ Item {
 
         MouseArea {   // the strip keeps its clicks off the curtain
             anchors.fill: parent
-            onWheel: wheel => root.move(wheel.angleDelta.y < 0 || wheel.angleDelta.x < 0 ? 1 : -1)
+            // a mouse wheel notch is 120; a touchpad sends many small ones, a step for each 120
+            property real wheelSum: 0
+            onWheel: wheel => {
+                wheelSum -= wheel.angleDelta.y !== 0 ? wheel.angleDelta.y : wheel.angleDelta.x;
+                const steps = Math.trunc(wheelSum / 120);
+                if (steps !== 0) {
+                    wheelSum -= steps * 120;
+                    root.move(steps);
+                }
+            }
         }
 
         DockedRect {
@@ -492,11 +554,12 @@ Item {
             spacing: 14
             leftMargin: 12
             rightMargin: 12
-            model: root.items
+            model: tiles
             boundsBehavior: Flickable.StopAtBounds
             delegate: Item {
                 id: cell
-                required property var modelData
+                required property string path
+                required property string thumb
                 required property int index
                 readonly property bool isPointed: cell.index === root.pointed
                 width: 184
@@ -540,7 +603,7 @@ Item {
                         visible: false
                         // decoded at card size, straight from the picture (JPEG decodes scaled)
                         sourceComponent: Image {
-                            source: cell.modelData.path ? FileUtils.fileUrl(cell.modelData.path) : (cell.modelData.thumb ?? "")
+                            source: cell.path ? FileUtils.fileUrl(cell.path) : cell.thumb
                             asynchronous: true
                             sourceSize: Qt.size(368, 208)
                             fillMode: Image.PreserveAspectCrop
@@ -561,7 +624,7 @@ Item {
                     }
                     // the wallpaper you have now
                     Rectangle {
-                        visible: (cell.modelData.path ?? "") === root.wallpaperNow
+                        visible: cell.path === root.wallpaperNow
                         anchors.left: parent.left
                         anchors.bottom: parent.bottom
                         anchors.margins: 7
@@ -581,7 +644,10 @@ Item {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onEntered: root.pointed = cell.index
+                    onEntered: if (root.pointerMoved(this))
+                        root.pointed = cell.index
+                    onPositionChanged: if (root.pointerMoved(this))
+                        root.pointed = cell.index
                     onClicked: {
                         root.pointed = cell.index;
                         root.keep();

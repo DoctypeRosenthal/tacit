@@ -41,11 +41,16 @@ AbstractWidget {
         root.y = Qt.binding(() => root.targetY);
     }
 
+    // the saved position; a placement script's answer replaces this binding until it is put back
+    function bindTargetToConfig() {
+        root.targetX = Qt.binding(() => Math.max(0, Math.min(configEntry.x, scaledScreenWidth - width)));
+        root.targetY = Qt.binding(() => Math.max(0, Math.min(configEntry.y, scaledScreenHeight - height)));
+    }
+
     function commitPosition() {
         configEntry.x = root.x;
         configEntry.y = root.y;
-        root.targetX = Qt.binding(() => Math.max(0, Math.min(configEntry.x, scaledScreenWidth - width)));
-        root.targetY = Qt.binding(() => Math.max(0, Math.min(configEntry.y, scaledScreenHeight - height)));
+        root.bindTargetToConfig();
         root.restoreXYBinding();
     }
 
@@ -71,6 +76,7 @@ AbstractWidget {
     }
     function refreshPlacementIfNeeded() {
         if (!Config.ready) return;
+        if (root.placementStrategy === "free") root.bindTargetToConfig();
         if (root.placementStrategy === "free" && !root.needsColText) return;
         leastBusyRegionProc.wallpaperPath = root.wallpaperPath;
         leastBusyRegionProc.running = false;

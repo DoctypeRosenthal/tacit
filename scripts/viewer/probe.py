@@ -104,8 +104,11 @@ def facts(path):
 def peaks(path, n):
     os.makedirs(f"{CACHE}/peaks", exist_ok=True)
     cache = f"{CACHE}/peaks/{key(path)}-{n}.json"
-    if os.path.exists(cache):
-        return json.load(open(cache))
+    try:
+        with open(cache) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        pass    # none yet, or one cut short: made again
     r = run(["ffmpeg", "-v", "error", "-i", path, "-vn", "-ac", "1", "-ar", "4000", "-f", "s16le", "-"], text=False, timeout=300)
     a = array.array("h")
     a.frombytes(r.stdout[: len(r.stdout) // 2 * 2])
@@ -115,12 +118,15 @@ def peaks(path, n):
     pk = [max(map(abs, a[i * step:(i + 1) * step] or [0])) / 32768 for i in range(n)]
     top = max(pk) or 1
     res = {"peaks": [round(p / top, 3) for p in pk]}
-    json.dump(res, open(cache, "w"))
+    with open(cache + ".tmp", "w") as f:
+        json.dump(res, f)
+    os.replace(cache + ".tmp", cache)
     return res
 
 
 def pages(path, limit):
-    d = f"{CACHE}/pages/{key(path)}"
+    # the page limit is part of the name: pages made for a smaller limit are not served as all of them
+    d = f"{CACHE}/pages/{key(path)}-{limit}"
     if not os.path.isdir(d):
         # rendered into a temp folder and renamed on success, so a timeout or a closed viewer never leaves a partial set
         tmp = f"{d}.{os.getpid()}.part"
@@ -132,7 +138,8 @@ def pages(path, limit):
         os.makedirs(tmp, exist_ok=True)
         try:
             r = run(["pdftoppm", "-r", "110", "-png", "-l", str(limit), path, f"{tmp}/p"], timeout=240)
-            if r.returncode == 0 and any(f.endswith(".png") for f in os.listdir(tmp)):
+            # a bad page after good ones is the file's own end; a killed pdftoppm (a signal) is not
+            if r.returncode >= 0 and any(f.endswith(".png") for f in os.listdir(tmp)):
                 try:
                     os.rename(tmp, d)
                 except OSError:

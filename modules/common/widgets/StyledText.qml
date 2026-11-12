@@ -25,38 +25,37 @@ Text {
     color: Appearance?.m3colors.m3onBackground ?? "black"
     linkColor: Appearance?.m3colors.m3primary
 
+    // The slide moves a transform, not x/y: those belong to the layout or anchors (centerIn), which
+    // may still be changing when the text does, so an animation of them ends at a stale spot.
+    transform: Translate { id: slide }
+
     component Anim: NumberAnimation {
-        target: root
         duration: 300 / 2
         easing.type: Easing.BezierSpline
         easing.bezierCurve: Appearance.animation.elementMoveFast.bezierCurve
     }
 
-    Component.onCompleted: {
-        textAnimationBehavior.originalX = root.x;
-        textAnimationBehavior.originalY = root.y;
-    }
-
     Behavior on text {
         id: textAnimationBehavior
-        property real originalX: root.x
-        property real originalY: root.y
         enabled: root.animateChange
 
         SequentialAnimation {
             alwaysRunToEnd: true
             ParallelAnimation {
                 Anim {
+                    target: slide
                     property: "x"
-                    to: textAnimationBehavior.originalX - root.animationDistanceX
+                    to: -root.animationDistanceX
                     easing.type: Easing.InSine
                 }
                 Anim {
+                    target: slide
                     property: "y"
-                    to: textAnimationBehavior.originalY - root.animationDistanceY
+                    to: -root.animationDistanceY
                     easing.type: Easing.InSine
                 }
                 Anim {
+                    target: root
                     property: "opacity"
                     to: 0
                     easing.type: Easing.InSine
@@ -64,27 +63,30 @@ Text {
             }
             PropertyAction {} // Tie the text update to this point (we don't want it to happen during the first slide+fade)
             PropertyAction {
-                target: root
+                target: slide
                 property: "x"
-                value: textAnimationBehavior.originalX + root.animationDistanceX
+                value: root.animationDistanceX
             }
             PropertyAction {
-                target: root
+                target: slide
                 property: "y"
-                value: textAnimationBehavior.originalY + root.animationDistanceY
+                value: root.animationDistanceY
             }
             ParallelAnimation {
                 Anim {
+                    target: slide
                     property: "x"
-                    to: textAnimationBehavior.originalX
+                    to: 0
                     easing.type: Easing.OutSine
                 }
                 Anim {
+                    target: slide
                     property: "y"
-                    to: textAnimationBehavior.originalY
+                    to: 0
                     easing.type: Easing.OutSine
                 }
                 Anim {
+                    target: root
                     property: "opacity"
                     to: 1
                     easing.type: Easing.OutSine

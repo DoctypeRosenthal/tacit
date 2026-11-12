@@ -272,11 +272,12 @@ ContentPage {
                 ConfigSpinBox {
                     icon: "timer"
                     text: Translation.tr("Wallpaper change interval (min)")
-                    value: Config.options.wallpaperSelector.changeInterval / 60000
+                    value: Math.round(Config.options.wallpaperSelector.changeInterval / 60000)
                     from: 0
                     to: 1440
                     stepSize: 5
                     onValueChanged: {
+                        if (value === Math.round(Config.options.wallpaperSelector.changeInterval / 60000)) return;
                         Config.options.wallpaperSelector.changeInterval = value * 60000;
                     }
                 }
@@ -386,7 +387,14 @@ ContentPage {
             shape: MaterialShape.Shape.Bun
             title: Translation.tr("Clock")
 
+            // The desktop clock is one card (ClockWidget.qml); the digital, cookie and pixel faces are not
+            // loaded, so their settings do nothing and stay hidden. The saved values are kept.
+            readonly property bool stylesLoaded: false
+
             function stylePresent(styleName) {
+                if (!settingsClock.stylesLoaded) {
+                    return false;
+                }
                 if (!Config.options.background.widgets.clock.showOnlyWhenLocked && Config.options.background.widgets.clock.style === styleName) {
                     return true;
                 }
@@ -446,6 +454,7 @@ ContentPage {
                     ]
                 }
                 ConfigSelectionArray {
+                    visible: settingsClock.stylesLoaded
                     text: Translation.tr("Clock style")
                     icon: "nest_clock_farsight_analog"
                     currentValue: Config.options.background.widgets.clock.style
@@ -471,6 +480,7 @@ ContentPage {
                     ]
                 }
                 ConfigSelectionArray {
+                    visible: settingsClock.stylesLoaded
                     text: Translation.tr("Clock style (locked)")
                     icon: "shield_watch"
                     currentValue: Config.options.background.widgets.clock.styleLocked
@@ -681,9 +691,6 @@ ContentPage {
                             buttonIcon: "brightness_7"
                             text: Translation.tr("Hour marks")
                             checked: Config.options.background.widgets.clock.cookie.hourMarks
-                            onEnabledChanged: {
-                                checked = Config.options.background.widgets.clock.cookie.hourMarks;
-                            }
                             onSwitched: (value) => {
                                 Config.options.background.widgets.clock.cookie.hourMarks = value;
                             }
@@ -694,9 +701,6 @@ ContentPage {
                             buttonIcon: "timer_10"
                             text: Translation.tr("Digits in the middle")
                             checked: Config.options.background.widgets.clock.cookie.timeIndicators
-                            onEnabledChanged: {
-                                checked = Config.options.background.widgets.clock.cookie.timeIndicators;
-                            }
                             onSwitched: (value) => {
                                 Config.options.background.widgets.clock.cookie.timeIndicators = value;
                             }
@@ -872,7 +876,7 @@ ContentPage {
             }
             
             ContentSubsection {
-                visible: Config.options.background.widgets.clock.style === "pixel"
+                visible: settingsClock.stylesLoaded && Config.options.background.widgets.clock.style === "pixel"
                 title: Translation.tr("Pixel Clock Settings")
                 GroupedList {
                     visible: Config.options.background.widgets.clock.style === "pixel"
@@ -913,6 +917,7 @@ ContentPage {
                     }
                     ConfigSwitch {
                         buttonIcon: "font_download"
+                        visible: settingsClock.stylesLoaded
                         text: Translation.tr("Follow Clock Font")
                         enabled: Config.options.background.widgets.clock.style !== "pixel"
                         checked: Config.options.background.widgets.clock.quote.followClock

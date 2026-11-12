@@ -118,9 +118,11 @@ Item {
                             Image {
                                 id: avatarImage
                                 anchors.fill: parent
-                                source: Config.options.profile.avatarPath !== "" 
-                                    ? "file://" + Config.options.profile.avatarPicture 
-                                    : "file:///home/" + (Quickshell.env("USER") ?? "user") + "/.face"
+                                // the chosen picture, else ~/.face; each part of the path encoded for the url
+                                readonly property string picturePath: Config.options.profile.avatarPicture !== ""
+                                    ? Config.options.profile.avatarPicture
+                                    : CF.FileUtils.trimFileProtocol(`${Directories.home}/.face`)
+                                source: "file://" + avatarImage.picturePath.split("/").map(encodeURIComponent).join("/")
                                 sourceSize.width: avatarImage.width * 2
                                 sourceSize.height: avatarImage.height * 2
                                 fillMode: Image.PreserveAspectCrop
@@ -132,10 +134,7 @@ Item {
                                         radius: avatarRect.radius
                                     }
                                 }
-                                onStatusChanged: {
-                                    if (status === Image.Error)
-                                        visible = false
-                                }
+                                visible: status !== Image.Error
                             }
 
                             MaterialSymbol {

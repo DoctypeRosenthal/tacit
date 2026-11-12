@@ -246,7 +246,7 @@ function facts(e, m, o) {
     lines = lines.filter(function (l) { return l && l.length; });
     if (o.origin && o.origin.title) more.push(["From the page", o.origin.title]);
     var dir = e.path.replace(/\/[^\/]*$/, "");
-    if (o.home && dir.indexOf(o.home) === 0) dir = "~" + dir.slice(o.home.length);
+    if (o.home && (dir === o.home || dir.indexOf(o.home + "/") === 0)) dir = "~" + dir.slice(o.home.length);
     more.push(["File name", e.name]);
     more.push(["Folder", dir]);
     more.push(["Modified", dateLong(at)]);

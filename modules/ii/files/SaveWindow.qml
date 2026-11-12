@@ -66,7 +66,7 @@ PanelWindow {
 
     FolderListModel {
         id: here
-        folder: "file://" + win.folder
+        folder: "file://" + win.folder.split("/").map(encodeURIComponent).join("/")
         showDirs: true
         showDirsFirst: true
         showDotAndDotDot: false

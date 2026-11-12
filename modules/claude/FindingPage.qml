@@ -14,9 +14,40 @@ PanelPage {
     readonly property var p: fp.pane
     readonly property var f: fp.entry.f.finding ?? ({})
     readonly property var statusWord: ({ problem: "Problem", open: "Open", fixed: "Fixed", done: "Done", confirmed: "Confirmed", not_a_bug: "Not a bug" })
-    readonly property string file: fp.f.files?.[0] ?? ""
-    // a path the Files tab can open: absolute or from home
-    readonly property bool openable: fp.file.startsWith("/") || fp.file.startsWith("~/")
+    // the report's file placed: an absolute path and line, or no path when the session's folder is not known
+    readonly property var where: fp.p.fileOf(fp.f.files?.[0] ?? "", fp.f.line)
+    readonly property string file: fp.where.path || String(fp.f.files?.[0] ?? "").replace(/:\d+(:\d+)?$/, "")
+    readonly property string place: fp.file.split("/").pop() + (fp.where.line ? `:${fp.where.line}` : "")
+    // a path the Files tab can open
+    readonly property bool openable: fp.where.path.length > 0
+    // how bad, in the words the list uses; the report's own rating follows when it says more
+    readonly property string levelWord: ({ high: "High", medium: "Medium", low: "Low" })[fp.f.level ?? ""] ?? ""
+    readonly property string severityWord: {
+        const s = String(fp.f.severity ?? "").trim();
+        return s.length && s.toLowerCase() !== fp.levelWord.toLowerCase() ? s : "";
+    }
+
+    // the keys: Up and Down move a cursor over the rows that open something, Enter opens it
+    readonly property string cur: fp.entry.f.cursor ?? ""
+    readonly property var navList: [...(fp.openable ? ["where"] : []),
+        ...(fp.f.sources ?? []).filter(s => !!fp.p.findAgent(fp.p.info, s.source)).map(s => `src:${s.source}`)]
+    function act(k) {
+        if (k === "where") fp.openFile();
+        else if (k.startsWith("src:")) fp.p.openAgent(k.slice(4));
+    }
+    function navKey(k) {
+        const n = fp.navList.length;
+        if (!n) return false;
+        const at = fp.navList.indexOf(fp.cur);
+        if (k === Qt.Key_Down || k === Qt.Key_Up) {
+            fp.entry.f.cursor = fp.navList[Math.max(0, Math.min(n - 1, at < 0 ? 0 : at + (k === Qt.Key_Down ? 1 : -1)))];
+            fp.entryChanged();
+            return true;
+        }
+        if ((k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Right) && at >= 0) { fp.act(fp.navList[at]); return true; }
+        return false;
+    }
+    function openFile() { if (fp.openable && fp.p.files) fp.p.files.openFile(fp.where.path, fp.where.line, ""); }
 
     component Words: StyledText {
         width: parent.width
@@ -33,7 +64,7 @@ PanelPage {
         StyledText {
             width: parent.width
             topPadding: 4
-            text: [fp.statusWord[fp.f.status] ?? "", fp.f.severity ? fp.f.severity : "", fp.f.checked?.real ? "checked: real" : ""].filter(x => x).join(" · ")
+            text: [fp.statusWord[fp.f.status] ?? "", fp.levelWord, fp.severityWord, fp.f.checked?.real ? "checked: real" : ""].filter(x => x).join(" · ")
             font.pixelSize: 14
             color: fp.f.level === "high" && fp.f.need === "look" ? Appearance.colors.colClay : Appearance.colors.colInkMeta
         }
@@ -54,10 +85,10 @@ PanelPage {
             spacing: 6
             StyledText {
                 visible: fp.file.length > 0
-                text: fp.file.split("/").pop() + (fp.f.line ? `:${fp.f.line}` : "")
+                text: fp.place
                 font.pixelSize: 14
                 color: fp.openable ? (whereArea.containsMouse ? Appearance.colors.colInkMain : Appearance.colors.colPrimary) : Appearance.colors.colInkSecondary
-                MouseArea { id: whereArea; anchors.fill: parent; enabled: fp.openable; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: if (fp.p.files) fp.p.files.openFile(fp.file, Number(fp.f.line) || 0, "") }
+                MouseArea { id: whereArea; anchors.fill: parent; enabled: fp.openable; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: fp.openFile() }
             }
             StyledText {
                 text: [fp.file.length ? "·" : "", fp.p.niceLabel(fp.f.sources?.[0]?.name ?? ""), parent.a0 ? `· ${fp.p.took(parent.a0)}` : ""].filter(x => x).join(" ")
@@ -106,26 +137,32 @@ PanelPage {
 
         PanelSection { topPadding: 22; visible: fp.file.length > 0; text: "Where" }
         PanelRow {
+            id: whereRow
             visible: fp.file.length > 0
             glyph: "description"
-            title: fp.file.split("/").pop() + (fp.f.line ? `:${fp.f.line}` : "")
+            cursor: fp.cur === "where"
+            onCursorChanged: if (cursor) fp.reveal(whereRow)
+            title: fp.place
             line: fp.file.split("/").slice(0, -1).join("/")
             chevron: fp.openable
-            onClicked: if (fp.openable && fp.p.files) fp.p.files.openFile(fp.file, Number(fp.f.line) || 0, "")
+            onClicked: fp.act("where")
         }
 
         PanelSection { topPadding: 22; visible: (fp.f.sources ?? []).length > 0; text: (fp.f.sources ?? []).length === 1 ? "Reported by" : `Reported by ${(fp.f.sources ?? []).length} agents` }
         Repeater {
             model: fp.f.sources ?? []
             PanelRow {
+                id: srcRow
                 required property var modelData
                 readonly property var a: fp.p.findAgent(fp.p.info, modelData.source)
+                cursor: fp.cur === `src:${modelData.source}`
+                onCursorChanged: if (cursor) fp.reveal(srcRow)
                 mark: a?.state ?? "done"
                 title: fp.p.niceLabel(modelData.name)
                 line: a ? fp.p.lineOf(a) : ""
                 meta: a ? fp.p.took(a) : ""
                 chevron: !!a
-                onClicked: if (a) fp.p.openAgent(modelData.source)
+                onClicked: if (a) fp.act(`src:${modelData.source}`)
             }
         }
     }

@@ -55,8 +55,9 @@ Singleton {
     property real fdAt: 0
     readonly property int fdCap: 1500
 
-    // lower case, accents gone: "Affärsplan" and "affarsplan" are one word
-    function fold(s) { return String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase(); }
+    // lower case, accents gone: "Affärsplan" and "affarsplan" are one word. Composed again after, as the names on disk
+    // are: fd would not find Hangul or か + dakuten left as separate letters
+    function fold(s) { return String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").normalize("NFC").toLowerCase(); }
     readonly property var words: root.fold(root.query).split(/\s+/).filter(w => w.length > 0)
     // fd's pattern for one word: each letter that has accented forms matches them too
     function patternFor(word) {

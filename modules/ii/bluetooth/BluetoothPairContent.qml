@@ -253,6 +253,13 @@ Item {
                     font.family: Appearance.font.family.numbers
                     font.pixelSize: Appearance.font.pixelSize.large
                     inputMethodHints: root.kind === "passkey" ? Qt.ImhDigitsOnly : Qt.ImhNone
+                    // the hint only shapes an on-screen keyboard; a passkey is a number up to six digits
+                    validator: root.kind === "passkey" ? passkeyValidator : null
+                    IntValidator {
+                        id: passkeyValidator
+                        bottom: 0
+                        top: 999999
+                    }
                     onAccepted: root.submit()
                     Keys.onPressed: event => {
                         if (event.key === Qt.Key_Escape) {

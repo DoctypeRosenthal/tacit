@@ -100,9 +100,9 @@ Item {
 
     readonly property color ink: Appearance.colors.colInkMain
     readonly property color ink2: Appearance.colors.colInkSecondary
-    readonly property color errInk: ColorUtils.mix(Appearance.colors.colError, "#ffffff", 0.45)
+    readonly property color errInk: ColorUtils.mix(Appearance.colors.colError, root.ink, 0.45)
     // primary actions: colPrimary 30 % toward white, dark text on it (Lc 82)
-    readonly property color accentFill: ColorUtils.mix(Appearance.colors.colPrimary, "#ffffff", 0.7)
+    readonly property color accentFill: ColorUtils.mix(Appearance.colors.colPrimary, root.ink, 0.7)
     readonly property color onAccent: Appearance.m3colors.m3surfaceContainerLowest
 
     function submit(): void {

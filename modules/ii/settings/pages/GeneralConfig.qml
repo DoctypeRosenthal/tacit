@@ -15,9 +15,10 @@ ContentPage {
     // its own 12/24 hour token to keep in step, so they go through here.
     function applyTimeFormat(format) {
         const hyprlockConf = `${FileUtils.trimFileProtocol(Directories.config)}/hypr/hyprlock.conf`;
-        const toToken = format.includes("ap") || format.includes("AP") ? "TIME12" : "TIME";
+        // an a or A outside quotes is Qt's AM/PM, alone or as ap/AP
+        const toToken = /[aA]/.test(format.replace(/'[^']*'/g, "")) ? "TIME12" : "TIME";
         const fromToken = toToken === "TIME12" ? "TIME" : "TIME12";
-        Quickshell.execDetached(["bash", "-c", `sed -i 's/\\${fromToken}\\b/${toToken}/' '${hyprlockConf}'`]);
+        Quickshell.execDetached(["bash", "-c", `sed -i --follow-symlinks 's/\\${fromToken}\\b/${toToken}/' "$1"`, "_", hyprlockConf]);
         Config.options.time.format = format;
     }
 
@@ -172,15 +173,19 @@ ContentPage {
                     }
                     onConfirmClicked: {
                         clockFormatDebounceTimer.stop();
-                        page.applyTimeFormat(clockFormatField.value);
+                        if (clockFormatField.value.length > 0)
+                            page.applyTimeFormat(clockFormatField.value);
                     }
 
                     Timer {
                         id: clockFormatDebounceTimer
                         interval: 600
                         repeat: false
+                        // not an empty field mid-retype, and not the value the page opened with
                         onTriggered: {
-                            page.applyTimeFormat(clockFormatField.value);
+                            const v = clockFormatField.value;
+                            if (v.length > 0 && v !== Config.options.time.format)
+                                page.applyTimeFormat(v);
                         }
                     }
                 }

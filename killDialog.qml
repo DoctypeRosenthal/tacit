@@ -70,6 +70,13 @@ ApplicationWindow {
 
         signal alwaysSelected()
 
+        // Esc is "Leave it"
+        Shortcut {
+            sequence: "Escape"
+            enabled: conflictGroup.visible
+            onActivated: conflictGroup.visible = false
+        }
+
         Process {
             running: true
             command: ["pidof", ...conflictGroup.programs]
@@ -119,6 +126,22 @@ ApplicationWindow {
                     height: 30
                     radius: Appearance.rounding.full
                     color: ColorUtils.transparentize(Appearance.m3colors.m3onSurface, pillArea.containsMouse ? modelData.tone - 0.05 : modelData.tone)
+                    border.width: pill.activeFocus ? 2 : 0
+                    border.color: Appearance.colors.colPrimary
+                    // Tab reaches each answer; Enter or Space gives it
+                    activeFocusOnTab: true
+                    function choose() {
+                        if (pill.modelData.stop) {
+                            Quickshell.execDetached(["killall", ...conflictGroup.programs])
+                        }
+                        if (pill.modelData.always) {
+                            conflictGroup.alwaysSelected()
+                        }
+                        conflictGroup.visible = false
+                    }
+                    Keys.onReturnPressed: pill.choose()
+                    Keys.onEnterPressed: pill.choose()
+                    Keys.onSpacePressed: pill.choose()
                     StyledText {
                         id: pillText
                         anchors.centerIn: parent
@@ -132,15 +155,7 @@ ApplicationWindow {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            if (pill.modelData.stop) {
-                                Quickshell.execDetached(["killall", ...conflictGroup.programs])
-                            }
-                            if (pill.modelData.always) {
-                                conflictGroup.alwaysSelected()
-                            }
-                            conflictGroup.visible = false
-                        }
+                        onClicked: pill.choose()
                     }
                 }
             }

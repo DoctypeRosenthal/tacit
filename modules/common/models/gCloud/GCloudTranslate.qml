@@ -22,6 +22,8 @@ GCloudApi {
 
     onPreparationReadyChanged: {
         if (!preparationReady) return;
+        // One request per translateStrings call: the token refreshing later must not send these again
+        root.setupReady = false;
         root.state = GCloudApi.State.Processing;
 
         const targetLang = Translation.languageCode;
@@ -37,7 +39,7 @@ GCloudApi {
         seq.push([ //
             "bash", "-c", //
             `curl -sL -X POST \
--H "Authorization: Bearer ${GoogleCloud.token}" \
+-H "Authorization: Bearer $GCLOUD_TOKEN" \
 -H "x-goog-user-project: ${GoogleCloud.projectId}" \
 -H "Content-Type: application/json" \
 -d '${StringUtils.shellSingleQuoteEscape(JSON.stringify(payload))}' \
@@ -53,5 +55,9 @@ GCloudApi {
 
     MultiTurnProcess {
         id: multiproc
+        // The token goes in the environment: as an argument it is in /proc/<pid>/cmdline, which is world readable
+        environment: ({
+            "GCLOUD_TOKEN": GoogleCloud.token
+        })
     }
 }

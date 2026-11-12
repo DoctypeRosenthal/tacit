@@ -112,6 +112,11 @@ Item {
         doc.announcedPath = doc.abs;
     }
     Connections { target: doc.lsp; function onServersKnown() { doc.announce(); } }
+    // its server died: the next edit (lspLater) announces the file to a new one
+    Connections {
+        target: doc.lsp
+        function onServerLost(kind) { if (doc.announced && doc.lsp.kindOf(doc.abs)?.kind === kind) doc.announced = false; }
+    }
     Timer { id: lspLater; interval: 250; onTriggered: { if (doc.announced) doc.lsp.changed(doc.abs, doc.cached); else doc.announce(); } }
     onAbsChanged: if (doc.announced) { doc.lsp.closed(doc.announcedPath); doc.announced = false; doc.announce(); }
     Component.onDestruction: if (doc.announced && doc.lsp) doc.lsp.closed(doc.announcedPath)
@@ -470,18 +475,34 @@ Item {
     // ── find and replace in this file ────────────────────────────────────────
     // Every hit comes off doc.cached; the edits go through the TextEdit so they land on
     // its undo stack.
-    function matchAt(text, needle, from, cs) {
-        return cs ? text.indexOf(needle, from) : text.toLowerCase().indexOf(needle.toLowerCase(), from);
+    // Case-insensitive hits come from one regex per search, not from lower-casing the text: a lower-cased copy
+    // can differ in length (Turkish dotted I), which would put the hits in the wrong place, and copying the
+    // whole text for every hit froze the editor on a big file.
+    function matcher(needle) { return new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"); }
+    function matchAt(text, needle, from, cs, re) {
+        if (cs) return text.indexOf(needle, from);
+        const r = re || doc.matcher(needle);
+        r.lastIndex = from;
+        const m = r.exec(text);
+        return m ? m.index : -1;
     }
     function matchBefore(text, needle, before, cs) {
         if (before <= 0) return -1;
-        return cs ? text.lastIndexOf(needle, before - 1) : text.toLowerCase().lastIndexOf(needle.toLowerCase(), before - 1);
+        if (cs) return text.lastIndexOf(needle, before - 1);
+        const re = doc.matcher(needle);
+        let last = -1;
+        for (;;) {
+            const m = re.exec(text);
+            if (!m || m.index >= before) return last;
+            last = m.index; re.lastIndex = m.index + 1;
+        }
     }
     function matchCount(needle, cs) {
         if (!needle.length || doc.problem.length) return 0;
+        const re = cs ? null : doc.matcher(needle);
         let n = 0, i = 0;
         for (;;) {
-            const at = doc.matchAt(doc.cached, needle, i, cs);
+            const at = doc.matchAt(doc.cached, needle, i, cs, re);
             if (at < 0) return n;
             n++; i = at + needle.length;
         }
@@ -514,10 +535,10 @@ Item {
     }
     function replaceAll(needle, with_, cs) {
         if (!needle.length || doc.held || doc.problem.length) return 0;
-        const text = doc.cached, hits = [];
+        const text = doc.cached, hits = [], re = cs ? null : doc.matcher(needle);
         let i = 0;
         for (;;) {
-            const at = doc.matchAt(text, needle, i, cs);
+            const at = doc.matchAt(text, needle, i, cs, re);
             if (at < 0) break;
             hits.push([at, at + needle.length, with_]); i = at + needle.length;
         }

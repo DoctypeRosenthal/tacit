@@ -64,8 +64,14 @@ Item {
     // typed into any more, so it does not stay open behind it.
     onKeyScreenChanged: if (!root.keyScreen && root.open && (root.view === "ask" || root.view === "address" || root.view === "record")) root.open = false;
     // Locking destroys this window with the sheet still up, and the flag would stay set with
-    // nothing left to clear it - Claude would never read its context again.
-    Component.onDestruction: if (root.askOpen && root.keyScreen) Claude.sheetOpen = false;
+    // nothing left to clear it - Claude would never read its context again. An unplugged screen
+    // does the same to the keyboard flag: the notch that comes back would take the keys on a hover.
+    Component.onDestruction: {
+        if (root.askOpen && root.keyScreen)
+            Claude.sheetOpen = false;
+        if (root.open && root.keyScreen)
+            IslandController.keyboard = false;
+    }
     onOpenChanged: {
         root.askUnfollow();
         root.addressFollow();
@@ -81,7 +87,7 @@ Item {
                 IslandController.request("recordSaved", { "text": `Recording saved · in ${dir}`, "icon": "movie" }, 60);
             }
         } else if (IslandController.keyboard && root.view !== "ask" && root.view !== "address" && root.view !== "signin") {
-            root.selected = root.rowCount > 0 ? 0 : -1;
+            root.selected = root.nextRow(-1, 1);
             root.forceActiveFocus();
         }
     }
@@ -113,11 +119,11 @@ Item {
         }
         if (event.key === Qt.Key_Down || event.key === Qt.Key_Tab) {
             if (root.rowCount > 0)
-                root.selected = (root.selected + 1) % root.rowCount;
+                root.selected = root.nextRow(root.selected, 1);
             event.accepted = true;
         } else if (event.key === Qt.Key_Up || event.key === Qt.Key_Backtab) {
             if (root.rowCount > 0)
-                root.selected = (root.selected - 1 + root.rowCount) % root.rowCount;
+                root.selected = root.nextRow(root.selected, -1);
             event.accepted = true;
         } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
             root.activateSelected();
@@ -128,16 +134,29 @@ Item {
             event.accepted = true;
         }
     }
+    // The row after `from` in direction dir (wrapping) that Enter can do something with: a session whose
+    // terminal has gone is greyed out and inert, so the keyboard walks past it. -1 when no row is left.
+    function nextRow(from, dir) {
+        const n = IslandController.openSessions.length, c = root.rowCount;
+        for (let k = 1; k <= c; k++) {
+            const i = (((from + dir * k) % c) + c) % c;
+            if (i >= n || AgentSessions.sessions.some(x => x.id === IslandController.openSessions[i].id))
+                return i;
+        }
+        return -1;
+    }
     function activateSelected() {
         const n = IslandController.openSessions.length;
         if (root.selected < 0)
             return;
         if (root.selected < n) {
             // the session may have ended while the sheet was up: its row is greyed out and
-            // there is no window left to focus
+            // there is no window left to focus, so the highlight moves on to a row that has one
             const s = AgentSessions.sessions.find(x => x.id === IslandController.openSessions[root.selected].id);
-            if (!s)
+            if (!s) {
+                root.selected = root.nextRow(root.selected, 1);
                 return;
+            }
             AgentSessions.focus(s);
         } else {
             Recents.activate(IslandController.openRecents[root.selected - n]);
@@ -404,7 +423,7 @@ Item {
         }
     }
 
-    readonly property bool timerRunning: IslandController.focusRunning
+    readonly property bool timerRunning: IslandController.focusHeld
     // For the session rows' "since" column; ticks only while the sheet is up.
     property real now: Date.now()
     Timer {
@@ -486,7 +505,7 @@ Item {
         radius: 24
         blur: 34
         offset: Qt.vector2d(0, 14)
-        color: ColorUtils.transparentize("black", 0.64)
+        color: ColorUtils.transparentize(Appearance.m3colors.m3shadow, 0.64)
         visible: opacity > 0
         opacity: root.open && root.view === "address" ? 1 : 0
         Behavior on opacity {
@@ -597,6 +616,11 @@ Item {
         onTriggered: root.fold()
     }
 
+    // Ask, the address and the recording's choice are held open for what is typed or chosen in them
+    // (fold() keeps them too): a drag over the notch must not swap them for the shelf.
+    readonly property bool sheetHeld: root.open && (root.view === "ask" || root.view === "address"
+        || (root.view === "record" && root.recordMode === "choose"))
+
     function fold() {
         hoverTimer.stop();
         leaveTimer.stop();
@@ -620,9 +644,12 @@ Item {
         function onDropShelfOpenChanged() {
             if (!GlobalStates.dropShelfOpen)
                 return;
+            // only the notch of the screen the files were dropped on opens, and it clears the flag
+            if (GlobalStates.dropShelfScreen && root.screenData && GlobalStates.dropShelfScreen.name !== root.screenData.name)
+                return;
             GlobalStates.dropShelfOpen = false;
-            // the files are on the shelf; the sign-in keeps the sheet
-            if (root.signinShown || root.signinStage !== "")
+            // the files are on the shelf; the sign-in, Ask, the address and the recording's choice keep the sheet
+            if (root.signinShown || root.signinStage !== "" || root.sheetHeld)
                 return;
             root.view = "shelf";
             if (!root.open)
@@ -749,7 +776,8 @@ Item {
         repeat: false
         onTriggered: {
             root.pinnedUntilVisit = false;
-            if (!islandHover.hovered)
+            // a sheet that holds the keyboard closes with Esc, not under someone still arrowing
+            if (!islandHover.hovered && !(IslandController.keyboard && root.keyScreen))
                 root.fold();
         }
     }
@@ -761,6 +789,8 @@ Item {
         acceptedButtons: Qt.LeftButton | Qt.MiddleButton
 
         onWheel: event => {
+            if (!Config.options.island.scrollVolume)
+                return;
             if (event.angleDelta.y > 0)
                 Audio.incrementVolume();
             else if (event.angleDelta.y < 0)
@@ -847,8 +877,8 @@ Item {
         keys: ["text/uri-list", "text/plain"]
 
         onEntered: drag => {
-            // the sign-in holds the sheet: a file dragged onto the notch is ignored
-            if (root.signinShown || root.signinStage !== "") {
+            // the sign-in, Ask, the address and the recording's choice hold the sheet: a file dragged onto the notch is ignored
+            if (root.signinShown || root.signinStage !== "" || root.sheetHeld) {
                 drag.accepted = false;
                 return;
             }
@@ -874,6 +904,9 @@ Item {
             dragLeaveTimer.restart();
         }
         onDropped: drop => {
+            // a drop sends no exited, so the drag state ends here, whatever the drop turns out to be
+            root.dragOver = false;
+            root.textDragOver = false;
             // A tile dragged off the shelf and let go on the notch itself: nothing to do, and
             // touching the list here would destroy the tile mid-drop.
             if (root.isOwn(drop.source)) {
@@ -882,10 +915,10 @@ Item {
             }
             if (drop.hasUrls) {
                 // a WireGuard .conf or an .ovpn is a VPN to add, not a file to park
-                const vpnFiles = drop.urls.filter(u => Vpn.isVpnFile(u));
+                const vpnFiles = drop.urls.filter(u => (u + "").startsWith("file://") && Vpn.isVpnFile(u));
                 for (const u of vpnFiles)
                     Vpn.importFile(u);
-                const rest = drop.urls.filter(u => !Vpn.isVpnFile(u));
+                const rest = drop.urls.filter(u => !vpnFiles.includes(u));
                 if (rest.length > 0)
                     DropShelf.addItems(rest);
             } else if (drop.hasText && (drop.text + "").trim().length > 0) {
@@ -898,8 +931,6 @@ Item {
             }
             drop.accept();
             root.droppedThisDrag = true;
-            root.dragOver = false;
-            root.textDragOver = false;
         }
     }
 
@@ -934,6 +965,11 @@ Item {
             // the sign-in's page has the keys: Esc is the page's, and the browser's when the page leaves it
             if (root.view === "signin" && (root.open || root.signinStage !== ""))
                 return;
+            // a sheet opened pinned (IPC, a corner, a drop) has no key held: Esc is its way out too
+            if (root.open) {
+                pinTimer.stop();
+                root.pinnedUntilVisit = false;
+            }
             root.fold();
         }
     }
@@ -1315,6 +1351,10 @@ Item {
                         required property var modelData
                         required property int index
                         readonly property var item: modelData
+                        // right-clicked away: the list is frozen at open, so the row stays where it is, greyed and inert
+                        property bool removed: false
+                        enabled: !recentRow.removed
+                        opacity: recentRow.removed ? 0.4 : 1
                         readonly property bool draggable: item.kind !== "image" && item.kind !== "secret" && item.kind !== "downloading"
                         width: sessionRows.width
                         height: 34
@@ -1343,7 +1383,7 @@ Item {
                             // Rows come and go while a drag is out; a dead source segfaults Qt.
                             Component.onDestruction: if (recentCard.Drag.active) recentCard.Drag.cancel()
                             Drag.mimeData: recentRow.item.path.length > 0
-                                ? { "text/uri-list": "file://" + recentRow.item.path }
+                                ? { "text/uri-list": FileUtils.fileUrl(recentRow.item.path) }
                                 : { "text/plain": recentRow.item.text }
                             Drag.supportedActions: Qt.CopyAction
 
@@ -1454,6 +1494,7 @@ Item {
                                         root.open = false;
                                     } else {
                                         Recents.remove(recentRow.item);
+                                        recentRow.removed = true;
                                     }
                                 }
                                 drag.onActiveChanged: root.rowDragging = recentArea.drag.active
@@ -1463,7 +1504,7 @@ Item {
                 }
             }
 
-            // A running timer gets its own row under whichever view is open: time left, pause, stop.
+            // A running or paused timer gets its own row under whichever view is open: time left, pause or resume, stop.
             Item {
                 id: timerRow
                 anchors.left: parent.left
@@ -1475,7 +1516,9 @@ Item {
                 height: 30
                 visible: root.timerRunning && root.view !== "ask" && root.view !== "address" && root.view !== "signin" && root.view !== "record"
 
-                readonly property bool pomodoro: TimerService.pomodoroRunning
+                // the running timer's, else the paused one's; a pomodoro when both are paused
+                readonly property bool pomodoro: TimerService.pomodoroRunning || (!TimerService.countdownRunning && TimerService.pomodoroPaused)
+                readonly property bool running: pomodoro ? TimerService.pomodoroRunning : TimerService.countdownRunning
                 readonly property int secondsLeft: pomodoro ? TimerService.pomodoroSecondsLeft : TimerService.countdownSecondsLeft
 
                 MaterialSymbol {
@@ -1490,7 +1533,7 @@ Item {
                     anchors.left: timerGlyph.right
                     anchors.leftMargin: 8
                     anchors.verticalCenter: parent.verticalCenter
-                    text: `${TimerService.formatSeconds(Math.max(0, timerRow.secondsLeft))} · ${timerRow.pomodoro ? (TimerService.pomodoroBreak ? "break" : "focus") : "countdown"}`
+                    text: `${TimerService.formatSeconds(Math.max(0, timerRow.secondsLeft))} · ${timerRow.pomodoro ? (TimerService.pomodoroBreak ? "break" : "focus") : "countdown"}${timerRow.running ? "" : " · paused"}`
                     font.pixelSize: 14
                     color: IslandController.contentColor
                 }
@@ -1502,17 +1545,16 @@ Item {
                     IslandControlButton {
                         implicitWidth: 28
                         implicitHeight: 28
-                        visible: timerRow.pomodoro
-                        glyph: "pause"
+                        glyph: timerRow.running ? "pause" : "play_arrow"
                         iconSize: 16
-                        onActivated: TimerService.togglePomodoro()
+                        onActivated: timerRow.pomodoro ? TimerService.togglePomodoro() : TimerService.toggleCountdown()
                     }
                     IslandControlButton {
                         implicitWidth: 28
                         implicitHeight: 28
                         glyph: "stop"
                         iconSize: 16
-                        onActivated: timerRow.pomodoro ? TimerService.resetPomodoro() : TimerService.toggleCountdown()
+                        onActivated: timerRow.pomodoro ? TimerService.resetPomodoro() : TimerService.resetCountdown()
                     }
                 }
             }

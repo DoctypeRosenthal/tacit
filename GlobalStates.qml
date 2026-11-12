@@ -34,6 +34,9 @@ Singleton {
     property bool screenUnlockFailed: false
     property bool screenTranslatorOpen: false
     property bool sessionOpen: false
+    // The Session screen opens armed on this action (an index of its list: 0 Shut down, 1 Restart), so Enter there
+    // runs it; -1 opens it unarmed. Set before sessionOpen, by the palette.
+    property int sessionArm: -1
     property bool superDown: false
     property bool superReleaseMightTrigger: true
     property bool wallpaperSelectorOpen: false
@@ -49,12 +52,30 @@ Singleton {
     property bool dropShelfOpen: false
     property real dropShelfX: 0
     property real dropShelfY: 0
-    // the monitor dropShelfX/Y are local to
+    // the monitor dropShelfX/Y are local to; null: the first notch that hears it
     property var dropShelfScreen: null
     // the notch's recording choice for the area picker: "area" or "window", a pulse RegionSelector clears
     property string recordPick: ""
 
     readonly property var hotCornerOptions: CornerActions.list
+
+    // Click to show tooltips: the bar popup a click has opened and that stays until a click elsewhere,
+    // Esc or another popup's click. At most one, so opening a second lets the first go.
+    property var latchedPopup: null
+
+    // Auto-hide bar: how many menus or popups hang off each screen's bar (screen name -> count). The
+    // bar stays shown while it is above zero; the object is replaced, not edited, so bindings hear it.
+    property var barHolds: ({})
+    function holdBar(screenName) {
+        const next = Object.assign({}, root.barHolds);
+        next[screenName] = (next[screenName] ?? 0) + 1;
+        root.barHolds = next;
+    }
+    function releaseBar(screenName) {
+        const next = Object.assign({}, root.barHolds);
+        next[screenName] = Math.max(0, (next[screenName] ?? 0) - 1);
+        root.barHolds = next;
+    }
 
     function toggleState(name) {
         if (!name || name === "none") return;
@@ -86,6 +107,17 @@ Singleton {
     // to re-lock, but only a client can set that hint and nothing here was setting it, so it was
     // always "no". Told here rather than in LockScreen because this is where the state lives.
     onScreenLockedChanged: {
+        // Nothing opened before the lock is left open behind it: the panels keep their text (a clipboard
+        // list, a half-typed password) and their keys and clicks, and would be there again at unlock.
+        if (root.screenLocked) {
+            root.sidebarRightOpen = false;
+            root.overviewOpen = false;
+            root.searchOpen = false;
+            root.overlayOpen = false;
+            root.desktopMenuOpen = false;
+            root.dropShelfOpen = false;
+            root.wallpaperSelectorOpen = false;
+        }
         Quickshell.execDetached(["busctl", "call", "org.freedesktop.login1",
             "/org/freedesktop/login1/session/auto", "org.freedesktop.login1.Session",
             "SetLockedHint", "b", root.screenLocked ? "true" : "false"]);

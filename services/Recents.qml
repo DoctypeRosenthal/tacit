@@ -138,7 +138,7 @@ Singleton {
             return "secret";
         if (/^https?:\/\/\S+$/i.test(s))
             return "url";
-        if (/^#[0-9a-f]{3,8}$/i.test(s))  // only what Qt can paint; rgb() text stays text
+        if (/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(s))  // only what Qt can paint (3, 6 or 8 digits); rgb() text stays text
             return "color";
         if (/^(~|\/)[^\s]+$/.test(s))
             return "path";
@@ -282,8 +282,11 @@ Singleton {
     // "run" types the command into a new terminal's prompt; you press Enter.
     function run(item) {
         const cmd = (item.text + "").trim().replace(/^\$ /, "");
-        // the text travels in the environment, never as fish source: a quote or backslash in it cannot run anything
-        Quickshell.execDetached(["env", `__notch_cmd=${cmd}`, "foot", "fish", "-C",
+        // the text travels in the environment, never as fish source: a quote or backslash in it cannot run anything.
+        // The configured terminal, as the palette's commands use it, named as a positional argument.
+        Quickshell.execDetached(["bash", "-c",
+            'command -v "${0%% *}" >/dev/null || { notify-send -a Tacit "No terminal" "Nothing was opened: $0 is missing."; exit 1; }; export __notch_cmd="$1"; exec $0 fish -C "$2"',
+            Config.options.apps.terminal, cmd,
             "function __notch_prefill --on-event fish_prompt; commandline -r -- $__notch_cmd; functions -e __notch_prefill; set -e __notch_cmd; end"]);
     }
 

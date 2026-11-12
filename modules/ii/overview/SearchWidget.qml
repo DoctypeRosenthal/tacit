@@ -116,7 +116,7 @@ Item {
     readonly property int paletteWidth: 880
     // The dock may run wider than the field on a wide screen: its names are what make it this dock, and at
     // 880 a dozen programs dropped every one of them.
-    readonly property int dockMaxWidth: Math.max(root.paletteWidth, Math.min(1100, (Quickshell.screens[0]?.width ?? 1280) - 220))
+    readonly property int dockMaxWidth: Math.max(root.paletteWidth, Math.min(1100, (root.QsWindow.window?.screen?.width ?? 1280) - 220))
     readonly property int fieldHeight: 78
     readonly property int rowHeight: 52
     readonly property int maxListHeight: 7 * root.rowHeight
@@ -135,19 +135,31 @@ Item {
     // long first frame, and a slide already under way then jumped.
     property bool armed: false
     property real offsetScale: !root.out && root.armed ? 0 : 1
-    transform: Translate {
-        y: (root.implicitHeight + 16) * root.offsetScale
+    // How far the dock travels: the whole of it with the peek or menu slab it carries, as it stood when the slide
+    // began. implicitHeight follows the slab, which shrinks while the dock leaves, so a distance read on every frame
+    // changed under the slide and left it uneven; it is let go of while out and read again while the dock is shown.
+    property real slideSpan: root.implicitHeight + 16
+    Binding {
+        target: root
+        property: "slideSpan"
+        value: root.implicitHeight + 16
+        when: !root.out
+        restoreMode: Binding.RestoreNone
     }
-    // the direction is read from the state, not from offsetScale itself, so it holds for the whole slide
-    readonly property bool showing: !root.out && root.armed
+    transform: Translate {
+        y: root.slideSpan * root.offsetScale
+    }
     // In decelerating; away on the palette's own emphasized curve, which starts gently and then
     // goes into the edge. A decelerating exit spent its motion in the first two frames and read as
     // a pop; the eased end of a slide-out happens off screen, so the start is what is seen.
+    // The direction comes from the slide's own target, which the Behavior sets before the animation starts. Read from
+    // `showing`, it raced the same change of `armed`: the dock rose on the exit curve (slow start, a lurch, a crawl).
     Behavior on offsetScale {
+        id: slide
         NumberAnimation {
-            duration: root.showing ? Appearance.animationCurves.normalDuration : 350
+            duration: slide.targetValue === 0 ? Appearance.animationCurves.normalDuration : 350
             easing.type: Easing.BezierSpline
-            easing.bezierCurve: root.showing ? Appearance.animationCurves.emphasizedDecel : Appearance.animationCurves.emphasized
+            easing.bezierCurve: slide.targetValue === 0 ? Appearance.animationCurves.emphasizedDecel : Appearance.animationCurves.emphasized
         }
     }
     FrameAnimation {
@@ -164,6 +176,10 @@ Item {
             closedTimer.restart();
         } else {
             closedTimer.stop();
+            // Opened again while still sliding away: the window is drawn already, so rise from where it is
+            // at once (waiting for armed made it drop further out first)
+            if (root.offsetScale < 1)
+                root.armed = true;
         }
     }
     Timer {
@@ -695,13 +711,16 @@ Item {
 
         // the program's windows, those on this workspace first, each fitted to the picture's height
         function layoutFor(entry) {
-            const list = (entry?.toplevels ?? []).slice();
+            // a window about to be closed is not offered (the dock's pill counts it closed already)
+            const list = (entry?.toplevels ?? []).filter(t => WindowBand.heldAs(t) !== "closed");
             const here = HyprlandData.activeWorkspace?.id;
             const wsOf = t => HyprlandData.clientForToplevel(t)?.workspace?.id ?? 0;
             list.sort((a, b) => (wsOf(a) === here ? -1 : 0) - (wsOf(b) === here ? -1 : 0) || wsOf(a) - wsOf(b));
             const maxW = Math.min(520, frame.width - peekTab.margin * 2 - peekTab.pad * 2);
             const sizes = list.map(t => {
-                const size = HyprlandData.clientForToplevel(t)?.size ?? [16, 10];
+                // a window that has no size yet (0 x 0) is drawn 16:10, not NaN wide
+                const real = HyprlandData.clientForToplevel(t)?.size;
+                const size = real?.[0] > 0 && real?.[1] > 0 ? real : [16, 10];
                 let h = 300, w = h * size[0] / size[1];
                 if (w > maxW) {
                     w = maxW;
@@ -800,9 +819,13 @@ Item {
                     peekTab.open();
             }
         }
-        // a window opened or closed while it shows: the slab takes the new size
+        // a window opened or closed while it shows: the slab takes the new size. `target` is made anew on every
+        // Hyprland event, so the slab moves only when its place or size is not the one it is already going to;
+        // restarting the move on each event kept it from settling.
         onTargetChanged: if (peekTab.wanted && !swap.running && peekTab.showing === dock.shownEntry) {
             peekTab.index = Math.min(peekTab.index, Math.max(0, peekTab.target.windows.length - 1));
+            if (peekTab.targetX === moveX.to && peekTab.target.width === moveW.to && peekTab.target.height === moveH.to)
+                return;
             peekTab.moveTo(peekTab.targetX, peekTab.target.width, peekTab.target.height, Appearance.animationCurves.normalDuration);
         }
         // another program: the old picture fades out, then the new one in, while the slab reshapes
@@ -933,7 +956,12 @@ Item {
                                 peekTab.index = Math.min(n - 1, Math.max(0, Math.floor(mouse.x / width * n)));
                         }
                         onClicked: {
-                            peekTab.current?.activate();
+                            // a window the band hid comes back through the band, as the pill does, so it is not left
+                            // held while focused
+                            if (peekTab.current && WindowBand.heldAs(peekTab.current) === "hidden")
+                                WindowBand.reopenAll([WindowBand.addressOf(peekTab.current)]);
+                            else
+                                peekTab.current?.activate();
                             root.dockDone();
                         }
                     }
@@ -951,6 +979,7 @@ Item {
                         width: Math.min(implicitWidth, parent.width - liftWord.implicitWidth - dots.width - 24)
                         elide: Text.ElideRight
                         text: peekTab.current?.title ?? ""
+                        textFormat: Text.PlainText
                         font.pixelSize: Appearance.font.pixelSize.small
                         font.weight: Font.Medium
                         color: Appearance.m3colors.m3onSurface
@@ -1041,7 +1070,7 @@ Item {
             anchors.bottom: parent.bottom
             x: (frame.width - dock.implicitWidth) / 2
             maxWidth: root.dockMaxWidth
-            restOffset: (root.implicitHeight + 16) * root.offsetScale
+            restOffset: root.slideSpan * root.offsetScale
             discX: disc.x - dock.x
             visible: root.travel < 1
             enabled: root.dockMode
@@ -1193,6 +1222,17 @@ Item {
                 onTextChanged: {
                     if (root.settingText)
                         return;
+                    // "./run.sh", "../tool", "~/bin/x" are paths, not a symbol or a file search: the "." or "~" typed
+                    // first went into the kind, so it comes back into the text when the "/" follows it
+                    if ((root.kindPrefix === "." && (searchInput.text === "/" || searchInput.text === "./"))
+                            || (root.kindPrefix === "~" && searchInput.text === "/")) {
+                        const path = root.kindPrefix + searchInput.text;
+                        root.kindPrefix = "";
+                        root.settingText = true;
+                        searchInput.text = path;
+                        root.settingText = false;
+                        searchInput.cursorPosition = path.length;
+                    }
                     // a prefix typed first picks the kind, as it always has
                     if (root.kindPrefix.length === 0 && searchInput.text.length > 0) {
                         const prefix = PaletteSearch.prefixOf(searchInput.text);

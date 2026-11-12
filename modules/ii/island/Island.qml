@@ -117,10 +117,12 @@ Scope {
                 // no way out (Discord, SrwR16, 2026-11-05). While one is open, a clear window covers the rest of the
                 // screen and a press on it folds the sheet. Not the desktop's click-away grab: Hyprland drops a grab as
                 // soon as the pointer rests outside it, which closed a sheet opened from a key at once, and the grab takes
-                // the keys. Not during a drag, nor Ask, the address and the sign-in, which close when you say so.
+                // the keys. Not during a drag, nor the sign-in, which has its own way back (a pill) and a page in use. Ask and
+                // the address hold the keyboard, so a press outside is their only pointer way out besides Esc: it closes them
+                // as Esc does, but a wheel turn over the rest of the screen does not (a draft is not worth losing to a scroll).
                 readonly property bool clickAway: islandContent.open && !islandContent.draggingOut
                     && !islandContent.dragOver && !islandContent.textDragOver
-                    && !["ask", "address", "signin"].includes(islandContent.view)
+                    && islandContent.view !== "signin"
                 PanelWindow {
                     id: awayCatcher
                     screen: islandRoot.screen
@@ -156,6 +158,8 @@ Scope {
                             islandContent.open = false;
                         }
                         onWheel: {
+                            if (islandContent.view === "ask" || islandContent.view === "address")
+                                return;
                             islandContent.pinnedUntilVisit = false;
                             islandContent.open = false;
                         }

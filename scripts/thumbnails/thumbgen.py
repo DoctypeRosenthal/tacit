@@ -8,7 +8,7 @@ import os
 import sys
 from multiprocessing import Pool
 from pathlib import Path
-from typing import List, Union
+from typing import List, Tuple, Union
 
 import click
 import gi
@@ -35,32 +35,38 @@ logger.add(sys.stdout, level="INFO")
 logger.add(log_dir / "thumbgen.log", level="DEBUG", rotation="2 MB", retention="3 days")
 
 def make_thumbnail(fpath: str) -> bool:
-    mtime = os.path.getmtime(fpath)
-    # Use Gio to determine the URI and mime type
-    f = Gio.file_new_for_path(str(fpath))
-    uri = f.get_uri()
-    info = f.query_info("standard::content-type", Gio.FileQueryInfoFlags.NONE, None)
-    mime_type = info.get_content_type()
+    # one file that cannot be read (deleted during the run, a corrupt picture) must not stop the rest of the folder
+    try:
+        mtime = os.path.getmtime(fpath)
+        # Use Gio to determine the URI and mime type
+        f = Gio.file_new_for_path(str(fpath))
+        uri = f.get_uri()
+        info = f.query_info("standard::content-type", Gio.FileQueryInfoFlags.NONE, None)
+        mime_type = info.get_content_type()
 
-    if factory.lookup(uri, mtime) is not None:
-        logger.debug("FRESH       {}".format(uri))
+        if factory.lookup(uri, mtime) is not None:
+            logger.debug("FRESH       {}".format(uri))
+            return False
+
+        if not factory.can_thumbnail(uri, mime_type, mtime):
+            logger.debug("UNSUPPORTED {}".format(uri))
+            return False
+
+        thumbnail = factory.generate_thumbnail(uri, mime_type)
+        if thumbnail is None:
+            logger.debug("ERROR       {}".format(uri))
+            return False
+
+        logger.debug("OK          {}".format(uri))
+        factory.save_thumbnail(thumbnail, uri, mtime)
+        return True
+    except Exception as e:
+        logger.debug("ERROR       {} ({})".format(fpath, e))
         return False
 
-    if not factory.can_thumbnail(uri, mime_type, mtime):
-        logger.debug("UNSUPPORTED {}".format(uri))
-        return False
 
-    thumbnail = factory.generate_thumbnail(uri, mime_type)
-    if thumbnail is None:
-        logger.debug("ERROR       {}".format(uri))
-        return False
-
-    logger.debug("OK          {}".format(uri))
-    factory.save_thumbnail(thumbnail, uri, mtime)
-    return True
-
-
-@logger.catch()
+# reraise: a folder that is missing must end the run with a failure, so the caller's magick fallback runs
+@logger.catch(reraise=True)
 def thumbnail_folder(*, dir_path: Path, workers: int, only_images: bool, recursive: bool, machine_progress: bool = False) -> None:
     all_files = get_all_files(dir_path=dir_path, recursive=recursive)
     if only_images:
@@ -99,7 +105,7 @@ def get_all_files(*, dir_path: Path, recursive: bool) -> List[Path]:
 
 @click.command()
 @click.option(
-    "-d", "--img_dirs", required=True, help='directories to generate thumbnails seperated by space, eg: "dir1/dir2 dir3"'
+    "-d", "--img_dirs", required=True, multiple=True, help="a directory to generate thumbnails for; give -d once per directory"
 )
 @click.option(
     "-s", "--size", default="normal", type=click.Choice(["normal", "large", "x-large", "xx-large"]), help="Thumbnail size: normal, large, x-large, xx-large"
@@ -110,8 +116,8 @@ def get_all_files(*, dir_path: Path, recursive: bool) -> List[Path]:
 )
 @click.option("-r", "--recursive", is_flag=True, default=False, help="Whether to recursively look for files")
 @click.option("--machine_progress", is_flag=True, default=False, help="Print machine-readable progress lines instead of a progress bar")
-def main(img_dirs: str, size: str, workers: str, only_images: bool, recursive: bool, machine_progress: bool) -> None:
-    img_dirs = [Path(img_dir) for img_dir in img_dirs.split()]
+def main(img_dirs: Tuple[str, ...], size: str, workers: str, only_images: bool, recursive: bool, machine_progress: bool) -> None:
+    img_dirs = [Path(img_dir) for img_dir in img_dirs]
     global factory
     factory = GnomeDesktop.DesktopThumbnailFactory.new(thumbnail_size_map[size])
     for img_dir in img_dirs:

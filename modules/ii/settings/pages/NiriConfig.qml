@@ -219,7 +219,7 @@ rm -f "$tmp"`]
                         icon: "swap_horiz"
                         text: Translation.tr("Position X")
                         value: monitorConfig.monitors[monitorCanvas.selectedIndex]?.x ?? 0
-                        from: 0; to: 7680; stepSize: 1
+                        from: -16384; to: 16384; stepSize: 1
                         onValueChanged: {
                             if (value === (monitorConfig.monitors[monitorCanvas.selectedIndex]?.x ?? 0)) return
                             monitorConfig.updateMonitor(monitorCanvas.selectedIndex, { x: value })
@@ -231,7 +231,7 @@ rm -f "$tmp"`]
                         icon: "swap_vert"
                         text: Translation.tr("Position Y")
                         value: monitorConfig.monitors[monitorCanvas.selectedIndex]?.y ?? 0
-                        from: 0; to: 4320; stepSize: 1
+                        from: -16384; to: 16384; stepSize: 1
                         onValueChanged: {
                             if (value === (monitorConfig.monitors[monitorCanvas.selectedIndex]?.y ?? 0)) return
                             monitorConfig.updateMonitor(monitorCanvas.selectedIndex, { y: value })
@@ -307,15 +307,11 @@ rm -f "$tmp"`]
                         text: Translation.tr("Keyboard layout")
                         placeholderText: Translation.tr("e.g., us, es, latam")
                         Component.onCompleted: value = NiriConfig.options.input.kbLayout
-                        onValueChanged: kbLayoutDebounceTimer.restart()
-
-                        Timer {
-                            id: kbLayoutDebounceTimer
-                            interval: 1000
-                            repeat: false
-                            onTriggered: {
-                                NiriConfig.options.input.kbLayout = kbLayoutField.value
-                            }
+                        // applied on Enter or the check, not while typing: half a layout is not one
+                        confirmButtonVisible: value.trim().length > 0 && value.trim() !== NiriConfig.options.input.kbLayout
+                        onConfirmClicked: {
+                            if (!confirmButtonVisible) return   // Enter with nothing new, or nothing at all
+                            NiriConfig.options.input.kbLayout = value.trim()
                         }
                     }
 

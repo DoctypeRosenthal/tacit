@@ -9,7 +9,8 @@ import qs.modules.common.widgets
 
 /**
  * The third column: what the selection is, and what can be done with it. A picture shows
- * itself; anything else shows its glyph. Under it: the name, the facts (kind, size, when,
+ * itself, a song its cover, a video a frame and a PDF its first page; anything else shows its
+ * glyph. A text, code or other plain file shows its first lines. Under it: the name, the facts (kind, size, when,
  * where it came from, path), then the actions - the same list the right-click gives, laid
  * out as rows. With nothing selected it describes the folder. Opens on its own when the
  * window is wide enough to afford it; Space toggles it otherwise.
@@ -37,8 +38,9 @@ Item {
     signal open()
     signal more(Item at)
     readonly property string kind: preview.hasFile && preview.many === 0 ? preview.thing.kind : ""
-    readonly property bool looks: preview.kind === "image" || preview.kind === "audio" || preview.kind === "video"
-    readonly property bool reads: preview.kind === "text" || preview.kind === "code"
+    // a PDF's first page comes from the probe too; any file with no known kind shows its first lines, unless it holds binary
+    readonly property bool looks: preview.kind === "image" || preview.kind === "audio" || preview.kind === "video" || preview.kind === "pdf"
+    readonly property bool reads: preview.kind === "text" || preview.kind === "code" || preview.kind === "file"
     readonly property var facts: preview.probed[preview.path] ?? null
     property var probed: ({})
     property string headPath: ""
@@ -49,6 +51,7 @@ Item {
             return;
         if (preview.looks && preview.probed[preview.path] === undefined && !probe.running) {
             probe.target = preview.path;
+            probe.pdf = preview.kind === "pdf";
             probe.running = true;
         }
         if (preview.reads && preview.headPath !== preview.path && !headProc.running) {
@@ -62,11 +65,14 @@ Item {
     Process {
         id: probe
         property string target: ""
-        command: ["nice", "-n", "10", "python3", preview.probeScript, "facts", probe.target]
+        property bool pdf: false
+        command: ["nice", "-n", "10", "python3", preview.probeScript, probe.pdf ? "pages" : "facts", probe.target].concat(probe.pdf ? ["1"] : [])
         stdout: StdioCollector {
             onStreamFinished: {
                 let r = null;
                 try { r = JSON.parse(text); } catch (e) {}
+                if (r && r.pages)
+                    r = { "thumb": r.pages[0] ?? "" };
                 preview.probed = Object.assign({}, preview.probed, { [probe.target]: r ?? {} });
             }
         }
@@ -79,7 +85,9 @@ Item {
         stdout: StdioCollector {
             onStreamFinished: {
                 preview.headPath = headProc.target;
-                preview.head = text.indexOf("\u0000") >= 0 ? [] : text.replace(/\r/g, "").replace(/\t/g, "    ").split("\n");
+                // binary (a NUL, or text that does not decode) shows nothing rather than noise
+                const bad = text.indexOf("\u0000") >= 0 || (text.match(/\uFFFD/g) ?? []).length > text.length / 20 + 1;
+                preview.head = bad ? [] : text.replace(/\r/g, "").replace(/\t/g, "    ").split("\n");
             }
         }
         onExited: preview.ask()
@@ -98,10 +106,11 @@ Item {
                        "November", "December"][Number(m[2]) - 1] ?? "";
         return `${Number(m[3])} ${month} ${m[1]} at ${m[4]}:${m[5]}`;
     }
-    // the look: a picture itself, a song's cover, a video's poster
+    // the look: a picture itself, a song's cover, a video's poster, a PDF's first page (percent-encoded: a name may hold
+    // a # or %)
     readonly property string lookSource: preview.many > 0 || !preview.showLook ? ""
-        : preview.kind === "image" ? "file://" + preview.path
-        : (preview.kind === "audio" || preview.kind === "video") && (preview.facts?.thumb ?? "").length > 0 ? "file://" + preview.facts.thumb : ""
+        : preview.kind === "image" ? FileUtils.fileUrl(preview.path)
+        : preview.looks && (preview.facts?.thumb ?? "").length > 0 ? FileUtils.fileUrl(preview.facts.thumb) : ""
     property bool showLook: true          // the Gallery shows the picture itself: here only what it is
     readonly property var thing: Things.describe(preview.hasFile ? preview.path + (preview.isDir ? "/" : "") : preview.folder + "/")
     readonly property bool picture: preview.lookSource.length > 0
@@ -284,7 +293,7 @@ Item {
                 Fact { label: "Where"; value: (preview.many > 0 ? preview.folder.replace(Files.home, "~") : preview.hasFile ? preview.path.replace(Files.home, "~") : preview.folder.replace(Files.home, "~")).replace(/\//g, "/\u200b") }
             }
 
-            // a text or code file: its first lines, as the docked panel showed them
+            // a text, code or plain file: its first lines
             Rectangle {
                 width: parent.width
                 visible: preview.reads && preview.headPath === preview.path && preview.head.length > 0

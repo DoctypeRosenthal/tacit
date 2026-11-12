@@ -63,6 +63,7 @@ Rectangle {
     }
     Shortcut { sequences: ["Ctrl+Return", "Ctrl+Enter"]; enabled: card.keyed; onActivated: card.next() }
     Shortcut { sequence: "Ctrl+Shift+Backspace"; enabled: card.keyed; onActivated: { card.sent = true; card.skipped(); } }
+    Shortcut { sequence: "Alt+Left"; enabled: card.keyed && card.shown > 0; onActivated: card.step = card.shown - 1 }
 
     function toggle(q, label, multi) {
         const p = Object.assign({}, card.picked);

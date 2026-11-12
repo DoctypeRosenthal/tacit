@@ -23,7 +23,8 @@ NestableObject {
         root.rawData = apiOutputData
 
         // Raw blocks
-        var pages = apiOutputData.responses[0].fullTextAnnotation.pages
+        // a screen with no text comes back as responses: [{}], with no annotation at all
+        var pages = apiOutputData.responses?.[0]?.fullTextAnnotation?.pages ?? []
         var blocks = [];
         for (var i = 0; i < pages.length; i++) {
             // print("this page", JSON.stringify(pages[i]))
@@ -69,13 +70,14 @@ NestableObject {
                     // print("CHAR:", JSON.stringify(sym, null, 2));
                     // Breaks
                     // Reference: https://docs.cloud.google.com/vision/docs/reference/rpc/google.cloud.vision.v1#breaktype
-                    if (sym.property?.detectedBreak.type == "SPACE" || sym.property?.detectedBreak.type == "UNKNOWN") {
+                    const breakType = sym.property?.detectedBreak?.type;
+                    if (breakType == "SPACE" || breakType == "UNKNOWN") {
                         strList.push(" ");
-                    } else if (sym.property?.detectedBreak.type == "SURE_SPACE") {
+                    } else if (breakType == "SURE_SPACE") {
                         strList.push("　");
-                    } else if (sym.property?.detectedBreak.type == "EOL_SURE_SPACE" || sym.property?.detectedBreak.type == "LINE_BREAK") {
+                    } else if (breakType == "EOL_SURE_SPACE" || breakType == "LINE_BREAK") {
                         strList.push("\n");
-                    } else if (sym.property?.detectedBreak.type == "HYPHEN") {
+                    } else if (breakType == "HYPHEN") {
                         strList.push("-\n");
                     }
                 }

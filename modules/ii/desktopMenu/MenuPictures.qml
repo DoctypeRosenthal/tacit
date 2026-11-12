@@ -7,7 +7,7 @@ import QtQuick.Effects
 // The menu's picture row, drawn as the wallpaper strip draws its cards (WallpaperStrip.qml): radius
 // normal, the pointed one lifted with a primary ring, the wallpaper in use with the check dot.
 // The first entry of `model` is the wallpaper in use. The card under the pointer opens wide (the
-// old carousel's pop); the wheel and a drag scroll the row. A click emits `picked`.
+// old carousel's pop); the wheel and a drag scroll the row. A click emits `picked` with the card's path and place.
 Item {
     id: root
     property var model: []
@@ -16,7 +16,7 @@ Item {
     property real cardH: 62
     property int hovered: -1
     readonly property int pointed: root.hovered >= 0 ? root.hovered : 0
-    signal picked(string path)
+    signal picked(string path, int index)
 
     implicitHeight: root.cardH + 8
 
@@ -109,7 +109,7 @@ Item {
                 cursorShape: Qt.PointingHandCursor
                 onEntered: root.hovered = cell.index
                 onExited: if (root.hovered === cell.index) root.hovered = -1
-                onClicked: root.picked(cell.modelData)
+                onClicked: root.picked(cell.modelData, cell.index)
             }
         }
     }

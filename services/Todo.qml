@@ -14,19 +14,23 @@ Singleton {
     id: root
     property var filePath: Directories.todoPath
     property var list: []
-    // A file that did not parse still holds the items: it is never written over, or the first
-    // task added after a crash mid-write would replace the whole list with itself.
+    // A file that did not parse or could not be read still holds the items: it is never written
+    // over, or the first task added after a crash mid-write would replace the whole list with itself.
     property bool broken: false
 
     function save() {
         if (root.broken) {
-            console.log("[To Do] Not saving: " + root.filePath + " did not parse")
+            console.log("[To Do] Not saving: " + root.filePath + " could not be read")
             return
         }
         todoFileView.setText(JSON.stringify(root.list))
     }
     
+    // While the file cannot be read the list stays what it is (empty) and nothing is changed: a task added then showed
+    // in the list and was never written. The tabs that edit it say so (Todo.broken).
     function addItem(item) {
+        if (root.broken)
+            return
         list.push(item)
         // Reassign to trigger onListChanged
         root.list = list.slice(0)
@@ -42,7 +46,7 @@ Singleton {
     }
 
     function markDone(index) {
-        if (index >= 0 && index < list.length) {
+        if (!root.broken && index >= 0 && index < list.length) {
             list[index].done = true
             // Reassign to trigger onListChanged
             root.list = list.slice(0)
@@ -51,7 +55,7 @@ Singleton {
     }
 
     function markUnfinished(index) {
-        if (index >= 0 && index < list.length) {
+        if (!root.broken && index >= 0 && index < list.length) {
             list[index].done = false
             // Reassign to trigger onListChanged
             root.list = list.slice(0)
@@ -60,7 +64,7 @@ Singleton {
     }
 
     function deleteItem(index) {
-        if (index >= 0 && index < list.length) {
+        if (!root.broken && index >= 0 && index < list.length) {
             list.splice(index, 1)
             // Reassign to trigger onListChanged
             root.list = list.slice(0)
@@ -102,7 +106,8 @@ Singleton {
                 root.list = []
                 todoFileView.setText(JSON.stringify(root.list))
             } else {
-                console.log("[To Do] Error loading file: " + error)
+                root.broken = true
+                console.log("[To Do] Error loading file, keeping the items in memory: " + error)
             }
         }
     }

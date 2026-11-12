@@ -148,20 +148,28 @@ Scope {
             implicitWidth: Config.options.sidebar.cornerOpen.cornerRegionWidth
             implicitHeight: Config.options.sidebar.cornerOpen.cornerRegionHeight
             hoverEnabled: true
+            // The corner actions toggle, so a hover fires once per visit: entering and then moving along
+            // the edge strip would otherwise open the surface and shut it again.
+            property bool clicklessFired: false
             onPositionChanged: {
-                if (area.cornerItem.isBottom) return;
+                if (area.cornerItem.isBottom || mouseArea.clicklessFired) return;
                 if (!Config.options.sidebar.cornerOpen.clicklessCornerEnd || !Config.options.sidebar.cornerOpen.clickless) return;
                 const verticalOffset = Config.options.sidebar.cornerOpen.clicklessCornerVerticalOffset;
                 const correctX = (area.cornerItem.isRight && mouseArea.mouseX >= mouseArea.width - 2) || (area.cornerItem.isLeft && mouseArea.mouseX <= 2);
                 const correctY = (area.cornerItem.isTop && mouseArea.mouseY > verticalOffset || area.cornerItem.isBottom && mouseArea.mouseY < mouseArea.height - verticalOffset);
-                if (correctX && correctY)
+                if (correctX && correctY) {
+                    mouseArea.clicklessFired = true;
                     screenCorners.actionForCorner[area.cornerItem.corner]();
+                }
             }
             onEntered: {
-                if (area.cornerItem.isBottom) return;
-                if (Config.options.sidebar.cornerOpen.clickless)
+                if (area.cornerItem.isBottom || mouseArea.clicklessFired) return;
+                if (Config.options.sidebar.cornerOpen.clickless) {
+                    mouseArea.clicklessFired = true;
                     screenCorners.actionForCorner[area.cornerItem.corner]();
+                }
             }
+            onExited: mouseArea.clicklessFired = false
             onPressed: {
                 screenCorners.actionForCorner[area.cornerItem.corner]();
             }
@@ -209,12 +217,12 @@ Scope {
             property HyprlandMonitor monitor: Hyprland.monitorFor(modelData)
 
             // Hide when fullscreen
-            property list<HyprlandWorkspace> workspacesForMonitor: Hyprland.workspaces.values.filter(workspace => workspace.monitor && workspace.monitor.name == monitor.name)
+            property list<HyprlandWorkspace> workspacesForMonitor: Hyprland.workspaces.values.filter(workspace => workspace.monitor && workspace.monitor.name == (monitor?.name ?? modelData.name))
             property var activeWorkspaceWithFullscreen: workspacesForMonitor.filter(workspace => ((workspace.toplevels.values.filter(window => window.wayland?.fullscreen)[0] != undefined) && workspace.active))[0]
             property bool fullscreen: activeWorkspaceWithFullscreen != undefined
             // A special workspace open on top of the fullscreen window should bring corners back,
             // same reasoning as the bar's layer fix: fullscreen only buries them when nothing else is above it.
-            property var thisMonitorData: HyprlandData.monitors.find(m => m.name === monitor.name)
+            property var thisMonitorData: HyprlandData.monitors.find(m => m.name === (monitor?.name ?? modelData.name))
             property bool specialOpen: (thisMonitorData?.specialWorkspace?.name ?? "") !== ""
 
             CornerStrip {

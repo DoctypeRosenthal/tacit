@@ -20,6 +20,14 @@ Scope {
         printErrors: false
     }
 
+    // logind goes on after 5 s whatever the locks say, so a dusk still up after this was never followed by
+    // a power off (it was cancelled): give the screen and the keyboard back
+    Timer {
+        running: root.playing
+        interval: 8000
+        onTriggered: root.playing = false
+    }
+
     IpcHandler {
         target: "dusk"
         // returns at once; the caller waits the dusk's length

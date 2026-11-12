@@ -305,8 +305,8 @@ Item {
                             visible: chip.thumb
                             anchors { right: parent.right; top: parent.top; margins: 3 }
                             width: 16; height: 16; radius: 8
-                            color: ColorUtils.transparentize("black", 0.4)
-                            MaterialSymbol { anchors.centerIn: parent; text: "close"; iconSize: 12; color: "white" }
+                            color: ColorUtils.transparentize(Appearance.m3colors.m3shadow, 0.4)
+                            MaterialSymbol { anchors.centerIn: parent; text: "close"; iconSize: 12; color: Tacit.inkMain }
                         }
                         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: Claude.removeChip(chip.index) }
                         StyledToolTip { text: "Leave this out"; extraVisibleCondition: chipArea.hovered }

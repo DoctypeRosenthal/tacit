@@ -59,7 +59,7 @@ ProgressBar {
                     function onHighlightColorChanged() { wavyFill.requestPaint(); }
                 }
                 FrameAnimation {
-                    running: root.animateWave
+                    running: root.animateWave && root.visible
                     onTriggered: {
                         wavyFill.requestPaint()
                     }

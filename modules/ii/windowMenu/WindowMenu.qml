@@ -30,7 +30,7 @@ Scope {
             readonly property string dockAppId: WindowBand.dockId(appId)
             readonly property string name: WindowBand.nameFor(win?.class ?? appId)
             readonly property bool filled: (win?.fullscreen ?? 0) === 1
-            readonly property color light: Qt.rgba(1, 226 / 255, 200 / 255, 1)
+            readonly property color light: Tacit.accent
             // the place pointed at: close, hide, left, right, fill or none
             property string place: ""
             // opened by a right press the plugin keeps: its release comes as menuup, and picks if the hand moved
@@ -54,11 +54,11 @@ Scope {
             // the place on the real screen: the notch says it, and for a hide the dock rises with the button that takes it
             onPlaceChanged: {
                 const words = {
-                    "close": `Close ${menuWindow.name}`,
-                    "hide": `Hide ${menuWindow.name}`,
-                    "left": `${menuWindow.name} on the left`,
-                    "right": `${menuWindow.name} on the right`,
-                    "fill": menuWindow.filled ? `${menuWindow.name} back to its size` : `${menuWindow.name} fills the screen`
+                    "close": Translation.tr("Close %1").arg(menuWindow.name),
+                    "hide": Translation.tr("Hide %1").arg(menuWindow.name),
+                    "left": Translation.tr("%1 on the left").arg(menuWindow.name),
+                    "right": Translation.tr("%1 on the right").arg(menuWindow.name),
+                    "fill": menuWindow.filled ? Translation.tr("%1 back to its size").arg(menuWindow.name) : Translation.tr("%1 fills the screen").arg(menuWindow.name)
                 }[menuWindow.place];
                 const icon = { "close": "close", "hide": "minimize", "left": "splitscreen_left", "right": "splitscreen_right", "fill": "fullscreen" }[menuWindow.place];
                 if (words)
@@ -211,7 +211,7 @@ Scope {
                     height: 145
                     radius: 10
                     clip: true
-                    color: "#1a1412"
+                    color: Tacit.ground
 
                     Image {
                         anchors.fill: parent
@@ -229,14 +229,14 @@ Scope {
                     }
                     Rectangle {
                         anchors.fill: parent
-                        color: Qt.rgba(11 / 255, 6 / 255, 5 / 255, 0.3)
+                        color: ColorUtils.transparentize(Appearance.m3colors.m3scrim, 0.7)
                     }
                     Rectangle {
                         anchors.fill: parent
                         radius: parent.radius
                         color: "transparent"
                         border.width: 1
-                        border.color: Qt.rgba(232 / 255, 225 / 255, 223 / 255, 0.16)
+                        border.color: Tacit.hairline
                     }
 
                     // the place pointed at glows from its side of the card
@@ -247,15 +247,15 @@ Scope {
                             orientation: menuWindow.place === "left" || menuWindow.place === "right" ? Gradient.Horizontal : Gradient.Vertical
                             GradientStop {
                                 position: 0
-                                color: menuWindow.place === "close" || menuWindow.place === "left" ? Qt.rgba(1, 226 / 255, 200 / 255, 0.16) : "transparent"
+                                color: menuWindow.place === "close" || menuWindow.place === "left" ? ColorUtils.transparentize(menuWindow.light, 0.84) : "transparent"
                             }
                             GradientStop {
                                 position: 0.5
-                                color: menuWindow.place === "fill" ? Qt.rgba(1, 226 / 255, 200 / 255, 0.1) : "transparent"
+                                color: menuWindow.place === "fill" ? ColorUtils.transparentize(menuWindow.light, 0.9) : "transparent"
                             }
                             GradientStop {
                                 position: 1
-                                color: menuWindow.place === "hide" || menuWindow.place === "right" ? Qt.rgba(1, 226 / 255, 200 / 255, 0.16) : "transparent"
+                                color: menuWindow.place === "hide" || menuWindow.place === "right" ? ColorUtils.transparentize(menuWindow.light, 0.84) : "transparent"
                             }
                         }
                         Behavior on opacity {
@@ -274,7 +274,7 @@ Scope {
                         Behavior on width {
                             animation: Appearance.animation.elementMoveFast.numberAnimation.createObject(this)
                         }
-                        color: on ? menuWindow.light : Qt.rgba(30 / 255, 27 / 255, 26 / 255, 0.85)
+                        color: on ? menuWindow.light : ColorUtils.transparentize(Appearance.m3colors.m3scrim, 0.15)
                         Behavior on color {
                             animation: Appearance.animation.elementMoveFast.colorAnimation.createObject(this)
                         }
@@ -290,7 +290,7 @@ Scope {
                         Behavior on height {
                             animation: Appearance.animation.elementMoveFast.numberAnimation.createObject(this)
                         }
-                        color: on ? menuWindow.light : Qt.rgba(30 / 255, 27 / 255, 26 / 255, 0.85)
+                        color: on ? menuWindow.light : ColorUtils.transparentize(Appearance.m3colors.m3scrim, 0.15)
                         Behavior on color {
                             animation: Appearance.animation.elementMoveFast.colorAnimation.createObject(this)
                         }
@@ -302,7 +302,7 @@ Scope {
                         width: on ? 6 : 4
                         height: parent.height - 52
                         radius: 2
-                        color: on ? menuWindow.light : Qt.rgba(1, 226 / 255, 200 / 255, 0.35)
+                        color: on ? menuWindow.light : ColorUtils.transparentize(menuWindow.light, 0.65)
                         Behavior on color {
                             animation: Appearance.animation.elementMoveFast.colorAnimation.createObject(this)
                         }
@@ -314,7 +314,7 @@ Scope {
                         width: on ? 6 : 4
                         height: parent.height - 52
                         radius: 2
-                        color: on ? menuWindow.light : Qt.rgba(1, 226 / 255, 200 / 255, 0.35)
+                        color: on ? menuWindow.light : ColorUtils.transparentize(menuWindow.light, 0.65)
                         Behavior on color {
                             animation: Appearance.animation.elementMoveFast.colorAnimation.createObject(this)
                         }
@@ -329,7 +329,7 @@ Scope {
                         width: mini.width - 2 * x
                         height: big ? mini.height - 34 : mini.height * 0.42
                         radius: 5
-                        color: Qt.rgba(29 / 255, 26 / 255, 25 / 255, 0.9)
+                        color: ColorUtils.transparentize(Tacit.ground, 0.1)
                         border.width: 1.5
                         border.color: menuWindow.light
                         opacity: on ? 1 : 0
@@ -351,7 +351,7 @@ Scope {
                             width: 14
                             height: 2
                             radius: 1
-                            color: Qt.rgba(223 / 255, 192 / 255, 178 / 255, 0.8)
+                            color: Tacit.inkMeta
                         }
                     }
                 }

@@ -111,7 +111,12 @@ Singleton {
                     fetchLayoutsProc.running = true;
 
                 const dataString = event.data;
-                root.currentLayoutName = dataString.substring(dataString.indexOf(",") + 1);
+                const layoutName = dataString.substring(dataString.indexOf(",") + 1);
+                // A virtual keyboard (wtype, when Flow types) has no layout name: Hyprland says "error", then the
+                // real layout comes back. Neither the indicator nor the on-screen keyboard's setting follows it.
+                if (layoutName.length === 0 || layoutName.toLowerCase() === "error")
+                    return;
+                root.currentLayoutName = layoutName;
 
                 // The on-screen keyboard looks this value up by full name in layouts.js
                 // ("English (US)", "German", "Russian"), so the trimmed "English" matched nothing

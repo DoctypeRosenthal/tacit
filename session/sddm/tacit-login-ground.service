@@ -1,0 +1,9 @@
+[Unit]
+Description=Tacit: the login screen's ground and colours, from the person signing out
+# The same copy sddm.service makes before the first greeter (sddm.service.d/tacit-login.conf). SDDM keeps its service
+# running when it brings the greeter back after a log out, so that copy never saw a wallpaper chosen since the start;
+# the shell starts this one as the person logs out (Session.logout, allowed by 50-tacit-login-ground.rules).
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/tacit/tacit-login-ground

@@ -36,7 +36,10 @@ Singleton {
     function parse(text) {
         const out = [];
         const tags = text.match(/<bookmark\s[^>]*>/g) ?? [];
-        const attr = (tag, name) => (new RegExp(`\\s${name}="([^"]*)"`).exec(tag) ?? [])[1] ?? "";
+        // Attribute values are XML-escaped; & and ' are not percent-encoded in a path, so they arrive as entities.
+        const entities = { "lt": "<", "gt": ">", "quot": "\"", "apos": "'", "amp": "&" };
+        const decodeEntities = (v) => v.replace(/&(lt|gt|quot|apos|amp);/g, (m, name) => entities[name]);
+        const attr = (tag, name) => decodeEntities((new RegExp(`\\s${name}="([^"]*)"`).exec(tag) ?? [])[1] ?? "");
         for (const tag of tags) {
             const href = attr(tag, "href");
             if (!href.startsWith("file://"))

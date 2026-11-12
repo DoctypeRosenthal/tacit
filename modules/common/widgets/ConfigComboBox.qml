@@ -60,8 +60,11 @@ RowLayout {
 
         currentIndex: {
             const index = root.model.findIndex(item => item.value === root.currentValue);
-            return index !== -1 ? index : 0;
+            return index;
         }
+        // A value the list does not know (hand-edited, from a newer version) is shown as it is,
+        // not as the first option; nothing is chosen until the person picks one.
+        displayText: comboBox.currentIndex >= 0 ? comboBox.currentText : String(root.currentValue ?? "")
 
         onActivated: index => {
             root.selected(comboBox.model[index].value);

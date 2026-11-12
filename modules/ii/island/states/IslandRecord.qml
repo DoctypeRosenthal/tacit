@@ -181,7 +181,7 @@ Item {
                 border.color: ColorUtils.transparentize(Tacit.inkMain, 0.92)
                 Image {
                     anchors.fill: parent
-                    source: Persistent.states.record.thumb !== "" ? "file://" + Persistent.states.record.thumb : ""
+                    source: Persistent.states.record.thumb !== "" ? FileUtils.fileUrl(Persistent.states.record.thumb) : ""
                     fillMode: Image.PreserveAspectCrop
                     horizontalAlignment: Image.AlignLeft
                     verticalAlignment: Image.AlignTop
@@ -195,7 +195,7 @@ Item {
                 anchors.bottomMargin: 5
                 text: "movie"
                 iconSize: 16
-                color: "white"
+                color: Tacit.inkMain
             }
             // a click plays it; a drag hands the file to a window (the shelf tile's way, IslandShelf.qml)
             MouseArea {
@@ -221,7 +221,7 @@ Item {
                         return;
                     if (stillArea.drag.active) {
                         root.acted();
-                        root.dragProxy.Drag.mimeData = { "text/uri-list": "file://" + root.file };
+                        root.dragProxy.Drag.mimeData = { "text/uri-list": FileUtils.fileUrl(root.file) };
                         root.dragProxy.Drag.active = true;
                     } else {
                         root.dragProxy.Drag.active = false;

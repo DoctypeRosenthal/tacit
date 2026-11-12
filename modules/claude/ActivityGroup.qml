@@ -73,21 +73,26 @@ Item {
                 width: col.width
 
                 Item {
+                    id: lineRow
                     width: parent.width
                     height: 32
                     HoverHandler { id: hov }
+                    activeFocusOnTab: true
+                    Keys.onReturnPressed: group.toggle(lineCol.modelData.key)
+                    Keys.onEnterPressed: group.toggle(lineCol.modelData.key)
+                    Keys.onSpacePressed: group.toggle(lineCol.modelData.key)
                     Rectangle {
                         anchors { fill: parent; leftMargin: -6; rightMargin: -6 }
                         radius: Appearance.rounding.small
-                        color: hov.hovered ? ColorUtils.transparentize(Appearance.m3colors.m3onSurface, 0.95) : "transparent"
+                        color: hov.hovered || lineRow.activeFocus ? ColorUtils.transparentize(Appearance.m3colors.m3onSurface, 0.95) : "transparent"
                     }
                     MaterialSymbol {
                         id: mark
                         anchors { left: parent.left; verticalCenter: parent.verticalCenter }
                         visible: !lineCol.live
-                        text: hov.hovered || lineCol.open ? (lineCol.open ? "expand_more" : "chevron_right") : (lineCol.modelData.error ? "error" : Words.glyph(lineCol.modelData.k))
+                        text: hov.hovered || lineRow.activeFocus || lineCol.open ? (lineCol.open ? "expand_more" : "chevron_right") : (lineCol.modelData.error ? "error" : Words.glyph(lineCol.modelData.k))
                         iconSize: 17
-                        color: lineCol.modelData.error && !hov.hovered ? Appearance.colors.colClay : Appearance.colors.colInkSecondary
+                        color: lineCol.modelData.error && !hov.hovered && !lineRow.activeFocus ? Appearance.colors.colClay : Appearance.colors.colInkSecondary
                     }
                     LiveDot { anchors.centerIn: mark; visible: lineCol.live }
                     StyledText {

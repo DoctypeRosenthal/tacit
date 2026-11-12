@@ -74,7 +74,7 @@ Scope {
             implicitHeight: root.focusedScreen?.height ?? 0
 
             // The eight actions, in reading order. The first four are the big row. `busy` is the
-            // word the screen waits under, and only the twoPress four carry one: they are the
+            // word the screen waits under, and only the twoPress five carry one: they are the
             // ones that stay on screen after the press.
             readonly property var actions: [
                 { "icon": "power_settings_new", "label": Translation.tr("Shut down"), "busy": Translation.tr("Shutting down"), "run": () => Session.poweroff() },
@@ -83,13 +83,13 @@ Scope {
                 { "icon": "lock", "label": Translation.tr("Lock"), "run": () => Session.lock() },
                 { "icon": "logout", "label": Translation.tr("Log out"), "busy": Translation.tr("Logging out"), "run": () => Session.logout() },
                 { "icon": "downloading", "label": Translation.tr("Hibernate"), "busy": Translation.tr("Hibernating"), "run": () => Session.hibernate() },
-                { "icon": "settings_applications", "label": Translation.tr("Firmware"), "run": () => Session.rebootToFirmware() },
+                { "icon": "settings_applications", "label": Translation.tr("Firmware"), "busy": Translation.tr("Restarting"), "run": () => Session.rebootToFirmware() },
                 { "icon": "browse_activity", "label": Translation.tr("Tasks"), "run": () => Session.launchTaskManager() }
             ]
             property int focusIndex: 3 // Lock: the one that cannot hurt
-            // Shut down, Restart, Log out and Hibernate take every open window with them and
-            // there is no undo: they ask a second time. The other four run on the first press.
-            readonly property var twoPress: [0, 1, 4, 5]
+            // Shut down, Restart, Log out, Hibernate and Firmware (a restart into the firmware's setup) take every open
+            // window with them and there is no undo: they ask a second time. The other three run on the first press.
+            readonly property var twoPress: [0, 1, 4, 5, 6]
             property int armedIndex: -1
             function shown(i) {
                 return i !== 5 || Session.canHibernate;
@@ -135,6 +135,17 @@ Scope {
                 id: disarmTimer
                 interval: 5000
                 onTriggered: sessionRoot.armedIndex = -1
+            }
+            // Opened from the palette's Restart or Shut down: already armed on it, so the palette's Enter asks the same
+            // second question the screen asks, and a second Enter (or a click on "Press again") runs it.
+            Component.onCompleted: {
+                const i = GlobalStates.sessionArm;
+                GlobalStates.sessionArm = -1;
+                if (i >= 0 && sessionRoot.twoPress.includes(i)) {
+                    sessionRoot.focusIndex = i;
+                    sessionRoot.armedIndex = i;
+                    disarmTimer.restart();
+                }
             }
 
             MouseArea {

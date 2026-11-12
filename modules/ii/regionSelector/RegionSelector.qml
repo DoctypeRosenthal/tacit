@@ -119,7 +119,9 @@ Scope {
     }
 
     function recordWithSound() {
-        Persistent.states.record.sound = "system";
+        // while one runs this only stops it: the saved choice is for the next one the person starts
+        if (!IslandController.recording)
+            Persistent.states.record.sound = "system";
         IslandController.openRecord();
     }
 

@@ -93,11 +93,24 @@ Singleton {
         const t = ToplevelManager.activeToplevel;
         return t && t.appId !== Quickshell.appId ? (DesktopEntries.heuristicLookup(t.appId)?.name ?? "") : "";
     }
+    // One pick at a time (pickDone answers the one pick for both windows): a second asker is told at once
+    // that nothing was picked, and the window already waiting on you comes forward.
+    function pickBusy(shell, target) {
+        if (root.picking === null)
+            return false;
+        Quickshell.execDetached(["qs", "-p", shell, "ipc", "call", target, "picked", " [] "]);
+        root.focusRequested();
+        return true;
+    }
     function pick(folder, shell, target, label, dir) {
+        if (root.pickBusy(shell, target))
+            return;
         root.picking = { "shell": shell, "target": target, "label": label, "dir": dir === true, "asker": root.askerNow() };
         root.openNewAt(folder.length ? folder : root.home);
     }
     function save(folder, name, shell, target, label, dir) {
+        if (root.pickBusy(shell, target))
+            return;
         root.picking = { "shell": shell, "target": target, "label": label, "dir": dir === true, "save": true, "name": name, "asker": root.askerNow() };
         root.saveRequested(folder.length ? root.trim(folder) : "");
     }
@@ -247,7 +260,7 @@ Singleton {
         { "name": "Pictures", "path": FileUtils.trimFileProtocol(Directories.pictures), "glyph": "image" },
         { "name": "Music", "path": FileUtils.trimFileProtocol(Directories.music), "glyph": "music_note" },
         { "name": "Videos", "path": FileUtils.trimFileProtocol(Directories.videos), "glyph": "movie" },
-        { "name": "Desktop", "path": root.home + "/Desktop", "glyph": "desktop_windows" }
+        { "name": "Desktop", "path": FileUtils.trimFileProtocol(Directories.desktop), "glyph": "desktop_windows" }
     ]
 
     // The name you gave it; else "Downloads" for the downloads folder, "Home" for home, else the
@@ -362,6 +375,8 @@ Singleton {
         function shelf(): void { root.openShelf(); }
         function pick(folder: string, shell: string, target: string, label: string): void { root.pick(folder, shell, target, label, false); }
         function pickdir(folder: string, shell: string, target: string, label: string): void { root.pick(folder, shell, target, label, true); }
+        // The asker is closing with its pick open: end it, so no Choose is left that answers nobody
+        function cancelpick(target: string): void { if (root.picking?.target === target) root.pickDone([]); }
         function save(folder: string, name: string, shell: string, target: string, label: string): void { root.save(folder, name, shell, target, label, false); }
         function savefolder(folder: string, shell: string, target: string, label: string): void { root.save(folder, "", shell, target, label, true); }
         // The rail's pins and folder names, shared with Praxis (it writes only through these).

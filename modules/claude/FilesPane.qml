@@ -272,7 +272,7 @@ Item {
             text: "Open preview"
             font.pixelSize: 13
             color: htmlArea.containsMouse ? Appearance.colors.colInkMain : Appearance.colors.colInkSecondary
-            MouseArea { id: htmlArea; anchors { fill: parent; margins: -5 } hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: Qt.openUrlExternally("file://" + pane.active) }
+            MouseArea { id: htmlArea; anchors { fill: parent; margins: -5 } hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: Qt.openUrlExternally(FileUtils.fileUrl(pane.active)) }
         }
     }
 

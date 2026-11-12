@@ -1,7 +1,8 @@
 [Unit]
 Description=Bluetooth pairing agent for the Tacit shell
 Documentation=file:%h/book4-edge/btagent/README.md
-# BlueZ is the whole point of the program: with no bluetoothd there is nothing to register with.
+# BlueZ is the whole point of the program, but it does not wait for it: with no bluetoothd the agent stays up and
+# registers when org.bluez appears, again after each restart of bluetoothd.
 After=tacit-session.target
 PartOf=tacit-session.target
 

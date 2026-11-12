@@ -7,12 +7,12 @@
 # its free room, and how small Windows can go. Anywhere else it is a PRACTICE run: it reads the computer and plays the install, but writes to no disk,
 # joins no network and creates no account.
 #
-# TACIT_SETUP_SCENARIO=windows|bitlocker|asleep|full|empty|linux|linuxroom  shows a disk case this computer does not have
+# TACIT_SETUP_SCENARIO=windows|bitlocker|asleep|nouefi|full|empty|linux|linuxroom  shows a disk case this computer does not have
 #                     two                                   two disks: Windows on one, the other empty
 #                     check|unread                          Windows with a disk check waiting, or a partition not read
 # TACIT_SETUP_FAIL=1                                       the practice install stops at 60 %
 # TACIT_SETUP_SECONDS=90                                    how long the practice install takes
-import json, os, re, select, shutil, subprocess, sys, threading, time
+import json, os, re, select, shutil, subprocess, sys, threading, time, traceback
 
 SCENARIO = os.environ.get("TACIT_SETUP_SCENARIO", "")
 # the real install only on Tacit's live system, never with a made-up disk
@@ -51,6 +51,39 @@ LANGUAGES = [("en_GB", "English", "gb"), ("sv_SE", "Svenska", "se"), ("so_SO", "
              ("sw_KE", "Kiswahili", "ke"), ("ti_ER", "ትግርኛ", "et")]
 RTL = {"ar_SA", "fa_IR", "ur_PK", "he_IL"}
 
+def translated(code):
+    """Whether Tacit has its words in this language: a table in translations/ for it, or for another of the same language
+    (Translation.qml reads pt_BR for pt_PT). Setup says so when not; the installed system is then in English."""
+    try:
+        have = [f[:-5] for f in os.listdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "translations")) if f.endswith(".json")]
+    except OSError:
+        return True     # not known: say nothing
+    return any(h == code or h.split("_")[0] == code.split("_")[0] for h in have)
+
+# Layouts that cannot type Latin letters (a Wi-Fi name or password, a URL, a command): Setup puts the US layout before
+# them, with Alt + Shift to switch (tacit-install writes the pair for the installed system too)
+NON_LATIN = {"af", "am", "ara", "bd", "bg", "bt", "by", "eg", "et", "ge", "gr", "il", "in", "iq", "ir", "kg", "kh", "kz", "la",
+             "lk", "ma", "mk", "mm", "mn", "mv", "my", "np", "pk", "rs", "ru", "sy", "th", "tj", "ua", "uz"}
+
+def live_keyboard():
+    """The layout the live session types with now (Hyprland's main keyboard, as Settings reads it), else the one
+    /etc/vconsole.conf names, else US. Setup starts on it: the first language's own layout (UK) took the keys of a US
+    keyboard away as Setup opened."""
+    code = ""
+    try:
+        keyboards = json.loads(run("hyprctl", "devices", "-j")).get("keyboards", [])
+        code = (next((k for k in keyboards if k.get("main")), None) or keyboards[0]).get("layout", "")
+    except (ValueError, IndexError, AttributeError):
+        pass
+    if not code:
+        try:
+            m = re.search(r"^XKBLAYOUT=[\"']?([^\"'\s]*)", open("/etc/vconsole.conf").read(), re.M)
+            code = m.group(1) if m else ""
+        except OSError:
+            pass
+    first = code.split(",")[0]
+    return first if re.fullmatch(r"[a-z]{2,8}", first) else "us"
+
 def layouts():
     out, on = [], False
     try:
@@ -79,7 +112,13 @@ def wifi():
         n = {"ssid": ssid, "signal": int(p[2] or 0), "secure": p[3] not in ("", "--"), "inUse": p[0] == "*"}
         if ssid not in nets or n["signal"] > nets[ssid]["signal"]:
             nets[ssid] = n
-    return sorted(nets.values(), key=lambda n: (not n["inUse"], -n["signal"]))[:8]
+    return sorted(nets.values(), key=lambda n: (not n["inUse"], -n["signal"]))[:24]
+
+def join_failure(text):
+    """Why nmcli did not join: "password" when it says a key was needed and none fitted (its "Secrets were required, but
+    not provided" after a wrong one), else "network": out of range, no address, a timeout. Setup tells the two apart."""
+    t = text.lower()
+    return "password" if "secrets were required" in t or "password" in t else "network"
 
 # A cable that connects this computer (NetworkManager's ethernet device connected): Setup says so instead of "No
 # networks found", which is all it said on a cable (the VM test, 2026-10-16)
@@ -111,7 +150,7 @@ def gaps(t):
     """The disk's free stretches in sectors, (first, last), starting on a 1 MiB boundary (as tacit-install works them out)."""
     align = max(1, 1024 * 1024 // t["sectorsize"])
     out, at = [], t["firstlba"]
-    for start, size in sorted((p["start"], p["size"]) for p in t["partitions"]) + [(t["lastlba"] + 1, 0)]:
+    for start, size in sorted((p["start"], p["size"]) for p in t.get("partitions", [])) + [(t["lastlba"] + 1, 0)]:
         first = -(-at // align) * align
         if start - 1 >= first:
             out.append((first, start - 1))
@@ -129,8 +168,8 @@ def layout(name, parts):
     gpt = t.get("label") == "gpt"
     # the free room only on GPT, the one table "next to" goes on: an MBR table (an older office PC's) has no first and
     # last usable sector in sfdisk's answer, gaps() failed on it and the whole disk list with it (Reddit, 2026-11-01)
-    out = {"gpt": gpt, "esp": any(p["type"].lower() == ESP for p in t.get("partitions", [])),
-           "free": max([(b - a + 1) * t["sectorsize"] for a, b in gaps(t)] or [0]) if gpt else 0}
+    out = {"gpt": gpt, "esp": any(str(p.get("type", "")).lower() == ESP for p in t.get("partitions", [])),
+           "free": max([(b - a + 1) * t["sectorsize"] for a, b in gaps(t)] or [0]) if gpt and "firstlba" in t else 0}
     # Windows is looked at (how small it can go, whether it shut down fully) only where Tacit could go next to it: a GPT
     # disk with an EFI partition. A drive of games or files gets the quick look; reading every NTFS volume on it took
     # most of the time on a PC with several big drives (Discord 2026-11-01)
@@ -170,9 +209,9 @@ def windows_stopped(info, hib):
     except OSError:
         pass
     low = said.lower()
-    if (hib and hib.stdout.lower() == "hibr") or "hibernat" in low or "journal file is unclean" in low:
+    if (hib and hib.stdout.lower() == "hibr") or re.search(r"hibernat|journal file is unclean|unsafe state|fast restart|windows cache", low):
         return {"why": "asleep"}
-    if "scheduled for check" in low or "chkdsk" in low:
+    if re.search(r"scheduled for check|chkdsk|inconsistent|dirty", low):
         return {"why": "check"}
     lines = [l.strip() for l in said.splitlines() if l.strip() and not l.startswith("ntfsresize v")]
     return {"why": "other", "says": " ".join(lines[-2:])[:240]}
@@ -252,8 +291,9 @@ def describe(best):
     # what Windows uses and the free room need root: a practice run says so rather than guess
     room = layout(disk["name"], parts) if parts else {}
     # Windows is a disk Windows starts from (NTFS and an EFI partition); NTFS alone is a drive of files ("Other files"),
-    # which Setup called Windows ("Instead of Windows") on a PC with a game drive
-    if "ntfs" in fs and room.get("esp"):
+    # which Setup called Windows ("Instead of Windows") on a PC with a game drive. The EFI partition is read from lsblk
+    # too, so a practice run (no sfdisk as root) sees it
+    if "ntfs" in fs and (room.get("esp") or any((p.get("parttype") or "").lower() == ESP for p in parts)):
         return dict(disk, case="asleep", why=room.get("why", "asleep"), says=room.get("says", "")) if room.get("asleep") \
             else dict(disk, case="windows", **{"used": None, **room})
     if any(f in ("ext4", "btrfs", "xfs", "f2fs") for f in fs):
@@ -331,6 +371,25 @@ def no_room(d, pl):
         return "Setup could not read how much of Windows' partition is in use"
     return f"Tacit needs {MIN_TACIT // GB} GB and only {(pl or {}).get('tacitGets', 0) // GB} GB can be made free"
 
+def uefi():
+    """The stick was started through UEFI: tacit-install refuses otherwise (it cannot write the start-up entry), and it said
+    so only after the disk page and the erase page. A practice run is on whatever this computer is."""
+    return not REAL or os.path.isdir("/sys/firmware/efi/efivars")
+
+def no_next(d):
+    """Why "next to" is not offered on this disk, for Setup to say under the choice; "" when it is, or not known (a practice
+    run cannot read the partition table, and a disk of no known layout is not called MBR)."""
+    pl = plan(d)
+    if d.get("case") not in ("windows", "linux", "other") or "gpt" not in d or (pl and pl["room"]):
+        return ""
+    return no_room(d, pl)
+
+def shown_disk(d):
+    """The disk as Setup is told of it: with noNext, and as the case "nouefi" where nothing can be installed."""
+    if d.get("case") != "none" and not uefi():
+        return dict(d, case="nouefi")
+    return dict(d, noNext=no_next(d))
+
 # ------------------------------------------------------------------ power
 def power():
     base = "/sys/class/power_supply"
@@ -352,6 +411,7 @@ def power():
 
 # ------------------------------------------------------------------ the practice install
 install = {"running": False}
+starting = threading.Lock()   # one install request at a time decides whether to start
 
 def practice_install():
     install["running"] = True
@@ -373,14 +433,42 @@ def practice_install():
 # ------------------------------------------------------------------ the real install (tacit-install as root)
 def real_install(disk, place, keep, manual=None):
     install["running"] = True
+    heard = []
+    try:
+        run_installer(disk, place, keep, manual, heard)
+    except Exception:
+        # an installer that could not start or be written to (sudo or python3 missing, its pipe closed at once) is still an
+        # answer to Setup, or the page says "Installing" for good and a second try is ignored; untouched until it has spoken
+        traceback.print_exc(file=open("/tmp/tacit-install.log", "a"))
+        emit({"ev": "install", "state": "failed", "done": 0, "untouched": not heard, "reason": ""})
+    finally:
+        install["running"] = False
+
+def short_reason(reason):
+    """A tool's failure, "<tool> failed: <what it said>", as the tool and the last line of what it said, for one line of the page."""
+    m = re.match(r"(\S+) failed:(.*)", reason, re.S)
+    if not m:
+        return reason
+    last = next((l.strip() for l in reversed(m.group(2).splitlines()) if l.strip()), "")
+    return f"{m.group(1)} failed" + (f": {last[:140]}".rstrip(". ") if last else "")
+
+def run_installer(disk, place, keep, manual, heard):
     t0 = time.time()
     p = subprocess.Popen(["sudo", "-n", "python3", "-I", INSTALLER], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                          stderr=open("/tmp/tacit-install.log", "w"), text=True)   # what it says on the way, for a failure
     install["proc"] = p
-    p.stdin.write(json.dumps(dict({"disk": disk, "place": place, "keep": keep}, **(manual or {}))) + "\n")
-    p.stdin.flush()
+    # the install request cleared the last run's answers and "sent": any answers here are this run's, typed before the
+    # installer was there to take them
+    try:
+        p.stdin.write(json.dumps(dict({"disk": disk, "place": place, "keep": keep}, **(manual or {}))) + "\n")
+        p.stdin.flush()
+        if install.get("answers"):
+            send_answers()
+    except OSError:
+        pass    # it exited at once (sudo refused, python crashed): no output, so the failure below answers Setup
     ended = False
     for line in p.stdout:
+        heard.append(line)
         try:
             m = json.loads(line)
         except ValueError:
@@ -391,15 +479,14 @@ def real_install(disk, place, keep, manual=None):
         ev = {"ev": "install", "state": m["state"], "done": done, "left": left, "other": m.get("other")}
         if m["state"] == "failed":
             # the installer's own reasons are plain words ("the disk is smaller than 32 GB"); a tool's failure ("sgdisk failed:
-            # ...") is plumbing, shown as nothing more than "didn't finish" and kept in /tmp/tacit-install.log
-            reason = m.get("reason", "")
-            ev.update(untouched=m.get("untouched", False), reason="" if re.match(r"\S+ failed:", reason) else reason)
+            # ..." and its last 300 characters) is the tool's name and its last line, which is what a person can say in a
+            # report, with all of it in /tmp/tacit-install.log. It was blanked, and "didn't finish" was all the page said
+            ev.update(untouched=m.get("untouched", False), reason=short_reason(m.get("reason", "")))
         emit(ev)
         ended = m["state"] in ("done", "failed")
     p.wait()
     if not ended:
         emit({"ev": "install", "state": "failed", "done": 0, "untouched": False, "reason": "the installer stopped"})
-    install["running"] = False
 
 def send_answers():
     p = install.get("proc")
@@ -424,10 +511,10 @@ def survey():
         many = all_disks()          # every disk read once (it was read twice: once for the disk, once for the list)
         d = disks(many)
         # the disk list only where there is a choice to make
-        listed = [dict(x, plan=show(x)) for x in many] if len(many) > 1 else []
+        listed = [dict(x, plan=show(x), noNext=no_next(x)) for x in many] if len(many) > 1 else []
         # every partition on every disk inside, for "Choose partitions myself" (with one disk too)
         parts = [dict(p, disk=x["name"], model=x["model"]) for x in many for p in x.get("parts", [])]
-        emit({"ev": "disks", "disks": listed, "disk": d, "plan": show(d), "parts": parts})
+        emit({"ev": "disks", "disks": listed, "disk": shown_disk(d), "plan": show(d), "parts": parts})
     finally:
         surveying.release()
 
@@ -437,8 +524,11 @@ def act(req):
         if REAL and not zone_asked.is_set():
             zone_asked.set()
             threading.Thread(target=find_zone, daemon=True).start()
-        emit({"ev": "hello", "practice": not REAL, "languages": [{"code": c, "name": n, "layout": k, "rtl": c in RTL} for c, n, k in LANGUAGES],
-              "layouts": layouts(), "wifi": wifi(), "wired": wired(), "power": power(), "scenario": SCENARIO})
+        emit({"ev": "hello", "practice": not REAL, "languages": [{"code": c, "name": n, "layout": k, "rtl": c in RTL, "translated": translated(c)} for c, n, k in LANGUAGES],
+              "layouts": layouts(), "keyboard": live_keyboard(), "nonLatin": sorted(NON_LATIN), "wifi": wifi(), "wired": wired(), "power": power(), "scenario": SCENARIO})
+        survey()
+    elif op == "disks":
+        # read again: a slow drive that came up after the first read, or a disk a failed install changed
         survey()
     elif op == "wifi":
         emit({"ev": "wifi", "wifi": wifi(), "wired": wired()})
@@ -446,7 +536,7 @@ def act(req):
         if not install["running"]:
             chosen["name"] = req.get("name")
         d = disks()
-        emit({"ev": "disk", "disk": d, "plan": show(d)})
+        emit({"ev": "disk", "disk": shown_disk(d), "plan": show(d)})
     elif op == "power":
         emit({"ev": "power", "power": power()})
     elif op == "join":
@@ -456,19 +546,32 @@ def act(req):
             # nmcli gives up on its own (--wait) before our timeout; a run that still overruns, or cannot start, is a
             # join that did not happen, and Setup is always answered
             cmd = ["nmcli", "--wait", "30", "dev", "wifi", "connect", req.get("ssid", "")] + (["password", req.get("password", "")] if req.get("secure") else [])
+            if req.get("hidden"):
+                cmd += ["hidden", "yes"]
+            why = ""
             try:
-                ok = subprocess.run(cmd, capture_output=True, timeout=45).returncode == 0
+                r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=45)
+                ok = r.returncode == 0
+                if not ok:
+                    why = join_failure(r.stdout + r.stderr)
             except (subprocess.TimeoutExpired, OSError):
-                ok = False
+                ok, why = False, "network"
         else:
             # practice: nothing is joined. A password under 8 characters is "wrong", so that screen can be seen.
             time.sleep(1.2)
             ok = not req.get("secure") or len(req.get("password", "")) >= 8
+            why = "" if ok else "password"
         if ok and REAL and not zone["name"]:
             threading.Thread(target=find_zone, daemon=True).start()
-        emit({"ev": "join", "ssid": req.get("ssid"), "ok": ok})
+        emit({"ev": "join", "ssid": req.get("ssid"), "ok": ok, "why": why})
     elif op == "install":
-        if not install["running"]:
+        # claimed before the disks are read again (seconds, as root, on a computer with several drives): a second
+        # request in that time started a second installer on the same disk
+        with starting:
+            if install["running"]:
+                return
+            install["running"] = True
+        try:
             # a retry's new installer has had no answers: the person answers again after this request, and only those go
             install.pop("answers", None)
             install["sent"] = False
@@ -488,6 +591,7 @@ def act(req):
                         print(json.dumps({"disk": d, "now": pl, "shown": seen}), file=log)
                     if not (seen and seen["room"]):
                         emit({"ev": "install", "state": "failed", "done": 0, "untouched": True, "reason": no_room(d, pl)})
+                        install["running"] = False
                         return
                     pl = seen
                 place = "next" if req.get("place") == "next" else "instead"
@@ -495,6 +599,11 @@ def act(req):
                 threading.Thread(target=real_install, args=(d.get("name"), place, keep), daemon=True).start()
             else:
                 threading.Thread(target=practice_install, daemon=True).start()
+        except Exception:
+            # Setup is always answered: a request that broke before the installer started leaves nothing changed
+            install["running"] = False
+            emit({"ev": "install", "state": "failed", "done": 0, "untouched": True, "reason": ""})
+            raise
     elif op == "editor":
         # the live system's partition editor, for "Choose partitions myself"; when it closes the disks are read again,
         # so what was made there is offered at once
@@ -518,13 +627,24 @@ def act(req):
             json.dump(a, f, indent=1)
         emit({"ev": "answers", "ok": True})
     elif op == "restart":
-        restart()
+        restart(req.get("windows") is True)
     elif op == "off":
         if REAL:
             subprocess.run(["sudo", "-n", "systemctl", "poweroff"])
 
-def restart():
+def boot_windows_next():
+    """The firmware's BootNext set to Windows's own entry, so the one restart starts Windows even where the firmware prefers
+    the USB stick (it started the stick again, and Setup returned to its first page). Best effort: with no entry found, or
+    no variables to write, the restart is the plain one."""
+    r = as_root("efibootmgr")
+    m = re.search(r"^Boot([0-9A-Fa-f]{4})\*?\s+Windows Boot Manager", r.stdout if r else "", re.M)
+    if m:
+        as_root("efibootmgr", "--bootnext", m.group(1))
+
+def restart(windows=False):
     if REAL:
+        if windows:
+            boot_windows_next()
         subprocess.run(["sudo", "-n", "systemctl", "reboot"])
 
 def main():

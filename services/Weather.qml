@@ -87,12 +87,8 @@ Singleton {
         temp.cr = root.rainChance
         temp.humidity = (data?.main?.humidity || 0) + "%"
 
-        const fmt = (unix) => new Date(unix * 1000).toLocaleTimeString("en-US", {
-            hour: "numeric",
-            minute: "2-digit",
-            second: "2-digit",
-            hour12: true
-        })
+        // In the clock's own format, as DateTime.time shows it
+        const fmt = (unix) => Qt.locale().toString(new Date(unix * 1000), Config.options?.time.format ?? "hh:mm")
 
         temp.sunrise = data?.sys?.sunrise ? fmt(data.sys.sunrise) : "0"
         temp.sunset  = data?.sys?.sunset  ? fmt(data.sys.sunset)  : "0"
@@ -240,7 +236,7 @@ Singleton {
             console.info("[WeatherService] Starting GPS service.")
             gpsAcquisition.restart()
         }
-        // gpsActive turns false from inside these handlers, which would change this Loader's
+        // gpsFailed is set from inside these handlers, which would change this Loader's
         // own active binding while it is loading; hence callLater.
         sourceComponent: PositionSource {
             id: positionSource

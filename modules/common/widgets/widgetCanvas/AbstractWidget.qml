@@ -64,14 +64,17 @@ MouseArea {
 
     function commitPosition() {}
 
+    // kept from registration: the parent is already gone when the widget is destroyed, so the canvas can't be found then
+    property var registeredCanvas: null
+
     Component.onCompleted: {
         var canvas = findCanvas(root.parent)
         if (canvas) canvas.registerWidget(root)
+        root.registeredCanvas = canvas
     }
 
     Component.onDestruction: {
-        var canvas = findCanvas(root.parent)
-        if (canvas) canvas.unregisterWidget(root)
+        if (root.registeredCanvas) root.registeredCanvas.unregisterWidget(root)
     }
 
     Item {

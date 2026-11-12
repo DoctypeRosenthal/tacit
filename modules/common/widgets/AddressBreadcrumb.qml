@@ -11,7 +11,9 @@ ListView {
     property var breadcrumbDirectory: ""
     Component.onCompleted: breadcrumbDirectory = directory;
     onDirectoryChanged: {
-        if (breadcrumbDirectory.startsWith(directory)) return;
+        // stay on the longer path when this one is a parent of it, by whole folder names (/home/ab is not /home/abc's parent)
+        const parent = directory.endsWith("/") ? directory : directory + "/";
+        if (breadcrumbDirectory === directory || breadcrumbDirectory.startsWith(parent)) return;
         breadcrumbDirectory = directory
     }
 
@@ -35,7 +37,7 @@ ListView {
         rightmost: index === breadcrumbDirectory.split("/").length - 1
 
         onClicked: {
-            root.navigateToDirectory(breadcrumbDirectory.split("/").slice(0, index + 1).join("/"))
+            root.navigateToDirectory(breadcrumbDirectory.split("/").slice(0, index + 1).join("/") || "/")
         }
     }
 }

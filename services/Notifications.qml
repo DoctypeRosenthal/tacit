@@ -107,7 +107,25 @@ Singleton {
         }
     }
 
+    // Do not disturb stays on over a restart or a login (Persistent): it was meant for a meeting, and a shell that
+    // came back with pop-ups on said nothing. What was kept is read once Persistent is ready (a lazy singleton: either
+    // may be built first, as in Idle.qml); until then a change is not written, or the default would cover it.
     property bool silent: false
+    property bool silentRestored: false
+    function restoreSilent() {
+        if (root.silentRestored || !Persistent.ready)
+            return;
+        root.silentRestored = true;
+        root.silent = Persistent.states.notifications.silent === true;
+    }
+    onSilentChanged: {
+        if (root.silentRestored)
+            Persistent.states.notifications.silent = root.silent;
+    }
+    Connections {
+        target: Persistent
+        function onReadyChanged() { root.restoreSilent(); }
+    }
     property int unread: 0
     property var filePath: Directories.notificationsPath
     property list<Notif> list: []
@@ -689,6 +707,7 @@ Singleton {
 
     Component.onCompleted: {
         refresh()
+        restoreSilent()
     }
 
     FileView {

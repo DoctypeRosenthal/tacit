@@ -107,14 +107,26 @@ Item {
         K.Tooltip { text: place.label; shown: place.folded && place.hovered }
     }
 
-    // a folder dropped on the rail's own ground is pinned
+    // a folder dropped on the rail's own ground is pinned; a file is not a place, so only folders pass
+    Process {
+        id: dropped
+        stdout: StdioCollector {
+            onStreamFinished: {
+                for (const p of text.split("\n"))
+                    if (p.length > 0)
+                        Files.pin(p);
+            }
+        }
+    }
     DropArea {
         anchors.fill: parent
         keys: ["text/uri-list"]
         onDropped: drop => {
             drop.accept();
-            for (const u of drop.urls ?? [])
-                Files.pin(FileUtils.trimFileProtocol(decodeURIComponent(u.toString())));
+            const paths = (drop.urls ?? []).map(u => FileUtils.trimFileProtocol(decodeURIComponent(u.toString())));
+            dropped.running = false;
+            dropped.command = ["sh", "-c", 'for p in "$@"; do [ -d "$p" ] && echo "$p"; done', "sh"].concat(paths);
+            dropped.running = true;
         }
     }
 

@@ -37,6 +37,14 @@ Item {
         flick.contentY = Math.max(0, Math.min(page.wantY, flick.contentHeight - flick.height));
         if (flick.contentHeight - flick.height >= page.wantY) page.wantY = -1;
     }
+    // scrolls the page just enough to show an item of the body (the row the keys moved to)
+    function reveal(item) {
+        const y = item.mapToItem(flick.contentItem, 0, 0).y;
+        const top = Math.max(0, y - 40), bottom = y + item.height + 12;
+        page.wantY = -1;
+        if (top < flick.contentY) flick.contentY = top;
+        else if (bottom > flick.contentY + flick.height) flick.contentY = Math.min(bottom - flick.height, Math.max(0, flick.contentHeight - flick.height));
+    }
     Timer { id: settleEnd; interval: 1000; onTriggered: page.wantY = -1 }
     function leave(dir) {
         page.enabled = false;

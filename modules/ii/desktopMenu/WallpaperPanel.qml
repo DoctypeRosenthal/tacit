@@ -1,3 +1,4 @@
+import qs.services
 import qs.modules.common
 import qs.modules.common.widgets
 import qs.modules.common.functions
@@ -40,7 +41,7 @@ Item {
         spacing: 8
 
         StyledText {
-            text: "Colour scheme"
+            text: Translation.tr("Colour scheme")
             font.pixelSize: Appearance.font.pixelSize.smallie
             color: Appearance.colors.colSubtext
         }
@@ -54,7 +55,7 @@ Item {
                 MenuTile {
                     required property var modelData
                     glyph: modelData.icon
-                    label: modelData.name
+                    label: Translation.tr(modelData.name)
                     on: Config.options.appearance.palette.type === modelData.value
                     onClicked: {
                         Config.options.appearance.palette.type = modelData.value;
@@ -68,7 +69,7 @@ Item {
         }
         MenuHairline {}
         StyledText {
-            text: "When the picture changes"
+            text: Translation.tr("When the picture changes")
             font.pixelSize: Appearance.font.pixelSize.smallie
             color: Appearance.colors.colSubtext
         }
@@ -82,7 +83,7 @@ Item {
                 MenuTile {
                     required property var modelData
                     glyph: modelData.icon
-                    label: modelData.name
+                    label: Translation.tr(modelData.name)
                     on: Config.options.background.wallpaperAnimation === modelData.value
                     onClicked: Config.options.background.wallpaperAnimation = modelData.value
                 }

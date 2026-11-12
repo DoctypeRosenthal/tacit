@@ -72,6 +72,12 @@ output_path = '~/.local/state/quickshell/user/generated/zen/colors.css'
 input_path = '/usr/share/tacit/matugen/templates/vscode/martida-color-theme.json'
 output_path = '~/.vscode-oss/extensions/martida-theme/themes/martida-color-theme.json'
 
+# The extension's manifest: VS Code lists only extension folders that have one, so without it "Martida" never
+# showed in the theme picker.
+[templates.vscode_manifest]
+input_path = '/usr/share/tacit/matugen/templates/vscode/package.json'
+output_path = '~/.vscode-oss/extensions/martida-theme/package.json'
+
 # Neovim follows the wallpaper like everything else. The hook recolours every
 # running nvim at once (each listens on a socket in $XDG_RUNTIME_DIR), so an open
 # editor changes with the wallpaper instead of on its next start.

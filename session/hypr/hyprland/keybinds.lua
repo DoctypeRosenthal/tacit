@@ -33,9 +33,9 @@ hl.bind("CTRL + ALT + Delete", hl.dsp.exec_cmd(qsIsAlive .. " || pkill wlogout |
 -- Unbound (sweep D8): end-4's welcome window; all it offers is in Settings and the palette.
 -- hl.bind("SHIFT + SUPER + ALT + Slash", hl.dsp.exec_cmd("qs -p $HOME/.config/quickshell/$qsConfig/welcome.qml"))
 
-hl.bind("XF86MonBrightnessUp", hl.dsp.exec_cmd(qsIpcCall .. " brightness increment || brightnessctl s 5%+"),
+hl.bind("XF86MonBrightnessUp", hl.dsp.exec_cmd(qsIpcCall .. " brightness increment || brightnessctl --class backlight -n2 set 5%+"),
     { locked = true, repeating = true, description = "Screen: Brightness up" })
-hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd(qsIpcCall .. " brightness decrement || brightnessctl s 5%-"),
+hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd(qsIpcCall .. " brightness decrement || brightnessctl --class backlight -n2 set 5%-"),
     { locked = true, repeating = true, description = "Screen: Brightness down" })
 hl.bind("XF86AudioRaiseVolume", hl.dsp.exec_cmd("wpctl set-volume @DEFAULT_AUDIO_SINK@ 2%+ -l 1.0"),
     { locked = true, repeating = true, description = "Media: Volume up" })
@@ -88,7 +88,7 @@ hl.bind("SUPER + SHIFT + X", hl.dsp.global("quickshell:regionOcr"),
 -- ran d (tesseract | wl-copy) on every press and emptied the clipboard.
 hl.bind("SUPER + SHIFT + X", hl.dsp.exec_cmd(
     qsIsAlive ..
-    " || pidof slurp || { grim -g \"$(slurp $SLURP_ARGS)\" \"/tmp/ocr_image.png\" && tesseract \"/tmp/ocr_image.png\" stdout -l $(tesseract --list-langs | awk 'NR>1{print $1}' | tr '\\n' '+' | sed 's/+$//') | wl-copy && rm \"/tmp/ocr_image.png\"; }"
+    " || pidof slurp || { f=$(mktemp --suffix=.png) && grim -g \"$(slurp $SLURP_ARGS)\" \"$f\" && tesseract \"$f\" stdout -l $(tesseract --list-langs | awk 'NR>1{print $1}' | paste -sd+) | wl-copy; rm -f \"$f\"; }"
 ))
 --# Color picker
 hl.bind("SUPER + SHIFT + C", hl.dsp.exec_cmd("hyprpicker -a"),
@@ -195,6 +195,15 @@ hl.bind("ALT + F4",
     end,
     { non_consuming = true })
 hl.bind("SUPER + Q", hl.dsp.window.close(), { description = "Window: Close" })
+-- Super+Q only asks a window to close; one that never does is offered Force quit after a few seconds (bin/window-close-watch).
+-- It runs beside the close above, takes the window before the close can change it, and a fault in it cannot stop the close.
+hl.bind("SUPER + Q", function()
+    local ok, w = pcall(hl.get_active_window)
+    if ok and w and w.address and tonumber(w.pid) then
+        local cls = tostring(w.class or ""):gsub("[^%w._-]", "")
+        hl.dispatch(hl.dsp.exec_cmd(string.format("$TACIT_BIN/window-close-watch %s %d '%s'", w.address, tonumber(w.pid), cls)))
+    end
+end, { non_consuming = true })
 hl.bind("SUPER + SHIFT + ALT + Q", hl.dsp.exec_cmd("hyprctl kill"), { description = "Window: Forcefully zap a window" })
 
 --# Window split ratio
@@ -218,12 +227,12 @@ for i = 1, 10 do
     end, { description = "Window: Send to workspace " .. i })
 end
 --# We also use raw keycodes because some keyboard layouts register number keys as different chars. The codes can be verified with `wev`
--- for i = 1, 10 do
---     local numberkey = { 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 }
---     hl.bind("SUPER + ALT + code:" .. numberkey[i], function()
---         hl.dispatch(hl.dsp.window.move({ workspace = workspace_in_group(i), follow = false }))
---     end)
--- end
+for i = 1, 10 do
+    local numberkey = { 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 }
+    hl.bind("SUPER + ALT + code:" .. numberkey[i], function()
+        hl.dispatch(hl.dsp.window.move({ workspace = workspace_in_group(i), follow = false }))
+    end)
+end
 --# keypad numbers
 for i = 1, 10 do
     local numpadkey = { 87, 88, 89, 83, 84, 85, 79, 80, 81, 90 }

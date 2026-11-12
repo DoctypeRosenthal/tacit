@@ -1,6 +1,7 @@
 #!/bin/sh
-# Builds Graphis's one-step edits (Tacit.Edit) and installs it to ~/.local/lib/qml/Tacit/Edit, where code.qml's
-# QML_IMPORT_PATH finds it. Rebuild after a Qt update: the plugin is built against this Qt's exact version.
+# Builds Graphis's one-step edits (Tacit.Edit) and installs it to ~/.local/lib/qml/Tacit/Edit, where QML_IMPORT_PATH
+# finds it (set by the session, session/hypr/hyprland/env.lua, and by the launchers qs-supervise and tacit-app).
+# Rebuild after a Qt update: the plugin is built against this Qt's exact version.
 set -e
 HERE=$(dirname "$(readlink -f "$0")")
 B=${XDG_CACHE_HOME:-$HOME/.cache}/tacit-edit-build

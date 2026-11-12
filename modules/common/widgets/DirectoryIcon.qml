@@ -17,8 +17,11 @@ Image {
         if (!fileModelData.fileIsDir)
             return Quickshell.iconPath("application-x-zerosize");
 
-        if ([Directories.documents, Directories.downloads, Directories.music, Directories.pictures, Directories.videos].some(dir => FileUtils.trimFileProtocol(dir) === fileModelData.filePath))
-            return Quickshell.iconPath(`folder-${fileModelData.fileName.toLowerCase()}`);
+        // the icon follows which standard folder it is, not what the folder is called (~/Dokumente is Documents)
+        const standardFolder = [[Directories.documents, "documents"], [Directories.downloads, "downloads"], [Directories.music, "music"], [Directories.pictures, "pictures"], [Directories.videos, "videos"]]
+            .find(entry => FileUtils.trimFileProtocol(entry[0]) === fileModelData.filePath);
+        if (standardFolder)
+            return Quickshell.iconPath(`folder-${standardFolder[1]}`, "inode-directory");
 
         return Quickshell.iconPath("inode-directory");
     }

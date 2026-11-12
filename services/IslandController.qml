@@ -32,6 +32,10 @@ Singleton {
     // ------------------------------------------------------------------ header slots
     readonly property bool focusRunning: Config.options.island.states.focus
         && (TimerService.pomodoroRunning || TimerService.countdownRunning)
+    // A timer is held: running, or paused with time on it. The sheet keeps its timer row (with Resume) for it, so
+    // pausing from the row does not take the row away; the header's wings are for a running one only.
+    readonly property bool focusHeld: Config.options.island.states.focus
+        && (TimerService.pomodoroRunning || TimerService.countdownRunning || TimerService.pomodoroPaused || TimerService.countdownPaused)
     // Media wings (art left, spectrum right) while playing. Paused: the wings stay 3s, dimmed,
     // then fold - boring.notch's waitInterval (Constants.swift:129, MusicManager.swift:546).
     // Playing again brings them straight back.
@@ -166,8 +170,8 @@ Singleton {
             return 3600000;
         case "wallpaper":
             return 7000;
-        case "update":      // said once: it stays long enough to answer
-            return 15000;
+        case "update":      // said once: it stays long enough to answer; "Restarting…" stays while the update is made ready
+            return root.payload?.restarting ? 120000 : 15000;
         case "updated":     // its What's new is there to be pressed
             return 10000;
         case "recordSaved":
@@ -211,8 +215,11 @@ Singleton {
                 return;
             }
             root.payload = data ?? ({});
-            if (root.holdFor(name) > 0)
+            const hold = root.holdFor(name);
+            if (hold > 0) {
+                holdTimer.interval = hold;
                 holdTimer.restart();
+            }
             return;
         }
         // an agent's ask waits for its answer; a volume or brightness key, or a state of higher priority (Flow), still
@@ -395,8 +402,9 @@ Singleton {
         case "pr":
         case "wallpaper":
             return 172;
+        case "update":      // Tonight and Restart; "Restart anyway" is longer
+            return root.payload?.warning ? 260 : 204;
         case "claudeAsk":
-        case "update":      // Tonight and Restart
         case "updated":
             return 204;
         case "window":      // with its Reopen, Show or Undo; the hint is words alone
@@ -443,7 +451,7 @@ Singleton {
             // Text being dragged over it keeps the 72px floor: the sheet's "drop to hand this
             // over" line is centred in that body, and in the 12px the rows leave it lands on
             // top of the header seam and the first row instead.
-            return { "w": 560, "h": (root.mediaPresent ? 150 : ((root.openRowsHeight > 0 && !root.textDragOver) ? 12 : 72)) + (root.focusRunning ? 36 : 0) + root.openRowsHeight, "r": 24, "f": 6 };
+            return { "w": 560, "h": (root.mediaPresent ? 150 : ((root.openRowsHeight > 0 && !root.textDragOver) ? 12 : 72)) + (root.focusHeld ? 36 : 0) + root.openRowsHeight, "r": 24, "f": 6 };
         // an app not answering: the prompt drops out of the notch (Activity v7 mock, state 09)
         if (name === "notAnswering")
             return { "w": 520, "h": 34, "r": 24, "f": 6 };
@@ -553,6 +561,10 @@ Singleton {
         Quickshell.execDetached([Directories.recordScriptPath].concat(where, s === "system" ? ["--sound"] : s === "mic" ? ["--mic"] : []));
     }
     function stopRecording() {
+        // the saved card shows on the notch that has keyScreen: the screen it was stopped on, unless a
+        // sheet holds the keyboard
+        if (!root.keyboard)
+            root.keyboardScreen = Hyprland.focusedMonitor?.name ?? "";
         Quickshell.execDetached([Directories.recordScriptPath, "--stop"]);
     }
     onRecordingChanged: {
@@ -562,6 +574,21 @@ Singleton {
             return;
         DropShelf.addItems(["file://" + encodeURI(file)]);
         root.recordSaved();
+    }
+    // A logout, crash or power loss mid-recording leaves record.enable true with no wf-recorder: the notch would
+    // count a stale timer and a click would "save" the broken file. Once, when the state is read: with no
+    // wf-recorder running, clear it as record.sh does, without the saved card (the file is emptied first).
+    property bool recordChecked: false
+    Process {
+        running: Persistent.ready && !root.recordChecked
+        command: ["pgrep", "-x", "wf-recorder"]
+        onExited: code => {
+            root.recordChecked = true;
+            if (code !== 0 && root.recording) {
+                Persistent.states.record.file = "";
+                Persistent.states.record.enable = false;
+            }
+        }
     }
     // A running timer is a status glyph; the hover strip carries its remaining time and controls.
     readonly property bool timerAmbient: TimerService.pomodoroRunning || TimerService.countdownRunning
@@ -884,7 +911,11 @@ Singleton {
         // window alone cannot do. Then the window, for players that ignore Raise.
         if (p.canRaise)
             p.raise();
-        const key = ((p.desktopEntry || p.identity || "") + "").toLowerCase().split(/[ ._-]/)[0];
+        // A reverse-DNS entry (org.mozilla.firefox, Flatpak and GNOME apps) is the window's class as it stands, and
+        // its last part is the name the table knows.
+        const id = ((p.desktopEntry || p.identity || "") + "").toLowerCase();
+        const parts = id.split(/[ ._-]/);
+        const key = /^(org|com|io|net|app|dev)\./.test(id) ? parts[parts.length - 1] : parts[0];
         const table = {
             "firefox": ["zen", "firefox", "librewolf", "floorp"],
             "chromium": ["chromium", "google-chrome", "brave-browser", "thorium-browser"],
@@ -892,7 +923,7 @@ Singleton {
             "thyris": ["browser-cef", "browser"],   // Thyris's window is the engine's (Discord 2026-10-23)
             "opsis": ["browser-cef", "browser"]
         };
-        const candidates = table[key] ?? [key];
+        const candidates = [id].concat(table[key] ?? [key]);
         const win = (HyprlandData.windowList ?? []).find(w => candidates.includes((w.class ?? "").toLowerCase()));
         // This Hyprland is Lua-configured: dispatches are Lua calls on hl.dsp, the same form
         // services/HyprlandBackend.qml uses.
@@ -1146,7 +1177,8 @@ Singleton {
     // file in ~/Downloads is a 3s peek and is parked on the shelf, so it can be dragged straight
     // out of the notch. No inotify-tools on this machine: one bash loop, one `find` every two seconds
     // (the wait is the builtin `read -t`, the time stamp is printf's, so nothing else is started).
-    // Partial files (.part, .crdownload, .tmp, dotfiles) are skipped; browsers rename them into place, which is the moment the final name shows up.
+    // Partial files (.part, .crdownload, .tmp, dotfiles) are skipped; browsers rename them into place, which is the moment the final name shows up
+    // (a rename keeps the file's mtime but changes its ctime, hence -newerct).
     property var announcedDownloads: ({})
 
     // Screenshots land in the same watcher: screenSnip.savePath is the second folder.
@@ -1156,7 +1188,7 @@ Singleton {
         id: downloadWatch
         running: root.enabled && Config.options.island.states.download
         // the account's Downloads folder by its own name (xdg-user-dirs names it in the account's language: ~/Téléchargements)
-        command: ["bash", "-c", `d='${StringUtils.shellSingleQuoteEscape(FileUtils.trimFileProtocol(Directories.downloads))}'; p='${StringUtils.shellSingleQuoteEscape(root.screenshotDir)}'; set -- "$d"; [ -n "$p" ] && set -- "$d" "$p"; exec 3<> <(:); printf -v last '%(%s)T' -1; last=$((last+1)); while read -t 2 -u 3; [ $? -gt 128 ]; do printf -v now '%(%s)T' -1; find "$@" -maxdepth 1 -type f \\( \\( -name '*.part' -o -name '*.crdownload' \\) -printf 'P\\t%s\\t%p\\n' -o -newermt "@$((last-1))" ! -name '.*' ! -name '*.tmp' -printf '%p\\n' \\) 2>/dev/null; last=$now; done`]
+        command: ["bash", "-c", `d='${StringUtils.shellSingleQuoteEscape(FileUtils.trimFileProtocol(Directories.downloads))}'; p='${StringUtils.shellSingleQuoteEscape(root.screenshotDir)}'; set -- "$d"; [ -n "$p" ] && set -- "$d" "$p"; exec 3<> <(:); printf -v last '%(%s)T' -1; last=$((last+1)); while read -t 2 -u 3; [ $? -gt 128 ]; do printf -v now '%(%s)T' -1; find "$@" -maxdepth 1 -type f \\( \\( -name '*.part' -o -name '*.crdownload' \\) -printf 'P\\t%s\\t%p\\n' -o -newerct "@$((last-1))" ! -name '.*' ! -name '*.tmp' -printf '%p\\n' \\) 2>/dev/null; last=$now; done`]
         stdout: SplitParser {
             onRead: line => {
                 if (line.startsWith("P\t")) {   // a download still growing: name, size
@@ -1197,6 +1229,13 @@ Singleton {
             "value": "on the shelf",
             "path": path   // a click on the peek opens it
         }, 55);
+    }
+
+    // ------------------------------------------------------------------ the shelf's Copy
+    Connections {
+        target: DropShelf
+        function onCopied(words) { root.request("copied", { "icon": "content_copy", "text": words }, 70); }
+        function onCopyFailed() { root.request("copied", { "icon": "error", "text": "Couldn't copy" }, 70); }
     }
 
     // ------------------------------------------------------------------ vpn
@@ -1736,7 +1775,7 @@ Singleton {
     // that height less the 34px header, and the sheet's body sits above the
     // rows - 150 for the player or the shelf's tiles, 12 when the rows ARE the sheet.
     function rowsRoom(shelf) {
-        return 406 - ((shelf || root.mediaPresent) ? 150 : 12) - (root.focusRunning ? 36 : 0);
+        return 406 - ((shelf || root.mediaPresent) ? 150 : 12) - (root.focusHeld ? 36 : 0);
     }
     // `seen`: a real open (hover, keybind) marks the stream seen; a drag-over that opens the
     // shelf does not - you were not looking at the rows.

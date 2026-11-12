@@ -88,13 +88,21 @@ Singleton {
     Connections {
         target: ToplevelManager.toplevels
         function onValuesChanged() {
-            root.prune();
+            pruneTimer.restart();
         }
+    }
+    // At shell start the windows are announced one by one: wait for the list to settle before
+    // judging a row by it.
+    Timer {
+        id: pruneTimer
+        interval: 1500
+        onTriggered: root.prune()
     }
 
     function label(s) {
         // Claude's own session name when the roster gave one; else the terminal title carries
-        // Claude Code's task after a state glyph - strip the glyph.
+        // Claude Code's task after a state glyph - strip the glyph (punctuation, symbols, braille, emoji;
+        // not letters of any script: the engine has no \p{L}).
         // The thread's name first (crew), then Claude's own session name - unless it is the automatic one ("abdul-a9",
         // the folder and two characters, which says nothing): then the conversation's first question as Praxis titles
         // it, the title, and the automatic name last.
@@ -108,7 +116,7 @@ Singleton {
         if (Claude.owns(s.id) && Claude.titleOf(s.id) !== "Claude")
             return Claude.titleOf(s.id);
         const t = ToplevelManager.toplevels.values.find(t => `0x${t.HyprlandToplevel?.address ?? ""}` === s.address);
-        const title = ((t?.title ?? "") + "").replace(/^[^A-Za-z0-9]+\s*/, "").trim();
+        const title = ((t?.title ?? "") + "").replace(/^[\x00-\x2f\x3a-\x40\x5b-\x60\x7b-\xbf\u2000-\u2bff\ud800-\udfff]+/, "").trim();
         if (title.length > 0)
             return title;
         return name.length > 0 ? name : ((s.cwd + "").split("/").pop() || "session");
@@ -148,6 +156,7 @@ Singleton {
         }
         if (state !== "working")
             s.activity = "";
+        s.adopted = false;   // a hook reports on it: the roster no longer sets its state
         root.all = list;
         if (!s.polled) {
             s.polled = true;
@@ -237,7 +246,7 @@ Singleton {
                         // that value is what the row's folder label and the hand-off to a new
                         // Claude session read. No cwd leaves both to fall back; a wrong one does not.
                         s = { "id": r.sessionId, "address": "", "cwd": "", "state": r.status === "busy" ? "working" : "idle",
-                              "since": r.startedAt ?? Date.now(), "lastToolAt": Date.now(), "polled": true };
+                              "since": r.startedAt ?? Date.now(), "lastToolAt": Date.now(), "polled": true, "adopted": true };
                         list.push(s);
                         changed = true;
                     }
@@ -246,8 +255,9 @@ Singleton {
                         changed = true;
                     }
                     // a session no hook reports on (an install has no notch-session hooks in ~/.claude/settings.json)
-                    // follows the roster: adopted busy, it read "working" for good and raised "Quiet" peeks
-                    if (s.polled) {
+                    // follows the roster: adopted busy, it read "working" for good and raised "Quiet" peeks.
+                    // One a hook reports on keeps the hook's state: the roster has no "waiting" or "done".
+                    if (s.adopted) {
                         const now = r.status === "busy" ? "working" : "idle";
                         if (s.state !== now) {
                             s.state = now;

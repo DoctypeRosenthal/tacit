@@ -204,7 +204,7 @@ Item {
                 Image {
                     id: thumb
                     anchors.fill: parent
-                    source: row.picture ? `file://${row.m.path}` : ""
+                    source: row.picture ? FileUtils.fileUrl(row.m.path) : ""
                     sourceSize: Qt.size(52, 52)
                     fillMode: Image.PreserveAspectCrop
                     asynchronous: true

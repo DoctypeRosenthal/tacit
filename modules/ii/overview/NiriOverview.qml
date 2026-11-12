@@ -326,7 +326,7 @@ Item {
                         width: parent.width * Config.options.overview.scale
                         height: parent.height
                         radius: Appearance.rounding.large
-                        color: "red"
+                        color: Appearance.colors.colLayer1
 
                         Behavior on color { ColorAnimation { duration: 200 } }
                         Behavior on border.color { ColorAnimation { duration: 200 } }
@@ -452,6 +452,8 @@ Item {
                                 property real pressX: 0
                                 property real pressY: 0
                                 property bool dragStarted: false
+                                // released is delivered before clicked, so the drag is remembered for it
+                                property bool wasDragged: false
                                 property real dragStartTime: 0
 
                                 onEntered: ovWin.hovered = true
@@ -461,6 +463,7 @@ Item {
                                     pressX = mouse.x
                                     pressY = mouse.y
                                     dragStarted = false
+                                    wasDragged = false
                                     dragStartTime = Date.now()
                                     ovWin.pressed = true
 
@@ -499,6 +502,7 @@ Item {
                                     }
 
                                     root.isDragging = false
+                                    wasDragged = dragStarted
                                     dragStarted = false
                                     root.dragFromWs = -1
                                     root.dragFromPos = -1
@@ -507,7 +511,7 @@ Item {
                                 }
 
                                 onClicked: event => {
-                                    if (dragStarted) return
+                                    if (wasDragged) return
                                     if (!winContainer.win) return
                                     if (event.button === Qt.LeftButton) {
                                         GlobalStates.overviewOpen = false

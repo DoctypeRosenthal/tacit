@@ -76,10 +76,12 @@ Item {
             let targetKey = root.propertyMap[key];
             let targetType = typeof root[targetKey];
 
-            if (targetKey === undefined) continue;
+            // a key with no value (a code cut short) or a number that does not parse keeps what it had
+            if (targetKey === undefined || value === undefined) continue;
 
             if (targetType === "number") {
                 value = parseFloat(value);
+                if (!isFinite(value)) continue;
             } else if (targetType === "boolean") {
                 value = (value === "1");
             } 

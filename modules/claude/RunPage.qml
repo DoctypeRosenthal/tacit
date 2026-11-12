@@ -20,15 +20,16 @@ PanelPage {
     function bump() { rp.entryChanged(); }
 
     // the declared phases, then any its agents report that the script did not; agents that do not
-    // say their phase are listed together
+    // say their phase are listed together (last, as "Agents", once other agents have a phase)
     readonly property var phases: {
         const ms = rp.members;
-        let names = [""];
-        if (ms.some(m => m.phase)) {
-            names = (rp.run?.phases ?? []).slice();
-            for (const m of ms) if (m.phase && !names.includes(m.phase)) names.push(m.phase);
-        }
-        return names.map(n => ({ name: n || "Agents", members: ms.filter(m => n === "" || m.phase === n) }));
+        const loose = ms.filter(m => !m.phase);
+        if (!ms.some(m => m.phase)) return [{ name: "Agents", members: ms }];
+        const names = (rp.run?.phases ?? []).slice();
+        for (const m of ms) if (m.phase && !names.includes(m.phase)) names.push(m.phase);
+        const out = names.map(n => ({ name: n, members: ms.filter(m => m.phase === n) }));
+        if (loose.length) out.push({ name: "Agents", members: loose });
+        return out;
     }
     readonly property bool huge: rp.phases.some(ph => ph.members.length > 12)
     readonly property bool allSingle: rp.phases.length > 1 && rp.phases.every(ph => ph.members.length === 1)
@@ -114,7 +115,7 @@ PanelPage {
             visible: !!rp.run
             width: parent.width
             topPadding: 2
-            text: [rp.run?.state === "running" ? `Running ${rp.p.took(rp.run)}` : rp.run?.state === "failed" ? `Failed after ${rp.p.took(rp.run)}` : `Finished in ${rp.p.took(rp.run)}`, "workflow", rp.eta].filter(x => x).join(" · ")
+            text: [rp.run?.state === "running" ? `Running ${rp.p.took(rp.run)}` : rp.run?.state === "failed" ? `Failed after ${rp.p.took(rp.run)}` : rp.run?.state === "stopped" ? `Stopped after ${rp.p.took(rp.run)}` : `Finished in ${rp.p.took(rp.run)}`, "workflow", rp.eta].filter(x => x).join(" · ")
             font.pixelSize: 15
             font.features: { "tnum": 1 }
             color: Appearance.colors.colInkSecondary

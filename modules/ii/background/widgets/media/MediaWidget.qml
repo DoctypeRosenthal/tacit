@@ -129,12 +129,14 @@ AbstractBackgroundWidget {
         property string targetFile: root.artUrl
         property string artFilePath: root.artFilePath
         // Download to a temp name and move it in, so a failed or cut-off download is never cached.
+        // The address follows --, as metadata can give one that starts with a dash.
         command: ["bash", "-c",
-            `[ -f "$2" ] || { curl -fsSL --max-time 15 "$1" -o "$2.tmp" && mv "$2.tmp" "$2"; } || { rm -f "$2.tmp"; exit 1; }`,
+            `[ -f "$2" ] || { curl -fsSL --max-time 15 -o "$2.tmp" -- "$1" && mv "$2.tmp" "$2"; } || { rm -f "$2.tmp"; exit 1; }`,
             "_", targetFile, artFilePath]
         onExited: (exitCode, exitStatus) => {
             if (targetFile !== root.artUrl) {
-                root.updateArt()
+                // after this exit, so the process is no longer running when it starts again
+                Qt.callLater(root.updateArt)
                 return
             }
             root.downloaded = exitCode === 0
@@ -221,8 +223,8 @@ AbstractBackgroundWidget {
                     anchors.fill: parent
                     gradient: Gradient {
                         GradientStop { position: 0.0; color: "transparent" }
-                        GradientStop { position: 0.5; color: ColorUtils.transparentize("#000000", 0.85) }
-                        GradientStop { position: 1.0; color: ColorUtils.transparentize("#000000", 0.1) }
+                        GradientStop { position: 0.5; color: ColorUtils.transparentize(Appearance.m3colors.m3scrim, 0.85) }
+                        GradientStop { position: 1.0; color: ColorUtils.transparentize(Appearance.m3colors.m3scrim, 0.1) }
                     }
                 }
 
@@ -929,7 +931,11 @@ AbstractBackgroundWidget {
             currentWidth: root.widgetWidth
             resizeMode: "diagonal"
             onResizedXY: (dx, dy, startWidth) => { root.sizeMode = root.modeForDrag(dx, dy, startWidth) }
-            onResizeFinished: { root.configEntry.sizeMode = root.sizeMode }
+            onResizeFinished: {
+                root.configEntry.sizeMode = root.sizeMode
+                // The drag assigned sizeMode and so cut its link to the config; join it again
+                root.sizeMode = Qt.binding(() => root.configEntry.sizeMode ?? "1x3")
+            }
         }
     }
 }

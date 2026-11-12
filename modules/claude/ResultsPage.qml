@@ -46,16 +46,100 @@ PanelPage {
     function when(ms) { return new Date(ms).toLocaleDateString(Qt.locale(), "d MMM"); }
     readonly property var statusWord: ({ problem: "Problem", open: "Open", fixed: "Fixed", done: "Done", confirmed: "Confirmed", not_a_bug: "Not a bug" })
 
+    // ── the keys: a cursor over the visible rows and buttons, each known by a key ──
+    // The mouse and Enter both go through act(), so a row does the same either way.
+    readonly property string cur: rp.entry.f.cursor ?? ""
+    function fkey(f) { return `f:${f.sources?.[0]?.source ?? ""}|${f.title}`; }
+    function runKey(x) { return x.run ? `run:${x.run.run}` : `agent:${x.agent.agent}`; }
+    function failedSources() { return (rp.r?.failures ?? []).flatMap(x => x.sources ?? []); }
+    readonly property var navList: {
+        const out = [], f = rp.entry.f;
+        const unread = (rp.r?.unread?.count ?? 0) > 0 && (rp.r?.reading ?? 0) === 0;
+        rp.running.slice(0, f.runN ?? 5).forEach(x => out.push(rp.runKey(x)));
+        if (rp.running.length > (f.runN ?? 5)) out.push("more:runN");
+        if (unread) out.push("read");
+        if (rp.failedSources().length > 0) {
+            out.push("fails");
+            if (f.failures) rp.failedSources().forEach(x => out.push(`fsrc:${x.source}`));
+        }
+        for (const g of rp.lookGroups) {
+            const key = `lookN-${g.level}`, n = f[key] ?? (g.level === "none" ? 10 : 20);
+            g.items.slice(0, n).forEach(x => out.push(rp.fkey(x)));
+            if (g.items.length > n) out.push(`more:${key}`);
+        }
+        if (rp.maybe.length > 0) {
+            out.push("maybe");
+            if (f.maybe) {
+                rp.maybe.slice(0, f.maybeN ?? 20).forEach(x => out.push(rp.fkey(x)));
+                if (rp.maybe.length > (f.maybeN ?? 20)) out.push("more:maybeN");
+            }
+        }
+        if (rp.settled.length > 0) {
+            out.push("settled");
+            if (f.settled) {
+                rp.settled.slice(0, f.settledN ?? 20).forEach(x => out.push(rp.fkey(x)));
+                if (rp.settled.length > (f.settledN ?? 20)) out.push("more:settledN");
+            }
+        }
+        const changes = rp.r?.changes ?? [];
+        changes.slice(0, f.changesN ?? 3).forEach(x => out.push(`file:${x.path}`));
+        if (changes.length > (f.changesN ?? 3)) out.push("more:changesN");
+        if (changes.length > 0) out.push("review");
+        const pics = rp.r?.pictures ?? [];
+        pics.slice(0, f.allPictures ? 80 : 6).forEach(x => out.push(`pic:${x.path}`));
+        if (pics.length > 6) out.push("pics");
+        return out;
+    }
+    function act(k) {
+        const f = rp.entry.f, i = k.indexOf(":"), t = i < 0 ? k : k.slice(0, i), id = i < 0 ? "" : k.slice(i + 1);
+        switch (t) {
+        case "run": rp.p.openRun(id); return;
+        case "agent": case "fsrc": rp.p.openAgent(id); return;
+        case "read": rp.p.readReports(); return;
+        case "fails": f.failures = !f.failures; break;
+        case "f": { const x = [...rp.all].find(y => rp.fkey(y) === k); if (x) rp.p.openFinding(x); return; }
+        case "maybe": f.maybe = !f.maybe; break;
+        case "settled": f.settled = !f.settled; break;
+        case "file": { const x = (rp.r?.changes ?? []).find(y => y.path === id); if (x) rp.p.openFileBy(x.path, x.by); return; }
+        case "review": rp.p.reviewRequested(); return;
+        case "pic": rp.p.pictureRequested(id); return;
+        case "pics": f.allPictures = !f.allPictures; break;
+        case "more": {
+            if (id === "changesN") {
+                const shown = f.changesN ?? 3;
+                f.changesN = Math.min((rp.r?.changes ?? []).length, shown === 3 ? 20 : shown + 20);
+            } else {
+                f[id] = (f[id] ?? (id === "runN" ? 5 : id === "lookN-none" ? 10 : 20)) + 20;
+            }
+            break;
+        }
+        }
+        rp.bump();
+    }
+    function navKey(k) {
+        const list = rp.navList, n = list.length;
+        if (!n) return false;
+        const at = list.indexOf(rp.cur);
+        if (k === Qt.Key_Down || k === Qt.Key_Up) {
+            rp.entry.f.cursor = list[Math.max(0, Math.min(n - 1, at < 0 ? 0 : at + (k === Qt.Key_Down ? 1 : -1)))];
+            rp.bump();
+            return true;
+        }
+        if ((k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Right) && at >= 0) { rp.act(list[at]); return true; }
+        return false;
+    }
+
     component Quiet: Item {
         id: q
         property string text: ""
         property string glyph: ""
         property bool on: false
+        property bool cursor: false
         property color ink: Appearance.colors.colInkSecondary
         signal clicked()
         width: qRow.implicitWidth + 16
         height: 30
-        Rectangle { anchors.fill: parent; radius: 8; color: q.on ? Appearance.m3colors.m3surfaceContainerHigh : qArea.containsMouse ? ColorUtils.transparentize(Appearance.m3colors.m3onSurface, 0.94) : "transparent" }
+        Rectangle { anchors.fill: parent; radius: 8; color: q.on ? Appearance.m3colors.m3surfaceContainerHigh : (qArea.containsMouse || q.cursor) ? ColorUtils.transparentize(Appearance.m3colors.m3onSurface, 0.94) : "transparent" }
         Row {
             id: qRow
             x: 8
@@ -65,6 +149,7 @@ PanelPage {
             StyledText { anchors.verticalCenter: parent.verticalCenter; text: q.text; font.pixelSize: 15; font.features: { "tnum": 1 }; color: q.on ? Appearance.colors.colInkMain : q.ink }
         }
         MouseArea { id: qArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: q.clicked() }
+        onCursorChanged: if (q.cursor) rp.reveal(q)
     }
     // a finding: its severity as a quiet mark, its title, who found it and where
     component FindingRow: Item {
@@ -72,10 +157,12 @@ PanelPage {
         property var f: ({})
         width: parent ? parent.width : 0
         height: frCol.implicitHeight + 16
+        readonly property bool cursor: rp.cur === rp.fkey(fr.f)
+        onCursorChanged: if (fr.cursor) rp.reveal(fr)
         Rectangle {
             anchors { fill: parent; leftMargin: -10; rightMargin: -10 }
             radius: 10
-            color: frArea.containsMouse ? ColorUtils.transparentize(Appearance.m3colors.m3onSurface, 0.95) : "transparent"
+            color: (frArea.containsMouse || fr.cursor) ? ColorUtils.transparentize(Appearance.m3colors.m3onSurface, 0.95) : "transparent"
         }
         Rectangle {
             x: 7
@@ -117,9 +204,9 @@ PanelPage {
             anchors { right: parent.right; verticalCenter: parent.verticalCenter }
             text: "chevron_right"
             iconSize: 17
-            color: frArea.containsMouse ? Appearance.colors.colInkSecondary : Appearance.colors.colInkFaint
+            color: (frArea.containsMouse || fr.cursor) ? Appearance.colors.colInkSecondary : Appearance.colors.colInkFaint
         }
-        MouseArea { id: frArea; anchors { fill: parent; leftMargin: -10; rightMargin: -10 } hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: rp.p.openFinding(fr.f) }
+        MouseArea { id: frArea; anchors { fill: parent; leftMargin: -10; rightMargin: -10 } hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: rp.act(rp.fkey(fr.f)) }
     }
 
     Column {
@@ -128,7 +215,7 @@ PanelPage {
         spacing: 2
 
         StyledText {
-            readonly property string says: !rp.p.canResults ? "Results need a newer background service. Restart the computer to get it."
+            readonly property string says: !rp.p.canResults ? "Results need a newer background service. Restarting it gets the new one."
                 : rp.p.resultsError.length ? rp.p.resultsError
                 : !rp.r ? "Reading the agents' reports…"
                 : rp.r.counts?.sources === 0 ? "Nothing has reported in this session yet." : ""
@@ -140,6 +227,7 @@ PanelPage {
             font.pixelSize: 15
             color: Appearance.colors.colInkSecondary
         }
+        PillButton { visible: !rp.p.canResults; text: "Restart it"; onClicked: rp.p.restartHostRequested() }
 
         // ── the headline ────────────────────────────────────────────────────
         Row {
@@ -166,8 +254,9 @@ PanelPage {
         // ── still running ───────────────────────────────────────────────────
         PanelSection { visible: rp.running.length > 0; text: "Running"; count: rp.running.length }
         Repeater {
-            model: rp.running.slice(0, 5)
+            model: rp.running.slice(0, rp.entry.f.runN ?? 5)
             PanelRow {
+                id: runRow
                 required property var modelData
                 readonly property var run: modelData.run ?? null
                 readonly property var members: run?.agents ?? []
@@ -177,8 +266,20 @@ PanelPage {
                 tone: "live"
                 meta: rp.p.took(run ?? modelData.agent)
                 extra: RunBar { visible: !!run; width: parent ? parent.width : 0; states: members.map(m => m.state) }
-                onClicked: run ? rp.p.openRun(run.run) : rp.p.openAgent(modelData.agent.agent)
+                cursor: rp.cur === rp.runKey(modelData)
+                onCursorChanged: if (cursor) rp.reveal(runRow)
+                onClicked: rp.act(rp.runKey(modelData))
             }
+        }
+
+        Quiet {
+            readonly property int rest: rp.running.length - (rp.entry.f.runN ?? 5)
+            visible: rest > 0
+            x: -8
+            glyph: "expand_more"
+            text: `${Math.min(20, rest)} more of ${rest}`
+            cursor: rp.cur === "more:runN"
+            onClicked: rp.act("more:runN")
         }
 
         // ── ask ─────────────────────────────────────────────────────────────
@@ -260,11 +361,14 @@ PanelPage {
         // ── written reports, read only on request ───────────────────────────
         Item { visible: (rp.r?.unread?.count ?? 0) > 0 || (rp.r?.reading ?? 0) > 0; width: 1; height: 10 }
         Rectangle {
+            id: readBtn
             visible: (rp.r?.unread?.count ?? 0) > 0 && (rp.r?.reading ?? 0) === 0
+            readonly property bool cursor: rp.cur === "read"
+            onCursorChanged: if (cursor) rp.reveal(readBtn)
             width: parent.width
             height: 42
             radius: 10
-            color: readArea.containsMouse ? ColorUtils.transparentize(Appearance.m3colors.m3onSurface, 0.94) : "transparent"
+            color: (readArea.containsMouse || rp.cur === "read") ? ColorUtils.transparentize(Appearance.m3colors.m3onSurface, 0.94) : "transparent"
             border.width: 1
             border.color: ColorUtils.transparentize(Appearance.m3colors.m3onSurface, 0.84)
             Row {
@@ -286,7 +390,7 @@ PanelPage {
                 font.features: { "tnum": 1 }
                 color: Appearance.colors.colPrimary
             }
-            MouseArea { id: readArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: rp.p.readReports() }
+            MouseArea { id: readArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: rp.act("read") }
         }
         StyledText {
             visible: (rp.r?.unread?.count ?? 0) > 0 && (rp.r?.reading ?? 0) === 0
@@ -325,7 +429,7 @@ PanelPage {
                 spacing: 8
                 MaterialSymbol { anchors.verticalCenter: parent.verticalCenter; text: "error"; iconSize: 16; color: Appearance.colors.colClay }
                 StyledText { anchors.verticalCenter: parent.verticalCenter; text: `${parent.parent.n} couldn't run`; font.pixelSize: 15; color: Appearance.colors.colClay }
-                Quiet { anchors.verticalCenter: parent.verticalCenter; text: rp.entry.f.failures ? "Hide" : "Show"; onClicked: { rp.entry.f.failures = !rp.entry.f.failures; rp.bump(); } }
+                Quiet { anchors.verticalCenter: parent.verticalCenter; text: rp.entry.f.failures ? "Hide" : "Show"; cursor: rp.cur === "fails"; onClicked: rp.act("fails") }
             }
         }
         Repeater {
@@ -338,10 +442,13 @@ PanelPage {
                 Repeater {
                     model: modelData.sources ?? []
                     PanelRow {
+                        id: failRow
                         required property var modelData
                         mark: "failed"
                         title: modelData.name
-                        onClicked: rp.p.openAgent(modelData.source)
+                        cursor: rp.cur === `fsrc:${modelData.source}`
+                        onCursorChanged: if (cursor) rp.reveal(failRow)
+                        onClicked: rp.act(`fsrc:${modelData.source}`)
                     }
                 }
             }
@@ -368,14 +475,18 @@ PanelPage {
                     x: -8
                     glyph: "expand_more"
                     text: `${Math.min(20, rest)} more of ${rest}`
-                    onClicked: { rp.entry.f[lg.key] = lg.n + 20; rp.bump(); }
+                    cursor: rp.cur === `more:${lg.key}`
+                    onClicked: rp.act(`more:${lg.key}`)
                 }
             }
         }
 
         // ── changed since they were found, folded ───────────────────────────
         Item {
+            id: maybeRow
             visible: rp.maybe.length > 0
+            readonly property bool cursor: rp.cur === "maybe"
+            onCursorChanged: if (cursor) rp.reveal(maybeRow)
             width: parent.width
             height: 44
             StyledText {
@@ -383,10 +494,10 @@ PanelPage {
                 elide: Text.ElideRight
                 text: `${rp.maybe.length} may be fixed · their file changed after the report`
                 font.pixelSize: 14
-                color: maybeArea.containsMouse ? Appearance.colors.colInkMain : Appearance.colors.colInkSecondary
+                color: (maybeArea.containsMouse || rp.cur === "maybe") ? Appearance.colors.colInkMain : Appearance.colors.colInkSecondary
             }
             MaterialSymbol { id: maybeChev; anchors { right: parent.right; verticalCenter: parent.verticalCenter } text: rp.entry.f.maybe ? "expand_more" : "chevron_right"; iconSize: 17; color: Appearance.colors.colInkFaint }
-            MouseArea { id: maybeArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { rp.entry.f.maybe = !rp.entry.f.maybe; rp.bump(); } }
+            MouseArea { id: maybeArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: rp.act("maybe") }
         }
         Repeater {
             model: rp.entry.f.maybe ? rp.maybe.slice(0, rp.entry.f.maybeN ?? 20) : []
@@ -398,22 +509,26 @@ PanelPage {
             x: -8
             glyph: "expand_more"
             text: `${Math.min(20, rest)} more of ${rest}`
-            onClicked: { rp.entry.f.maybeN = (rp.entry.f.maybeN ?? 20) + 20; rp.bump(); }
+            cursor: rp.cur === "more:maybeN"
+            onClicked: rp.act("more:maybeN")
         }
 
         // ── settled, folded ─────────────────────────────────────────────────
         Item {
+            id: settledRow
             visible: rp.settled.length > 0
+            readonly property bool cursor: rp.cur === "settled"
+            onCursorChanged: if (cursor) rp.reveal(settledRow)
             width: parent.width
             height: 44
             StyledText {
                 anchors { left: parent.left; verticalCenter: parent.verticalCenter }
                 text: `${rp.settled.length} settled · fixed, done, checked`
                 font.pixelSize: 14
-                color: settledArea.containsMouse ? Appearance.colors.colInkMain : Appearance.colors.colInkSecondary
+                color: (settledArea.containsMouse || rp.cur === "settled") ? Appearance.colors.colInkMain : Appearance.colors.colInkSecondary
             }
             MaterialSymbol { anchors { right: parent.right; verticalCenter: parent.verticalCenter } text: rp.entry.f.settled ? "expand_more" : "chevron_right"; iconSize: 17; color: Appearance.colors.colInkFaint }
-            MouseArea { id: settledArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { rp.entry.f.settled = !rp.entry.f.settled; rp.bump(); } }
+            MouseArea { id: settledArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: rp.act("settled") }
         }
         Repeater {
             model: rp.entry.f.settled ? rp.settled.slice(0, rp.entry.f.settledN ?? 20) : []
@@ -425,7 +540,8 @@ PanelPage {
             x: -8
             glyph: "expand_more"
             text: `${Math.min(20, rest)} more of ${rest}`
-            onClicked: { rp.entry.f.settledN = (rp.entry.f.settledN ?? 20) + 20; rp.bump(); }
+            cursor: rp.cur === "more:settledN"
+            onClicked: rp.act("more:settledN")
         }
 
         // ── the files they changed ──────────────────────────────────────────
@@ -433,13 +549,16 @@ PanelPage {
         Repeater {
             model: (rp.r?.changes ?? []).slice(0, rp.entry.f.changesN ?? 3)
             PanelRow {
+                id: fileRow
                 required property var modelData
                 glyph: "edit"
                 title: rp.base(modelData.path)
                 line: (modelData.by ?? []).length > 1 ? `${modelData.by.length} agents` : (modelData.by?.[0]?.name ?? "")
                 add: modelData.add ?? 0
                 del: modelData.del ?? 0
-                onClicked: rp.p.openFileBy(modelData.path, modelData.by)
+                cursor: rp.cur === `file:${modelData.path}`
+                onCursorChanged: if (cursor) rp.reveal(fileRow)
+                onClicked: rp.act(`file:${modelData.path}`)
             }
         }
         Row {
@@ -449,10 +568,14 @@ PanelPage {
                 readonly property int n: (rp.r?.changes ?? []).length
                 visible: n > (rp.entry.f.changesN ?? 3)
                 glyph: "expand_more"
-                text: (rp.entry.f.changesN ?? 3) === 3 ? `All ${n} files` : `${Math.min(20, n - rp.entry.f.changesN)} more`
-                onClicked: { rp.entry.f.changesN = (rp.entry.f.changesN ?? 3) === 3 ? 20 : rp.entry.f.changesN + 20; rp.bump(); }
+                readonly property int shown: rp.entry.f.changesN ?? 3
+                // the first press shows 20 files at most, then 20 more each: the label says how many
+                readonly property int next: Math.min(n, shown === 3 ? 20 : shown + 20)
+                text: next >= n && shown === 3 ? `All ${n} files` : `${next - shown} more`
+                cursor: rp.cur === "more:changesN"
+                onClicked: rp.act("more:changesN")
             }
-            Quiet { visible: (rp.r?.changes ?? []).length > 0; glyph: "difference"; text: "Review changes"; onClicked: rp.p.reviewRequested() }
+            Quiet { visible: (rp.r?.changes ?? []).length > 0; glyph: "difference"; text: "Review changes"; cursor: rp.cur === "review"; onClicked: rp.act("review") }
         }
 
         // ── pictures ────────────────────────────────────────────────────────
@@ -473,13 +596,17 @@ PanelPage {
                     color: ColorUtils.transparentize(Appearance.m3colors.m3onSurface, 0.95)
                     Image {
                         anchors.fill: parent
-                        source: `file://${thumb.modelData.path}`
+                        source: FileUtils.fileUrl(thumb.modelData.path)
                         fillMode: Image.PreserveAspectCrop
                         verticalAlignment: Image.AlignTop
                         asynchronous: true
                         sourceSize.width: 360
                     }
-                    MouseArea { id: thumbArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: rp.p.pictureRequested(thumb.modelData.path) }
+                    readonly property bool cursor: rp.cur === `pic:${thumb.modelData.path}`
+                    onCursorChanged: if (cursor) rp.reveal(thumb)
+                    border.width: cursor ? 2 : 0
+                    border.color: Appearance.colors.colPrimary
+                    MouseArea { id: thumbArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: rp.act(`pic:${thumb.modelData.path}`) }
                     StyledToolTip { text: `${thumb.modelData.name} · step ${(thumb.modelData.step ?? 0) + 1}`; extraVisibleCondition: thumbArea.containsMouse }
                 }
             }
@@ -489,7 +616,8 @@ PanelPage {
             x: -8
             glyph: rp.entry.f.allPictures ? "expand_less" : "expand_more"
             text: rp.entry.f.allPictures ? "Fewer pictures" : `All ${(rp.r?.pictures ?? []).length} pictures`
-            onClicked: { rp.entry.f.allPictures = !rp.entry.f.allPictures; rp.bump(); }
+            cursor: rp.cur === "pics"
+            onClicked: rp.act("pics")
         }
     }
 }

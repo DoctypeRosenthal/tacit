@@ -38,6 +38,10 @@ MouseArea {
         return `${value.toFixed(precision)}${compact ? "" : " "}${units[unitIndex]}`
     }
 
+    // Loopback, tunnels, bridges and container links carry packets a physical interface counts too, so adding
+    // them would double the rate.
+    readonly property var virtualInterface: /^(lo$|veth|docker|br|virbr|vnet|tun|tap|wg|tailscale|zt|cni|flannel|podman|lxc)/
+
     function updateRate(contents) {
         let receivedBytes = 0
         let transmittedBytes = 0
@@ -48,7 +52,7 @@ MouseArea {
             if (separator < 0) continue
 
             const interfaceName = line.slice(0, separator).trim()
-            if (!interfaceName || interfaceName === "lo") continue
+            if (!interfaceName || virtualInterface.test(interfaceName)) continue
 
             const fields = line.slice(separator + 1).trim().split(/\s+/)
             if (fields.length < 9) continue

@@ -123,7 +123,8 @@ ContentPage {
                         from: 50; to: 300; stepSize: 25
                         onValueChanged: {
                             const newVal = value / 100.0
-                            if (newVal === (monitorConfig.monitors[monitorCanvas.selectedIndex]?.scale ?? 1.0)) return
+                            // the box shows the stored scale rounded to 2 decimals: that is not a change
+                            if (value === Math.round((monitorConfig.monitors[monitorCanvas.selectedIndex]?.scale ?? 1.0) * 100)) return
                             monitorConfig.updateMonitor(monitorCanvas.selectedIndex, { scale: newVal })
                             monitorConfig.applyAndSave(monitorCanvas.selectedIndex)
                         }
@@ -196,17 +197,15 @@ ContentPage {
                         buttonIcon: "keyboard"
                         text: Translation.tr("Keyboard layout")
                         placeholderText: Translation.tr("e.g., us, es, latam")
-                        Component.onCompleted: value = Config.options.hyprland.input.kbLayout
-                        onValueChanged: kbLayoutDebounceTimer.restart()
-
-                        Timer {
-                            id: kbLayoutDebounceTimer
-                            interval: 1000
-                            repeat: false
-                            onTriggered: {
-                                Config.options.hyprland.input.kbLayout = kbLayoutField.value
-                                HyprlandConfig.set("input:kb_layout", kbLayoutField.value)
-                            }
+                        // none chosen yet: the layout in use, which is not written back as a choice
+                        readonly property string inUse: Config.options.hyprland.input.kbLayout || HyprlandXkb.layoutCodes.join(",")
+                        Component.onCompleted: value = inUse
+                        // applied on Enter or the check, not while typing: half a layout is not one
+                        confirmButtonVisible: value.trim().length > 0 && value.trim() !== inUse
+                        onConfirmClicked: {
+                            if (!confirmButtonVisible) return   // Enter with nothing new, or nothing at all
+                            Config.options.hyprland.input.kbLayout = value.trim()
+                            HyprlandConfig.set("input:kb_layout", value.trim())
                         }
                     }
                     ConfigSwitch {
@@ -304,7 +303,8 @@ ContentPage {
                         from: 1; to: 30; stepSize: 1
                         onValueChanged: {
                             const newVal = value / 10.0
-                            if (newVal === Config.options.hyprland.input.touchpad.scrollFactor) return
+                            // the box shows the stored factor rounded to 1 decimal: that is not a change
+                            if (value === Math.round(Config.options.hyprland.input.touchpad.scrollFactor * 10)) return
                             Config.options.hyprland.input.touchpad.scrollFactor = newVal
                             HyprlandConfig.set("input:touchpad:scroll_factor", newVal)
                         }

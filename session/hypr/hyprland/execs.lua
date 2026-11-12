@@ -50,10 +50,9 @@ hl.on("hyprland.start", function ()
     -- Hyprland is not started by a systemd session generator, so nothing ever reaches
     -- graphical-session.target, which refuses a manual start. Three of this desktop's own
     -- units were WantedBy it (flowd, focus-priority, cma-watch) and so never ran at all.
-    -- They are wanted by tacit-session.target now; start it after the activation
-    -- environment is exported so the units inherit WAYLAND_DISPLAY.
-    hl.exec_cmd("systemctl --user start tacit-session.target")
-    hl.exec_cmd("sleep 1 && dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP") -- Some fix idk
+    -- They are wanted by tacit-session.target now; start it after the compositor's own variables are exported (one
+    -- command, since every exec_cmd runs at once, with the first line's too), so the units inherit WAYLAND_DISPLAY and can reach the compositor.
+    hl.exec_cmd("systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE TACIT_SHELL TACIT_BIN TACIT_HYPR XDG_CONFIG_DIRS PATH; dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE; systemctl --user start tacit-session.target")
 
     -- Audio
 

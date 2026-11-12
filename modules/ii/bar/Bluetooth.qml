@@ -43,7 +43,9 @@ MouseArea {
     // Either button opens the section: the pointing-hand cursor and the accepted left button
     // promised an action. The panel is opened here as well as in the handler, which does not
     // exist while the sidebar is unloaded.
-    onClicked: {
+    // With click to show, a left click shows the popup (StyledPopup); the right button opens the section.
+    onClicked: (mouse) => {
+        if (Config.options.bar.tooltips.clickToShow && mouse.button === Qt.LeftButton) return;
         GlobalStates.sidebarRightOpen = true;
         GlobalStates.requestBluetoothDialog();
     }

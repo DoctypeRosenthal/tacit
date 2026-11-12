@@ -29,11 +29,13 @@ ALIAS = {"claude_app": "praxis", "claude-app": "praxis", "org.chromium.Chromium"
 QML = {"claude.qml": "praxis", "code.qml": "graphis", "viewer.qml": "viewer",
        "tacit-settings.qml": "settings", "activity.qml": "activity", "welcome.qml": "welcome"}
 OWN = set(QML.values())
+# Tacit's apps whose window only hides when closed: the process lives on, so Quit asks them to quit (tacit-app call)
+HIDE_ON_CLOSE = {"graphis", "praxis", "viewer"}
 AGENTS = {"claude": "claude", "codex": "codex", "opencode": "opencode", "pi": "pi"}
 # terminals: what is left running in one after its shell or agent is gone gets a row of its own
 TERMINALS = {"foot", "kitty", "alacritty", "wezterm", "ghostty", "konsole", "gnome-terminal", "xterm", "ptyxis"}
 # caches that only ever hold downloads that come back on their own; never the whole ~/.cache
-CACHES = [".cache/pip", ".cache/uv", ".cache/yarn", ".cache/go-build", ".cache/thumbnails", ".npm/_cacache"]
+CACHES = [".cache/pip", ".cache/uv", ".cache/yarn", ".cache/go-build", ".cache/thumbnails", ".npm/_cacache", ".cache/tacit-bundle/pkg"]
 OLD_DAYS = 30
 
 out_lock = threading.Lock()
@@ -250,8 +252,16 @@ def newest_mtime(e, cap=20000):
                 return m
     return m
 
+def downloads_dir():
+    """The account's Downloads folder by its own name (xdg-user-dirs names it in the account's language)."""
+    try:
+        d = subprocess.run(["xdg-user-dir", "DOWNLOAD"], capture_output=True, text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        d = ""
+    return d if d and d != HOME else os.path.join(HOME, "Downloads")
+
 def old_downloads():
-    d = os.path.join(HOME, "Downloads"); cut = time.time() - OLD_DAYS * 86400
+    d = downloads_dir(); cut = time.time() - OLD_DAYS * 86400
     out = []
     try:
         for e in os.scandir(d):
@@ -592,6 +602,14 @@ def units_of(key):
         us.add(cg.rsplit("/", 1)[-1])
     return sorted(u for u in us if u.endswith(".scope") and u.startswith(("app-", "agent-"))), []
 
+def quit_via_app(app):
+    """Ask one of Tacit's own apps to quit through its IPC; True when it took the call."""
+    tool = os.path.join(os.environ.get("TACIT_BIN") or os.path.join(HOME, ".local/bin"), "tacit-app")
+    try:
+        return subprocess.run([tool, "call", app, "quit"], capture_output=True, timeout=8).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
 def act(req):
     op = req.get("op")
     if op == "interval":
@@ -603,7 +621,9 @@ def act(req):
         if not g or g["kind"] not in ("app", "left") or g["id"] in ("activity",):
             emit({"ev": "done", "op": op, "key": req.get("key"), "ok": False}); return
         force = bool(req.get("force"))
-        if g["windows"] and not force:
+        if g["id"] in HIDE_ON_CLOSE and not force and quit_via_app(g["id"]):
+            pass    # Graphis asks about unsaved files in its window first, as it does on Ctrl+Q
+        elif g["windows"] and not force:
             for w in g["windows"]:
                 subprocess.run(["hyprctl", "dispatch", f'hl.dsp.window.close({{ window = "address:{w["address"]}" }})'],
                                capture_output=True, timeout=3)
@@ -624,8 +644,12 @@ def act(req):
         r = host({"op": op, "id": req.get("id", "")})
         emit({"ev": "done", "op": op, "id": req.get("id"), "ok": bool(r) and r.get("ev") != "error"})
     elif op in ("trashOld", "clearCaches"):
-        # slow disks: off the sampling thread, and a timeout still answers
+        # slow (a big cache takes minutes): off the sampling thread, one at a time, and a timeout still answers
+        if not file_lock.acquire(blocking=False):
+            emit({"ev": "done", "op": op, "ok": False}); return
         threading.Thread(target=slow_action, args=(op,), daemon=True).start()
+
+file_lock = threading.Lock()
 
 def slow_action(op):
     try:
@@ -642,6 +666,8 @@ def slow_action(op):
             emit({"ev": "done", "op": op, "ok": True})
     except (OSError, subprocess.SubprocessError):
         emit({"ev": "done", "op": op, "ok": False})
+    finally:
+        file_lock.release()
     disk_start(force=True)
 
 state = {"interval": float(os.environ.get("ACTIVITY_INTERVAL", "2"))}
@@ -653,19 +679,23 @@ def main():
         top(); return
     disk_start()
     nxt = time.monotonic()
+    pending = b""       # read from the fd itself: select cannot see lines that sys.stdin has already buffered
     while True:
         if time.monotonic() >= nxt:
             emit(sample())
             nxt = time.monotonic() + state["interval"]
-        r, _, _ = select.select([sys.stdin], [], [], max(0.05, nxt - time.monotonic()))
+        r, _, _ = select.select([0], [], [], max(0.05, nxt - time.monotonic()))
         if r:
-            line = sys.stdin.readline()
-            if not line:
+            chunk = os.read(0, 65536)
+            if not chunk:
                 return      # Activity went away
-            try:
-                act(json.loads(line))
-            except (ValueError, OSError, subprocess.SubprocessError) as e:
-                emit({"ev": "error", "message": str(e)})
+            pending += chunk
+            while b"\n" in pending:
+                line, pending = pending.split(b"\n", 1)
+                try:
+                    act(json.loads(line))
+                except (ValueError, OSError, subprocess.SubprocessError) as e:
+                    emit({"ev": "error", "message": str(e)})
 
 if __name__ == "__main__":
     main()

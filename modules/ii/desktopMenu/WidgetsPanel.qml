@@ -1,3 +1,4 @@
+import qs.services
 import qs.modules.common
 import qs.modules.common.widgets
 import qs.modules.common.functions
@@ -37,14 +38,14 @@ Item {
             spacing: 2
             MenuSwitch {
                 glyph: Config.options.background.widgetsLocked ? "lock" : "lock_open"
-                label: "Lock positions"
+                label: Translation.tr("Lock positions")
                 on: Config.options.background.widgetsLocked
                 onFlipped: value => Config.options.background.widgetsLocked = value
             }
         }
         MenuHairline {}
         StyledText {
-            text: "On the desktop"
+            text: Translation.tr("On the desktop")
             font.pixelSize: Appearance.font.pixelSize.smallie
             color: Appearance.colors.colSubtext
         }
@@ -56,7 +57,7 @@ Item {
                 MenuSwitch {
                     required property var modelData
                     glyph: modelData.icon
-                    label: modelData.name
+                    label: Translation.tr(modelData.name)
                     on: Config.options.background.widgets[modelData.key].enable
                     onFlipped: value => Config.options.background.widgets[modelData.key].enable = value
                 }

@@ -87,7 +87,12 @@ Singleton {
     }
     // A .conf with [Interface] is WireGuard; .ovpn is OpenVPN (needs networkmanager-openvpn).
     function importFile(path: string): void {
-        const p = (path + "").replace(/^file:\/\//, "");
+        // A dropped file arrives as a URL (a space is %20); a typed path is taken as it is.
+        let p = path + "";
+        if (p.startsWith("file://")) {
+            p = p.slice("file://".length);
+            try { p = decodeURIComponent(p); } catch (e) {}   // a literal % is not an escape
+        }
         importProc.path = p;
         importProc.exec(["bash", "-c", 'f="$1"; if grep -qi "^\\[Interface\\]" "$f"; then t=wireguard; elif [[ "$f" == *.ovpn ]] || grep -qiE "^(client|remote) " "$f"; then t=openvpn; else echo "not a VPN file" >&2; exit 2; fi; out=$(nmcli connection import type "$t" file "$f" 2>&1) || { echo "$out" >&2; exit 1; }; n=$(echo "$out" | sed -nE "s/.*Connection .([^\']+). .*/\\1/p"); [ -n "$n" ] && nmcli connection modify "$n" connection.autoconnect no >/dev/null 2>&1; echo "$n"', "_", p]);
     }
@@ -176,6 +181,7 @@ Singleton {
     }
     Process {
         id: importProc
+        environment: ({ LANG: "C", LC_ALL: "C" })   // the profile name is read from nmcli's English message
         property string path: ""
         property string out: ""
         stdout: StdioCollector {

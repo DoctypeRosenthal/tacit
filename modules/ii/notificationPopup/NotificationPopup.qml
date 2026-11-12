@@ -128,6 +128,45 @@ Scope {
                 onTriggered: root.closeCenter()
             }
 
+            // Click away: the panel is a small masked window, so it cannot use the focus grab (Hyprland drops
+            // it when the pointer rests outside, and it takes the keyboard). While the centre is open a
+            // transparent window covers the rest of the screen, with a hole where the panel is; a press or
+            // a wheel there closes it. A touch screen and a drag never send the pointer leaving.
+            PanelWindow {
+                id: awayCatcher
+                screen: root.screen
+                visible: root.centerOpen
+                WlrLayershell.namespace: "quickshell:notificationAway"
+                WlrLayershell.layer: root.WlrLayershell.layer
+                WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+                exclusionMode: ExclusionMode.Ignore
+                anchors {
+                    top: true
+                    bottom: true
+                    left: true
+                    right: true
+                }
+                color: "transparent"
+                mask: Region {
+                    width: awayCatcher.width
+                    height: awayCatcher.height
+                    Region {
+                        // the panel's window sits in its corner of this one
+                        x: (root.isLeft ? 0 : root.isRight ? awayCatcher.width - root.width : (awayCatcher.width - root.width) / 2) + dock.x
+                        y: (root.isBottom ? awayCatcher.height - root.height : 0) + dock.y
+                        width: dock.width
+                        height: dock.height
+                        intersection: Intersection.Subtract
+                    }
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.AllButtons
+                    onPressed: root.closeCenter()
+                    onWheel: root.closeCenter()
+                }
+            }
+
             Item {
                 id: dock
                 readonly property int pad: 8

@@ -30,6 +30,7 @@ ApplicationWindow {
     // reading every transcript can take seconds (one long session is hundreds of MB): the list says
     // so meanwhile, and says so when nothing was found
     property bool searching: false
+    property string searchError: ""   // why the transcript search failed: the list says so rather than "Nothing found"
     property var selected: null
     property bool panelOpen: false   // the side panel (Files, Review)
     // the panel slides out of the window's right edge and back, on the rail's curve; docked, the
@@ -114,8 +115,10 @@ ApplicationWindow {
         if (root.width >= 720 && root.height >= 420)
             shapeFile.setText(`${Math.round(root.width)} ${Math.round(root.height)}\n`);
     }
-    // The X hides this window and the instance stays, so this is where its shape is written, and
-    // where deletes still in their undo minute are sent.
+    // Closing ends the app, unless a message is typed and not sent (then the window hides and the instance stays, with the
+    // draft); it used to stay running after every close (Discord, Axy). Sessions run in agent-host, so no agent stops.
+    // Hidden or closed, this is where the window's shape is written, and where deletes still in their undo minute are sent.
+    onClosing: close => { if (!conv.hasDraft) Qt.quit(); }
     onVisibleChanged: if (!root.visible) { root.rememberShape(); fm.flushDeletes(); }
     onActiveChanged: if (root.active) presence.refresh()
 
@@ -187,7 +190,7 @@ ApplicationWindow {
     function rename(id, title) {
         if (!title.trim().length) return;
         host.request({ op: "rename", id: id, title: title.trim() }, m => {
-            if (m.ev !== "renamed") return;
+            if (m.ev !== "renamed") { rail.notice(`Not renamed: ${m.message ?? "the background service did not answer"}`); return; }
             root.refresh();
             if (root.selected && root.selected.id === id) root.selected = Object.assign({}, root.selected, { title: m.title });
         });
@@ -230,6 +233,7 @@ ApplicationWindow {
         host.request({ op: "history" }, m => {
             if (m.ev !== "history") return;
             const list = m.sessions.filter(root.worthShowing);
+            root.allHistory = m.sessions;
             root.loaded = true;
             // A history that has not changed keeps its objects. A new array rebuilds every sidebar
             // row — taking a rename box being typed in with it — and rewrites claude-last.txt.
@@ -242,6 +246,12 @@ ApplicationWindow {
                 const id = (lastFile.text() || "").trim();
                 const s = root.history.find(x => x.id === id);
                 if (s) root.selected = s;
+            }
+            // an open(id) that came before the history did
+            if (root.wantedId.length) {
+                const w = root.wantedId;
+                root.openId(w);
+                root.reveal(w);
             }
         });
     }
@@ -278,6 +288,7 @@ ApplicationWindow {
         onTriggered: { hookState.running = false; hookState.running = true; }
     }
     // ── the rail: FolderModel's rows, the cove, target mode, what is open on the desktop ──
+    property var allHistory: []         // the host's whole history, before worthShowing: for a session opened by id
     property bool loaded: false        // the first history reply: until then the rail says "Looking…"
     FolderModel {
         id: fm
@@ -293,6 +304,7 @@ ApplicationWindow {
         query: rail.query
         found: root.found
         searching: root.searching
+        searchError: root.searchError
         filter: rail.filter
         frozen: rail.frozen
         selectedId: root.selectedId
@@ -395,7 +407,15 @@ ApplicationWindow {
         const l = host.live[id];
         if (s) root.choose(s);
         else if (l) root.choose({ id: id, tool: l.tool || "claude", cwd: l.cwd, title: l.prompt || "Session", prompt: l.prompt ?? "", lastPrompt: "", started: l.started, updated: l.last });
+        else if (!root.loaded) root.wantedId = id;   // the app has just started: opened when the history answers
+        else {
+            // one the rail leaves out (a /tmp run, an sdk-cli one) or the host has not listed: its transcript is
+            // read by id, and the conversation says so itself if that fails
+            root.choose(root.allHistory.find(x => x.id === id)
+                        ?? { id: id, tool: "claude", cwd: "", title: "Session", prompt: "", lastPrompt: "", started: 0, updated: 0 });
+        }
     }
+    property string wantedId: ""
     // claudeapp open(id): its folder unfolds (Older folders and Show more open if they hold it),
     // and the row is scrolled into view
     function reveal(id) {
@@ -433,6 +453,7 @@ ApplicationWindow {
         root.lastUndo = null;
         if (!u) return;
         if (u.kind === "delete") fm.undoDelete(u.id);
+        else if (u.kind === "archive") { if (fm.archived.includes(u.id)) fm.toggleArchive(u.id); root.applyNow(); }
         else if (Date.now() - u.at < 60000) {
             if (u.was === undefined) fm.unrefile(u.id);
             else fm.refile(u.id, u.was);
@@ -479,7 +500,7 @@ ApplicationWindow {
     property string pickingFor: ""
     function pickFolder() {
         root.pickingFor = "folder";
-        Quickshell.execDetached(fm.shellIpc.concat(["pickdir", root.home, `${root.home}/.config/quickshell/tacit/claude.qml`, "claudeapp", "Add to Praxis"]));
+        Quickshell.execDetached(fm.shellIpc.concat(["pickdir", root.home, FileUtils.trimFileProtocol(Quickshell.shellPath("claude.qml")), "claudeapp", "Add to Praxis"]));
     }
     // a live mark: exactly one window and no agent focuses it; anything else opens the folder's cove
     function markClicked(row) {
@@ -511,9 +532,12 @@ ApplicationWindow {
         case "files": root.showInPinax(row); break;
         case "delete":
             if (row && root.canDelete(row)) {
-                fm.scheduleDelete(arg);
-                root.lastUndo = { kind: "delete", id: arg };
-                root.deleteRan = Object.assign({}, root.deleteRan, { [arg]: root.hostRuns(arg) });
+                const how = fm.scheduleDelete(arg);
+                if (how === "archived") { root.lastUndo = { kind: "archive", id: arg }; root.applyNow(); }
+                else if (how === "undo") {
+                    root.lastUndo = { kind: "delete", id: arg };
+                    root.deleteRan = Object.assign({}, root.deleteRan, { [arg]: root.hostRuns(arg) });
+                }
             }
             break;
         case "new": root.newSession(arg); break;
@@ -587,21 +611,24 @@ ApplicationWindow {
             const q = rail.query.trim();
             if (q.length < 3) { root.found = []; root.searching = false; return; }
             root.searching = true;
+            root.searchError = "";
             host.request({ op: "search", q: q }, m => {
                 if (m.q !== undefined && m.q !== rail.query.trim()) return;   // an older query's answer
                 root.searching = false;
                 if (m.ev === "search") root.found = m.results.filter(root.worthShowing);
+                else root.searchError = m.message ?? "the background service did not answer";
             });
         }
     }
     Connections {
         target: rail
-        function onQueryChanged() { root.found = []; root.searching = rail.query.trim().length >= 3; searchLater.restart(); }
+        function onQueryChanged() { root.found = []; root.searchError = ""; root.searching = rail.query.trim().length >= 3; searchLater.restart(); }
     }
 
     readonly property var noChanges: ({ files: [], add: 0, del: 0 })
     function choose(s) {
         if (!s) return;
+        root.wantedId = "";
         const t = Date.now();
         root.selected = s;
         if (Quickshell.env("PRAXIS_TEST") === "1") console.warn(`TESTSWITCH choose took ${Date.now() - t} ms`);
@@ -649,7 +676,11 @@ ApplicationWindow {
         function onConnectedChanged() {
             root.hostLostAt = Date.now();
             root.liveSeen = null;
+            // the host's workflows and commands die with it: no "running" and no ticking clock while it is down
+            if (!host.connected) root.agentsInfo = null;
             if (host.connected && !root.accountsHeard) root.checkClaude();
+            // a search that failed for want of the service is asked again when it is back
+            if (host.connected && root.searchError.length) searchLater.restart();
         }
     }
     Timer { running: !host.connected; interval: 1000; repeat: true; onTriggered: root.hostClock = Date.now() }
@@ -679,8 +710,10 @@ ApplicationWindow {
             root.agentsAsking = false;
             // another session was opened meanwhile: its own read was skipped
             if (root.idOf(root.selected) !== id) { root.loadAgents(); return; }
-            if (m.ev !== "agents") return;
+            // what ran under a host that is gone, or cannot say, is not shown as still running
+            if (m.ev !== "agents") { if (root.agentsInfo) root.agentsInfo = null; return; }
             delete m.tag;
+            root.markStopFailures(m);
             // an unchanged reply keeps its object: a new one rebuilds every row bound to it
             if (JSON.stringify(m) !== JSON.stringify(root.agentsInfo)) root.agentsInfo = m;
         });
@@ -688,7 +721,24 @@ ApplicationWindow {
     function stopTask(task) {
         const id = root.idOf(root.selected);
         if (!id.length || !task.length) return;
-        host.request({ op: "stop_task", id: id, task: task }, () => agentsSoon.restart());
+        if (root.stopFailed[task]) { const f = Object.assign({}, root.stopFailed); delete f[task]; root.stopFailed = f; }
+        host.request({ op: "stop_task", id: id, task: task }, m => {
+            if (m.ev === "error") {
+                // an error the host did not record as a refusal (no process, no session): shown as one, or
+                // the button would read "Stopping…" until the state changed
+                const f = Object.assign({}, root.stopFailed);
+                f[task] = m.message ?? "the background service did not answer";
+                root.stopFailed = f;
+                if (root.agentsInfo) { const i = JSON.parse(JSON.stringify(root.agentsInfo)); root.markStopFailures(i); root.agentsInfo = i; }
+            }
+            agentsSoon.restart();
+        });
+    }
+    // task -> why its stop failed; the host's `agents` reply says nothing of a failure it did not record
+    property var stopFailed: ({})
+    function markStopFailures(info) {
+        for (const e of (info.agents ?? []).concat(info.workflows ?? [], info.shells ?? []))
+            if (root.stopFailed[e.task ?? ""] && e.state === "running" && !e.stop) e.stop = { state: "refused", message: root.stopFailed[e.task] };
     }
     Timer { id: agentsSoon; interval: 600; onTriggered: root.loadAgents() }
     Timer {
@@ -732,6 +782,9 @@ ApplicationWindow {
             const h = f.hunks[0];
             side.review.comments = side.review.comments.concat([{ path: side.review.rel(f), line: h.line, text: text, quote: "", hunk: h.id }]);
         }
+        // the dock's and Activity's Quit: the process ends, unless something typed is not sent: the
+        // window is shown with it then, as closing keeps it. Hiding first saves the window's shape
+        function quit(): string { if (conv.hasDraft) { root.visible = true; return "draft"; } root.visible = false; Qt.quit(); return "quit"; }
         function present(): void { root.visible = true; }   // not "show": qs parses `ipc call x show` as `ipc show`
         function state(): string {
             return JSON.stringify({ connected: host.connected, history: root.history.length, rows: root.railRows.length,
@@ -777,7 +830,7 @@ ApplicationWindow {
         function open(id: string): void {
             root.visible = true;
             root.openId(id);
-            root.reveal(id);
+            if (root.wantedId !== id) root.reveal(id);
         }
         // Files' pick mode hands its choice back here
         // (the list can arrive as JSON text, as one path, or already unwrapped to a string)
@@ -822,9 +875,9 @@ ApplicationWindow {
     }
 
     Shortcut { sequence: "Ctrl+P"; onActivated: { cove.close(); rail.focusSearch(); } }
-    // Ctrl+Q does what the X does: this instance stays warm, and a message typed but not sent
-    // cannot be thrown away by a keystroke. Ctrl+K is the palette's row menu everywhere.
-    Shortcut { sequence: "Ctrl+Q"; onActivated: root.visible = false }
+    // Ctrl+Q does what the X does: a message typed but not sent cannot be thrown away by a keystroke (the window hides
+    // and the instance stays). Ctrl+K is the palette's row menu everywhere.
+    Shortcut { sequence: "Ctrl+Q"; onActivated: root.close() }
     Shortcut { sequence: "Ctrl+N"; onActivated: { cove.close(); root.newSession(rail.cursorFolder()); } }
     Shortcut { sequence: "Ctrl+Shift+N"; onActivated: { cove.close(); rail.startTargets("new", {}, {}, true); } }
     Shortcut { sequence: "Ctrl+K"; onActivated: root.verbsOfOpen() }
@@ -902,6 +955,7 @@ ApplicationWindow {
                 Layout.fillHeight: true
                 host: host
                 session: root.selected
+                active: root.visible
                 pinned: root.selected ? fm.pins.includes(root.selected.id) : false
                 folders: root.folders
                 viewer: mediaViewer
@@ -927,6 +981,7 @@ ApplicationWindow {
                 // the list, not the agent or run a report left open
                 onAgentsToggled: { if (!(root.panelOpen && side.shownTab === "agents")) side.agents.showList(); root.togglePanel("agents"); }
                 need: root.accountsHeard ? "" : root.claudeNeed
+                needChecking: claudeCheck.running
                 accounts: accounts
                 ground: root.overlay
                 onPrefsRequested: root.openPrefs()
@@ -970,6 +1025,7 @@ ApplicationWindow {
             clock: root.clock
             onStopRequested: t => root.stopTask(t)
             onPictureRequested: p => mediaViewer.show(p)
+            onRestartHostRequested: root.restartHost()
             onShowRequested: root.panelOpen = true
             onCloseRequested: root.panelOpen = false
         }

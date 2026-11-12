@@ -3,6 +3,7 @@ import Quickshell
 import qs.modules.common
 import qs.modules.common.widgets
 import qs.modules.common.functions
+import qs.services
 
 /**
  * The step an agent's account needs before it can start a session (praxis-composer-accounts-plan
@@ -34,6 +35,8 @@ Item {
     property string pending: ""
     // the host's error reply to a request from here: { kind: "signin" | "install" | "code", message }
     property var refusal: null
+    // a code was sent from here and the host has not answered with a new step or an error yet
+    property bool checkingCode: false
 
     // signedOut, noProvider, starting, signingIn, code, device, busy, expired, noKey, keyRefused,
     // locked, notInstalled, installing, needsNode, failed, done, checking, ready or ""
@@ -66,8 +69,10 @@ Item {
             Qt.callLater(() => field.forceActiveFocus());
         }
         steps.pick = -1;
+        steps.checkingCode = false;
         swap.restart();
     }
+    onCheckingCodeChanged: if (!steps.checkingCode && steps.shown === "code") Qt.callLater(() => field.forceActiveFocus())
     onFlowChanged: {
         if (steps.flow && steps.pending === "signin") steps.pending = "";
         if (steps.flow?.step === "done") steps.finish();
@@ -91,6 +96,8 @@ Item {
             steps.done();
         }
     }
+    // a code the host took but never answered (the page asked again): the field comes back
+    Timer { id: checkTimer; interval: 20000; onTriggered: steps.checkingCode = false }
     Timer { id: copiedReset; interval: 1500; onTriggered: steps.copied = false }
 
     // An error reply is the host refusing to start: shown as a failed sign-in or install.
@@ -98,6 +105,7 @@ Item {
         return r => {
             if (r.ev !== "error") return;
             if (steps.pending === kind) steps.pending = "";
+            if (kind === "code") steps.checkingCode = false;
             steps.refusal = { kind: kind, message: r.message ?? "" };
         };
     }
@@ -168,14 +176,17 @@ Item {
         case "noProvider":
             return { methods: steps.providerMethods() };
         case "signingIn":
-            return { spin: true, line: "Finish signing in in your browser", actions: [
-                steps.flow?.url ? { word: "Open it again", run: () => Qt.openUrlExternally(steps.flow.url) } : null,
+            // the host could not open a browser: the page is the first thing to do
+            const unopened = steps.flow?.opened === false && !!steps.flow?.url;
+            return { spin: true, line: unopened ? "Open this page to sign in" : "Finish signing in in your browser", actions: [
+                steps.flow?.url ? { word: unopened ? "Open the page" : "Open it again", lead: unopened, run: () => Qt.openUrlExternally(steps.flow.url) } : null,
                 steps.agent === "claude" ? { word: "I have a code", run: () => { steps.codeOpen = true; } } : null,
                 cancel
             ].filter(x => x) };
         case "starting":
             return { spin: true, line: "Starting the sign-in…", actions: [cancel] };
         case "code":
+            if (steps.checkingCode) return { spin: true, line: "Checking the code…", actions: [cancel] };
             return { field: true, sub: steps.refusal?.kind === "code" ? `The code didn't go through: ${steps.refusal.message}` : "", actions: [cancel] };
         case "device": {
             const where = (steps.flow?.url ?? "").replace(/^https?:\/\//, "");
@@ -193,7 +204,8 @@ Item {
             const h = steps.flow?.holder ?? "";
             const held = m.account(h) ?? m.accounts.find(a => a.agent === h && a.state === "signingIn") ?? null;
             const who = held ? m.agentName(held.agent) : h ? m.agentName(h) : "";
-            return { line: "Another ChatGPT sign-in is open" + (who ? ` (${who})` : ""), actions: [
+            // the host has one sign-in slot for every agent; no holder is a program on ChatGPT's port
+            return { line: who ? `Another sign-in is open (${who})` : "Another ChatGPT sign-in is open", actions: [
                 held ? { word: "Cancel it", run: () => { m.cancel(held.id); m.cancel(steps.accountId); } }
                      : { word: "Try again", run: () => steps.again() },
                 steps.agent === "codex" ? { word: "Use a code instead", run: () => steps.signIn("device", "") } : null,
@@ -216,9 +228,15 @@ Item {
                      actions: [{ word: "Replace in Settings", out: true, run: () => steps.settingsRequested(steps.keyAnchor(p)) }] };
         }
         case "locked":
+            // the host reads the keyring again only when asked (or every ten minutes)
             return { line: "The keyring is locked",
                      sub: Config.options.lock.security.unlockKeyring ? "It opens when you unlock the screen"
-                                                                      : "Lock & sleep in Settings can open it when you unlock" };
+                                                                      : "Lock & sleep in Settings can open it when you unlock",
+                     actions: [
+                         { word: "Check again", run: () => m.check(steps.accountId) },
+                         Config.options.lock.security.unlockKeyring ? null
+                             : { word: "Lock & sleep", out: true, run: () => SettingsApp.open("lock") }
+                     ].filter(x => x) };
         case "notInstalled":
             return { line: "Not installed", sub: instFail !== null ? "The install didn't finish" : "", mono: instFail ?? "",
                      actions: [{ word: "Install", run: () => steps.install(false) }] };
@@ -399,6 +417,8 @@ Item {
                     const c = field.text.trim();
                     if (c.length) {
                         steps.refusal = null;
+                        steps.checkingCode = true;
+                        checkTimer.restart();
                         steps.model.code(steps.accountId, c, steps.refused("code"));
                     }
                     field.text = "";
@@ -429,7 +449,7 @@ Item {
                     id: aRow
                     required property var modelData
                     required property int index
-                    readonly property bool lit: aArea.containsMouse || steps.pick === (steps.view.methods ?? []).length + aRow.index
+                    readonly property bool lit: aArea.containsMouse || (aRow.modelData.lead ?? false) || steps.pick === (steps.view.methods ?? []).length + aRow.index
                     height: 26
                     StyledText {
                         visible: aRow.index > 0

@@ -163,7 +163,7 @@ Item {
     // a file as its repository names it; outside one, from home
     function rel(f) {
         if (f.repo && f.abs.startsWith(f.repo + "/")) return `${f.repo.split("/").pop()}/${f.abs.substring(f.repo.length + 1)}`;
-        return f.abs.startsWith(panel.home) ? "~" + f.abs.substring(panel.home.length) : f.abs;
+        return f.abs === panel.home || f.abs.startsWith(panel.home + "/") ? "~" + f.abs.substring(panel.home.length) : f.abs;
     }
 
     // The turn shown: the one whose View changes was pressed, else the newest that changed files
@@ -224,7 +224,7 @@ Item {
             panel.loaded = true;
             return;
         }
-        hunksProc.key = panel.cacheKey;
+        hunksProc.want = panel.cacheKey;
         if (panel.scope === "turn") {
             // the edits go on stdin: a turn's old and new text runs past what one argument may hold
             hunksProc.input = JSON.stringify({
@@ -235,6 +235,8 @@ Item {
             hunksProc.input = "";
             hunksProc.command = [panel.tool, "hunks", panel.cwd].concat(panel.scopeFiles);
         }
+        // a run still going is stopped for this one, and what it left is no answer to the scope asked now
+        hunksProc.stopped = hunksProc.running;
         hunksProc.running = false;
         hunksProc.stdinEnabled = hunksProc.input.length > 0;
         hunksProc.running = true;
@@ -281,11 +283,18 @@ Item {
     }
     Process {
         id: hunksProc
-        property string key: ""
+        property string key: ""       // what the run going now reads
+        property string want: ""      // what the next run reads: it becomes `key` when that run starts, not before
+        property bool stopped: false  // the run going was stopped for a newer one
         property string input: ""
-        onStarted: if (hunksProc.input.length) { hunksProc.write(hunksProc.input); hunksProc.stdinEnabled = false; }
+        onStarted: {
+            hunksProc.key = hunksProc.want;
+            hunksProc.stopped = false;
+            if (hunksProc.input.length) { hunksProc.write(hunksProc.input); hunksProc.stdinEnabled = false; }
+        }
         stdout: StdioCollector {
             onStreamFinished: {
+                if (hunksProc.stopped) return;
                 panel.cache[hunksProc.key] = this.text;
                 if (hunksProc.key !== panel.cacheKey) return;   // read for a scope or turn left since
                 panel.show(this.text);
@@ -308,11 +317,16 @@ Item {
         }
     }
     function act(args, done) {
-        if (actProc.running) return;
+        if (actProc.running) {
+            // say so where the pill was pressed, not nothing; the note goes when the running action ends
+            panel.error = panel.drafting ? "Claude is still writing the message." : "Wait for the last action to finish.";
+            return false;
+        }
         panel.error = "";
         actProc.done = done;
         actProc.command = [panel.tool].concat(args);
         actProc.running = true;
+        return true;
     }
     function revert(file, hunk) {
         panel.act(["revert", panel.cwd, file.abs, hunk.id], out => {
@@ -327,8 +341,9 @@ Item {
         panel.act(["restore", u.repo || panel.cwd, u.undo], () => panel.lastRevert = null);
     }
     function draftMessage() {
-        panel.drafting = true;
-        panel.act(["draft", panel.commitRepo].concat(panel.commitFiles), out => commitBox.text = out.trim());
+        // the draft replaces what the box held when Draft was pressed, not what was typed while Claude wrote it
+        const before = commitBox.text;
+        panel.drafting = panel.act(["draft", panel.commitRepo].concat(panel.commitFiles), out => { if (commitBox.text === before) commitBox.text = out.trim(); });
     }
     function commit() {
         panel.act(["commit", panel.commitRepo, commitBox.text].concat(panel.commitFiles), out => {
@@ -512,9 +527,13 @@ Item {
         property string key: ""
         stdout: StdioCollector { id: ctxOut }
         onExited: {
-            const lines = ctxOut.text.length ? ctxOut.text.replace(/\n$/, "").split("\n") : [];
-            const c = Object.assign({}, panel.context); c[ctxProc.key] = lines; panel.context = c;
-            panel.ctxQueue = panel.ctxQueue.slice(1);
+            // a read begun for a session left since (the queue was emptied under it) is not the head of the queue:
+            // its lines are not kept and the new session's first request stays in line
+            if (panel.ctxQueue.length && panel.ctxQueue[0].key === ctxProc.key) {
+                const lines = ctxOut.text.length ? ctxOut.text.replace(/\n$/, "").split("\n") : [];
+                const c = Object.assign({}, panel.context); c[ctxProc.key] = lines; panel.context = c;
+                panel.ctxQueue = panel.ctxQueue.slice(1);
+            }
             panel.nextContext();
         }
     }
@@ -919,7 +938,7 @@ Item {
         color: ColorUtils.transparentize(Appearance.m3colors.m3onSurface, pillArea.containsMouse && pill.active ? 0.84 : 0.9)
         Behavior on color { ColorAnimation { duration: 100 } }
         StyledText { id: pillText; anchors.centerIn: parent; text: pill.label; font.pixelSize: 14; color: Appearance.colors.colInkMain }
-        MouseArea { id: pillArea; anchors.fill: parent; hoverEnabled: true; cursorShape: pill.active ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: if (pill.active && !actProc.running) pill.clicked() }
+        MouseArea { id: pillArea; anchors.fill: parent; hoverEnabled: true; cursorShape: pill.active ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: if (pill.active) pill.clicked() }
     }
 
     Column {

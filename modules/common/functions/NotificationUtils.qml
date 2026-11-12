@@ -1,5 +1,6 @@
 pragma Singleton
 import Quickshell
+import qs.services
 
 Singleton {
     id: root
@@ -63,7 +64,7 @@ Singleton {
 
         // Less than 1 minute
         if (diffMs < 60000)
-            return 'Now';
+            return Translation.tr('Now');
 
         // Same day - show relative time
         if (messageTime.toDateString() === now.toDateString()) {
@@ -79,7 +80,7 @@ Singleton {
 
         // Yesterday
         if (messageTime.toDateString() === new Date(now.getTime() - 86400000).toDateString())
-            return 'Yesterday';
+            return Translation.tr('Yesterday');
 
         // Older dates
         return Qt.formatDateTime(messageTime, "MMMM dd");
@@ -139,6 +140,19 @@ Singleton {
         }
         return out.join("\n");
     }
+    // The body as the row reads it, without markup, for the copy button: tidied the same way, line breaks kept,
+    // tags dropped and entities decoded (&amp; last, so "&amp;lt;" stays "&lt;").
+    function plainBody(body, appName) {
+        return root.processNotificationBody(body, appName)
+            .replace(/<br\s*\/?>/gi, "\n")
+            .replace(/<[^>]+>/g, "")
+            .replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+            .replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'")
+            .replace(/&#(\d+);/g, (m, n) => String.fromCodePoint(Number(n)))
+            .replace(/&#x([0-9a-f]+);/gi, (m, n) => String.fromCodePoint(parseInt(n, 16)))
+            .replace(/&amp;/g, "&")
+            .trim()
+    }
     // What an expanded row shows of it: eight lines and about 360 characters (~8 lines at the popup's width; a line
     // limit does not hold rich text). The row's click opens the rest. Never cut inside a tag.
     function preview(body) {
@@ -177,8 +191,9 @@ Singleton {
         return app.length > 0 && messengers.some(m => app.includes(m))
     }
     function initials(name) {
+        // leading symbols and emoji (surrogate pairs) are dropped, so w[0] below is a whole letter
         const words = (name ?? "").replace(/<[^>]+>/g, "").trim().split(/\s+/)
-            .map(w => w.replace(/^[^A-Za-z0-9\u00C0-\uFFFF]+/, "")).filter(w => w.length > 0)
+            .map(w => w.replace(/^[^A-Za-z0-9\u00C0-\uD7FF\uE000-\uFFFF]+/, "")).filter(w => w.length > 0)
         return words.slice(0, 2).map(w => w[0].toUpperCase()).join("")
     }
 
@@ -187,10 +202,16 @@ Singleton {
     readonly property var urlPattern: /\b(?:https?:\/\/[^\s<"]+|www\.[^\s<"]+|[\w-]+(?:\.[\w-]+)*\.(?:com|org|net|io|dev|app|co|me|gg|tv|ai|sh|edu|gov|uk|de)(?:\/[^\s<"]*)?)/i
     function firstLink(body) {
         const href = /<a\s[^>]*href="([^"]+)"/i.exec(body ?? "")
-        const m = href ? href[1] : (urlPattern.exec((body ?? "").replace(/<[^>]+>/g, " ")) ?? [""])[0]
-        const url = m.replace(/[.,;:!?)]+$/, "")
+        // an href is the sender's exact link (entities decoded, &amp; last); trailing punctuation is trimmed only
+        // from a bare URL, where it belongs to the sentence
+        const url = href ? href[1].replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&")
+            : (urlPattern.exec((body ?? "").replace(/<[^>]+>/g, " ")) ?? [""])[0].replace(/[.,;:!?)]+$/, "")
         if (!url)
             return ""
-        return /^[a-z]+:/i.test(url) ? url : `https://${url}`
+        // only web and mail links open from a click; any other scheme would start whatever handler is registered
+        const scheme = /^([a-z]+):/i.exec(url)
+        if (scheme)
+            return /^(https?|mailto)$/i.test(scheme[1]) ? url : ""
+        return `https://${url}`
     }
 }

@@ -159,6 +159,9 @@ Item {
     function ask(p) {
         const i = p.input ?? {};
         if (p.tool === "AskUserQuestion") return (i.questions ?? [])[0]?.question ?? "a question";
+        if (p.tool === "Choose") return i.question ?? "a choice";
+        if (p.tool === "Door") return i.host ?? "an address";
+        if (p.tool === "Wall") return (i.path ?? "").split("/").pop() || "a folder";
         const target = i.file_path ? i.file_path.split("/").pop() : (i.command ?? i.url ?? i.pattern ?? i.query ?? "");
         return `${p.tool ?? ""} ${target}`.trim();
     }

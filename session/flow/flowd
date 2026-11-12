@@ -256,12 +256,25 @@ class Flow:
         if s:
             s["t_stop"] = time.time()
             s["stop"].set()
+            self._hush(s)
 
     def cancel(self):
         s = self.session
         if s:
             s["cancel"] = True
             s["stop"].set()
+            self._hush(s)
+
+    def _hush(self, s):
+        """A parec that is alive but silent never returns from the read in _record, so the stop
+        would never be seen and the dictation never end. A healthy mic is done well inside 2 s
+        (the tail wait is 600 ms at most): after that parec is ended, which wakes the read."""
+        def end():
+            if s["rec"]:
+                s["rec"].terminate()
+        timer = threading.Timer(2, end)
+        timer.daemon = True
+        timer.start()
 
     def _record(self, s):
         """Mic (or a WAV for checks) -> 50 ms chunks into the queue, with the voice level."""
@@ -438,7 +451,7 @@ class Flow:
                 # only a finished stream has the whole sentence: accepting whatever chunks had
                 # arrived typed half a line as if it were the text, and skipped the fallback
                 if s.get("complete"):
-                    text = " ".join(t.strip() for t in got if t.strip())
+                    text = join_pieces(got)
             except Exception as e:
                 print(f"flowd: stream end: {e}", flush=True)
             threading.Thread(target=ws.close, daemon=True).start()
@@ -582,7 +595,7 @@ class Flow:
         tail = s["partial"].strip()
         if tail and not " ".join(s["finals"]).rstrip(" .").endswith(tail.rstrip(" .")):
             s["finals"].append(tail)
-        raw = " ".join(f for f in s["finals"] if f).strip()
+        raw = join_pieces(s["finals"])
         if not raw:
             self._finish(s, note=s.get("mic") or "Didn't catch anything.")
             return
@@ -624,8 +637,8 @@ class Flow:
         time.sleep(0.25)
         with INSERT:
             w = active_window(with_program=True)
-            insert(text, w.get("class", ""), load_conf()["paste_over"], w.get("program", ""))
-            self.last_inserted, self.last_window, self.last_at = text, w.get("address", ""), time.time()
+            typed = insert(text, w.get("class", ""), load_conf()["paste_over"], w.get("program", ""))
+            self.last_inserted, self.last_window, self.last_at = typed, w.get("address", ""), time.time()
 
     def scratch(self):
         """"Scratch that" un-types the last dictation - but only in the window it went into, and
@@ -667,10 +680,10 @@ class Flow:
                         win = active_window(with_program=True) or s["window"]
                         if win.get("address", "") != s["window"].get("address", ""):
                             self.hub.emit({"ev": "note", "text": f"Wrote it in {win.get('class') or 'the window in front'}."})
-                        insert(text, win.get("class", ""), s["conf"]["paste_over"], win.get("program", ""))
+                        typed = insert(text, win.get("class", ""), s["conf"]["paste_over"], win.get("program", ""))
                         if enter:
                             subprocess.run(["wtype", "-k", "Return"], timeout=INSERT_TIMEOUT)
-                        self.last_inserted, self.last_window, self.last_at = text, win.get("address", ""), time.time()
+                        self.last_inserted, self.last_window, self.last_at = typed, win.get("address", ""), time.time()
                         if ms is not None and s.get("t_stop"):
                             ms["key"] = round((time.time() - s["t_stop"]) * 1000)   # key up -> the text is in
             if text:
@@ -736,6 +749,22 @@ def save_last(pcm):
                 w.writeframes(bytes(pcm))
     except OSError:
         pass
+
+
+# Chinese, Japanese and Thai are written without spaces between words
+UNSPACED = re.compile(r"[\u0e00-\u0e7f\u3000-\u30ff\u3400-\u9fff\uff00-\uffef]")
+
+
+def join_pieces(pieces):
+    """The pieces of a dictation as one text: a space between them, except where both sides are
+    written without spaces (a Japanese sentence came out as '今日は 天気が 良い')."""
+    out = ""
+    for p in (p.strip() for p in pieces):
+        if p:
+            if out and not (UNSPACED.match(out[-1]) and UNSPACED.match(p[0])):
+                out += " "
+            out += p
+    return out
 
 
 def spoken_commands(raw):
@@ -815,7 +844,10 @@ def insert(text, app, paste_over, program=""):
     The paste waits until the clipboard really holds the text: wl-copy takes the clipboard a
     moment after it returns, and a paste key sent before that pasted the old clipboard or nothing.
     The old clipboard comes back on every way out, including a failure, unless somebody copied
-    something else meanwhile."""
+    something else meanwhile.
+
+    Returns the text as typed (a shell gets its line breaks as spaces), which is what "scratch
+    that" has to undo."""
     if app in TERMINALS:
         # A terminal is typed into, never pasted: foot ignored the synthetic Ctrl+Shift+V, so long
         # dictations reached nothing. A typed newline is Enter, which would send a prompt halfway
@@ -824,17 +856,18 @@ def insert(text, app, paste_over, program=""):
         if program in CTRL_J_NEWLINE and "\n" in text:
             subprocess.run(wtype_lines(text), timeout=INSERT_TIMEOUT)
         else:
-            subprocess.run(["wtype", "--", re.sub(r"\s*\n\s*", " ", text)], timeout=INSERT_TIMEOUT)
-        return
+            text = re.sub(r"\s*\n\s*", " ", text)
+            subprocess.run(["wtype", "--", text], timeout=INSERT_TIMEOUT)
+        return text
     if len(text) <= (paste_over or 0) and "\n" not in text:
         subprocess.run(["wtype", "--", text], timeout=INSERT_TIMEOUT)
-        return
+        return text
     types = subprocess.run(["wl-paste", "--list-types"], capture_output=True, text=True, timeout=CLIP_TIMEOUT)
     offers = types.stdout.split() if types.returncode == 0 else []
     if offers and not any(t.startswith("text/") for t in offers):
         # an image on the clipboard cannot be put back afterwards, so it is not taken at all
         subprocess.run(["wtype", "--", text], timeout=INSERT_TIMEOUT)
-        return
+        return text
     saved = subprocess.run(["wl-paste", "--no-newline", "--type", "text/plain"], capture_output=True, timeout=CLIP_TIMEOUT)
     try:
         subprocess.run(["wl-copy"], input=text.encode(), timeout=CLIP_TIMEOUT)
@@ -847,6 +880,7 @@ def insert(text, app, paste_over, program=""):
         time.sleep(1.2)                      # the app asks for the text when it handles the key
     finally:
         unclip(saved, text)
+    return text
 
 
 def unclip(saved, text):

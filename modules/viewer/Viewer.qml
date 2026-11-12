@@ -40,6 +40,12 @@ Item {
     property var entries: []                  // [{ path, name, kind, size, at }]
     property int cur: 0                       // the framed file
     property string asked: ""                 // the file the last open named, kept in the list even when the filters miss it
+    // A folder past maxListed is read in a window of that many files around the framed one, which moves with it:
+    // listStart is the window's first file in the folder, listTotal the folder's whole count (the counters)
+    readonly property int maxListed: 5000
+    property int listStart: 0
+    property int listTotal: 0
+    property string aimPath: ""               // a file Home or End asked for, beyond the window
     property int landed: -1                   // the file the player and reader belong to
     property real pos: 0                      // the roll's place in files; = cur at rest
     property real settle: 0
@@ -152,10 +158,11 @@ Item {
         const dir = path.replace(/\/[^\/]*$/, "") || "/";
         wantPath = path;
         loadOrigins();
+        // the folder as a path, not as a QUrl: its string is the decoded form, which never equals urlOf's
+        const same = folder === dir;
         folder = dir;
-        const url = urlOf(dir);
-        if (entriesFor.folder.toString() === url) { if (entriesFor.status === FolderListModel.Ready) relist(); }
-        else entriesFor.folder = url;
+        if (same) { if (entriesFor.status === FolderListModel.Ready) relist(); }
+        else entriesFor.folder = urlOf(dir);
     }
     FolderListModel {
         id: entriesFor
@@ -173,12 +180,30 @@ Item {
     // the list again, keeping the framed file framed; a file the filters miss is added in its place
     function relist() {
         if (released) return;     // hidden: the folder model still reports changes, but nothing is to be framed
-        const keep = wantPath.length ? wantPath : (entries[cur]?.path ?? "");
+        const aim = aimPath;
+        aimPath = "";
+        const keep = aim.length ? aim : wantPath.length ? wantPath : (entries[cur]?.path ?? "");
+        const total = entriesFor.count;
+        let from = 0, to = total;
+        if (total > maxListed) {
+            // the framed file's place in the folder (or where it sorts, when the filters miss it), then the window
+            const nameOf = p => p.slice(p.lastIndexOf("/") + 1).toLowerCase();
+            const kn = nameOf(keep);
+            let at = -1, after = total;
+            for (let i = 0; i < total && at < 0; i++) {
+                const p = entriesFor.get(i, "filePath") + "";
+                if (p === keep) at = i;
+                else if (after === total && nameOf(p) > kn) after = i;
+            }
+            from = Math.max(0, Math.min(total - maxListed, (at >= 0 ? at : after) - maxListed / 2));
+            to = from + maxListed;
+        }
         const list = [];
-        for (let i = 0, n = Math.min(entriesFor.count, 5000); i < n; i++) {
+        for (let i = from; i < to; i++) {
             const p = entriesFor.get(i, "filePath") + "";
             list.push({ path: p, name: p.split("/").pop(), kind: Info.kindOf(p), size: entriesFor.get(i, "fileSize"), at: entriesFor.get(i, "fileModified") });
         }
+        let counted = total;
         // a file the filters miss is added in its place, and kept while it is the framed one (the folder reports
         // its count again a moment later, and the list rebuilt without it showed the neighbour instead);
         // a framed file that has since been deleted or renamed is not kept as a ghost
@@ -188,12 +213,20 @@ Item {
             const e = { path: keep, name: keep.split("/").pop(), kind: Info.kindOf(keep), size: -1, at: new Date() };
             let at = list.findIndex(x => x.name.toLowerCase() > e.name.toLowerCase());
             list.splice(at < 0 ? list.length : at, 0, e);
+            counted++;
         }
         const wasFirst = landed < 0;
         const found = list.findIndex(e => e.path === keep);
         const gone = found < 0 && !wasFirst && !wantPath.length && landed >= 0;   // the framed file went away
         asked = ghost ? keep : "";   // kept only while the list lacks it; once the folder lists it, it is an ordinary file
+        // the window moved along the folder: the same files now stand at other places in the list
+        const shift = listStart - from;
+        const slid = shift !== 0 && found >= 0 && aim.length === 0 && !wantPath.length;
+        const stays = slid && landed >= 0 && list[landed + shift]?.path === entries[landed]?.path;
+        listStart = from;
+        listTotal = counted;
         entries = list;
+        if (stays) landed += shift;
         const i = found >= 0 ? found : Math.max(0, Math.min(list.length - 1, cur));   // else its nearest neighbour
         const moved = wasFirst || i !== cur || gone;
         cur = i;
@@ -209,8 +242,27 @@ Item {
             if (resume && resume.path === keep) applyResume();
             resume = null;
             if (kind === "video" || kind === "audio") wantPlay = true;
+        } else if (slid) {
+            const on = animate;
+            animate = false;
+            pos += shift;
+            animate = on;
+            land();
         } else if (moved) { pos = i; land(); }
         if (!bare) dwell.restart();
+    }
+    // the window follows the framed file before the roll reaches its end
+    onCurChanged: {
+        if (listTotal > entries.length && ((cur < 400 && listStart > 0) || (cur > entries.length - 400 && listStart + entries.length < listTotal)))
+            relistLater.restart();
+    }
+    // Home and End: the folder's first and last file, beyond the window too
+    function goToEnd(last) {
+        const here = last ? listStart + entries.length >= listTotal : listStart === 0;
+        if (here) { goTo(last ? entries.length - 1 : 0); return; }
+        if (!folded && settle > 0) settle = 0;
+        aimPath = entriesFor.get(last ? entriesFor.count - 1 : 0, "filePath") + "";
+        relist();
     }
 
     function land() {
@@ -353,14 +405,25 @@ Item {
     // the file onto the clipboard as a file (text/uri-list) and, for a picture, as the picture too
     function copyFile() {
         if (!entry) return;
-        Quickshell.execDetached(["nice", "-n", "10", "sh", copyScript, entry.path, kind]);
-        toast("Copied");
+        if (copyProc.running) return;
+        copyProc.command = ["nice", "-n", "10", "sh", copyScript, entry.path, kind];
+        copyProc.running = true;
+    }
+    // viewer-clip and wl-copy put themselves in the background once the clipboard is set, so the exit is the answer
+    Process {
+        id: copyProc
+        onExited: code => toast(code === 0 ? "Copied" : code === 3 ? "Copied the file, not the picture" : "Couldn't copy")
     }
     readonly property string copyScript: FileUtils.trimFileProtocol(Qt.resolvedUrl("../../scripts/viewer/viewer-copy"))
     function copyPath() {
         if (!entry) return;
-        Quickshell.execDetached(["sh", "-c", 'printf %s "$1" | wl-copy', "sh", entry.path]);
-        toast("Path copied");
+        if (pathProc.running) return;
+        pathProc.command = ["sh", "-c", 'printf %s "$1" | wl-copy', "sh", entry.path];
+        pathProc.running = true;
+    }
+    Process {
+        id: pathProc
+        onExited: code => toast(code === 0 ? "Path copied" : "Couldn't copy")
     }
     function showInPinax() { if (entry) Quickshell.execDetached(["qs", "-p", Directories.shellFile, "ipc", "call", "files", "reveal", entry.path]); }
     // Open with: the applications that take this file's type, the default first; nothing is remembered
@@ -598,7 +661,7 @@ Item {
     }
     readonly property var tags: probed[entry?.path ?? ""]?.tags ?? ({})
     readonly property string folderTitle: Info.folderTitle(folder)
-    readonly property string folderWhere: { const h = Quickshell.env("HOME"); return folder.indexOf(h) === 0 ? "~" + folder.slice(h.length) : folder; }
+    readonly property string folderWhere: { const h = Quickshell.env("HOME"); return h && (folder === h || folder.indexOf(h + "/") === 0) ? "~" + folder.slice(h.length) : folder; }
 
     // ---- chrome on demand (bare): plain text, shown by any movement and gone after a pause
     property bool chromeOn: true
@@ -627,8 +690,8 @@ Item {
         case Qt.Key_Right:
             if (shift && mediaOn) seekBy(5000); else if (shift && kind === "pdf") { if (reader) reader.goTo(pdfPage + 1, true); } else step(1);
             break;
-        case Qt.Key_Home: goTo(0); break;
-        case Qt.Key_End: goTo(entries.length - 1); break;
+        case Qt.Key_Home: goToEnd(false); break;
+        case Qt.Key_End: goToEnd(true); break;
         case Qt.Key_Return: case Qt.Key_Enter:
             if (!bare || folded) settleNow(true); break;
         case Qt.Key_Up:
@@ -769,7 +832,7 @@ Item {
         visible: opacity > 0.01 && vw.entry !== null && vw.kind !== "audio"
         VT { id: nameT; width: Math.max(80, parent.width - lineT.implicitWidth - 24); elide: Text.ElideMiddle; text: vw.titleText; font.pixelSize: vw.lerp(vw.lerp(16, 20, vw.facts), 13, vw.searchLift); font.weight: vw.searchLift > 0.5 ? Font.Normal : Font.DemiBold; ink: vw.searchLift > 0.5 ? 2 : 0 }
         VT { id: lineT; x: parent.width - width; y: 1; ink: 2; opacity: 1 - vw.facts; text: vw.searchLift > 0.5 ? "Page " + (vw.pdfPage + 1) + " of " + vw.pdfPages : vw.lineText }
-        VT { x: parent.width - width; y: 4; ink: 2; opacity: vw.facts; text: (vw.landed + 1) + " of " + vw.entries.length }
+        VT { x: parent.width - width; y: 4; ink: 2; opacity: vw.facts; text: (vw.listStart + vw.landed + 1) + " of " + vw.listTotal }
     }
     Item {
         x: vw.fx
@@ -933,7 +996,7 @@ Item {
             y: 27
             ink: 1
             // the file the title names (landed), not the one the roll is heading to
-            text: vw.kind === "pdf" ? (vw.pdfPages > 1 ? "Page " + Info.pageCounter(vw.pdfPage, vw.pdfPages) : "") : (vw.landed + 1) + " of " + vw.entries.length
+            text: vw.kind === "pdf" ? (vw.pdfPages > 1 ? "Page " + Info.pageCounter(vw.pdfPage, vw.pdfPages) : "") : (vw.listStart + vw.landed + 1) + " of " + vw.listTotal
             visible: text.length > 0 && !(top.searching && x < search.x + search.width + 12)
         }
     }
@@ -1109,7 +1172,7 @@ Item {
         opacity: vw.fold
         visible: opacity > 0.01
         VT { x: 52; y: 52; text: vw.folderTitle; font.pixelSize: 20; font.weight: Font.DemiBold }
-        VT { x: 52; y: 82; ink: 2; text: vw.entries.length + (vw.entries.length === 1 ? " file" : " files") }
+        VT { x: 52; y: 82; ink: 2; text: vw.listTotal + (vw.listTotal === 1 ? " file" : " files") }
     }
 
     // ================================================================ small things

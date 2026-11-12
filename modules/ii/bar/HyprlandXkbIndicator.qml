@@ -28,7 +28,7 @@ Loader {
                 horizontalAlignment: Text.AlignHCenter
                 text: WM.compositor === "niri" ? NiriXkb.currentLayoutCode : HyprlandXkb.currentLayoutCode
                 font.pixelSize: Appearance.font.pixelSize.small
-                color: Appearance.colors.colOnLayer0
+                color: root.color
                 animateChange: true
             }
         }

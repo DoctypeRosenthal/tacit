@@ -31,11 +31,14 @@ results=(); undo='null'
 # The freedesktop trash spec, by hand: find the record whose Path is $1 (URL-encoded), move the
 # file back, drop the record. Home trash only; other disks go through gio above.
 restore_from_home_trash() {
-    local want=$1 info name path
+    local want=$1 info name path line
     local tdir="${XDG_DATA_HOME:-$HOME/.local/share}/Trash"
     for info in "$tdir"/info/*.trashinfo; do
         [ -e "$info" ] || continue
-        path=$(sed -n 's/^Path=//p' "$info" | head -1 | python3 -c 'import sys,urllib.parse; print(urllib.parse.unquote(sys.stdin.read().rstrip("\n")))')
+        path=""   # the first Path=, URL-decoded in bash: a process per record made a big undo take minutes
+        while IFS= read -r line; do
+            case $line in Path=*) path=${line#Path=}; path=${path//\\/\\\\}; printf -v path '%b' "${path//%/\\x}"; break ;; esac
+        done < "$info"
         [ "$path" = "$want" ] || continue
         name=$(basename -- "$info" .trashinfo)
         [ -e "$tdir/files/$name" ] || continue   # an orphan record must not fail a valid restore
@@ -138,7 +141,8 @@ copy|move)
         results+=("$target"); made+=("$target"); [ "$op" = move ] && moved_from+=("$s")
         done_=$((done_+1)); write
     done
-    if [ "$op" = move ]; then
+    if [ ${#made[@]} -eq 0 ]; then :   # everything was skipped: nothing to undo
+    elif [ "$op" = move ]; then
         undo=$(jq -nc --rawfile to <(printf '%s\n' "${made[@]}") --rawfile from <(printf '%s\n' "${moved_from[@]}") '{op:"move-back", from:($to | split("\n") | map(select(length > 0))), to:($from | split("\n") | map(select(length > 0)))}')
     else
         undo=$(jq -nc --rawfile paths <(printf '%s\n' "${made[@]}") '{op:"delete", paths:($paths | split("\n") | map(select(length > 0)))}')

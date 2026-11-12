@@ -17,6 +17,9 @@ local function lead(var, first, default)
     hl.env(var, table.concat(parts, ":"))
 end
 lead("XDG_CONFIG_DIRS", "/usr/share/tacit/xdg", "/etc/xdg")
+-- where native/sand and native/edit (Tacit.Sand, Tacit.Edit) install when built by hand; a pragma in the .qml files
+-- cannot name the home folder, and a package that installs them in Qt's own QML folder needs no entry
+lead("QML_IMPORT_PATH", home_dir .. "/.local/lib/qml", "")
 -- Tacit's app entries first (tacit-session: the terminal named Terminal, tools from drivers and printing hidden, the
 -- default apps): /usr/share/tacit came after /usr/share in the VM test, so the hidden tools still showed
 lead("XDG_DATA_DIRS", "/usr/share/tacit", "/usr/local/share:/usr/share")

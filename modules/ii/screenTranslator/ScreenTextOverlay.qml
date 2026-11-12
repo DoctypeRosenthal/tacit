@@ -17,8 +17,8 @@ Item {
     id: root
 
     property double scaleFactor: 1
-    property color overlayColor: "#BB000000"
-    property color textColor: "white"
+    property color overlayColor: ColorUtils.transparentize(Appearance.m3colors.m3scrim, 0.25)
+    property color textColor: Tacit.inkMain
     required property string screenshotPath
 
     readonly property string textColorDetectionScriptPath: Quickshell.shellPath("scripts/images/text-color-venv.sh")
@@ -146,7 +146,7 @@ Item {
         }
         onFinished: {
             gcr.initializeWithData(outputData);
-            root.visionParagraphs = gcr.coherentParagraphs;
+            root.visionParagraphs = gcr.coherentParagraphs ?? [];
             if (root.visionParagraphs.length === 0) {
                 // translating nothing is an API error; say what is true instead
                 root.keyProblem = false;
@@ -155,7 +155,7 @@ Item {
                 return;
             }
             // print(gcr.coherentParagraphs)
-            root.translationKeys = gcr.coherentParagraphs.map(p => p.text);
+            root.translationKeys = root.visionParagraphs.map(p => p.text);
             // print("TRANSLATION KEYS:", JSON.stringify(root.translationKeys));
             cloudTrans.translateStrings(root.translationKeys);
         }
@@ -182,6 +182,8 @@ Item {
 
     property real windowWidth: QsWindow.window.screen.width
     property real windowHeight: QsWindow.window.screen.height
+    // The capture is at the output's device resolution, so Vision's boxes are in device pixels
+    readonly property real monitorScale: WM.monitorGeometry(QsWindow.window.screen).scale || 1
 
     StyledImage {
         id: screenshotImage
@@ -277,10 +279,10 @@ Item {
         property real unscaledY: boundingVertices[0].y
         property real unscaledWidth: boundingVertices[1].x - boundingVertices[0].x
         property real unscaledHeight: boundingVertices[3].y - boundingVertices[0].y
-        x: unscaledX * scaleFactor
-        y: unscaledY * scaleFactor
-        width: unscaledWidth * scaleFactor
-        height: unscaledHeight * scaleFactor
+        x: unscaledX / root.monitorScale * scaleFactor
+        y: unscaledY / root.monitorScale * scaleFactor
+        width: unscaledWidth / root.monitorScale * scaleFactor
+        height: unscaledHeight / root.monitorScale * scaleFactor
         radius: 4
     }
 

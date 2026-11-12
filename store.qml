@@ -36,12 +36,17 @@ ApplicationWindow {
 
     visible: true
     title: "Apps"
-    width: 1528
-    height: 928
+    // drawn for 1528 x 928, but never taller or wider than the screen it opens on (a 1.5x 1080p screen is 1280 x 720); the
+    // layout is fractions of the window and scales through k, so it may be made smaller than that
+    width: Math.max(minimumWidth, Math.min(1528, Screen.width - 48))
+    height: Math.max(minimumHeight, Math.min(928, Screen.height - 64))
     minimumWidth: 1120
-    minimumHeight: 760
+    minimumHeight: 640
     color: "transparent"
-    onClosing: Qt.quit()
+    // closed while an app is being got or removed: the window goes, the work does not (Apps would end it half way, and a bundle
+    // or pacman install is not made to be cut off); the process ends when the work does, with a notification. Opening Apps
+    // again (store-open, the launcher) shows this same window with its progress.
+    onClosing: close => { if (work) { close.accepted = false; visible = false; } else Qt.quit(); }
     Binding { target: Quickshell; property: "watchFiles"; value: false }
 
     readonly property int m: gutter      // every page's margin is the header's
@@ -75,6 +80,9 @@ ApplicationWindow {
     property var outcome: ({})
     property string justGot: ""
     property string opening: ""      // an app asked to start and not shown yet: its button says so (some take 10 s)
+    property bool restartNeeded: false      // the system was brought up to date while it ran: a restart finishes it
+    property bool restartArmed: false       // asked once, "Press again" as on the session screen
+    property string notOpened: ""
     property var askUpdate: null          // { pkg, name, updates, updatesMB, appMB }: an app that needs the waiting updates with it
     readonly property var issue: (home?.issue ?? []).filter(sp => !sp.pkg || appOf(sp.pkg)?.available !== false)
     readonly property real gutter: width >= 1400 ? 96 : 64
@@ -116,22 +124,26 @@ ApplicationWindow {
         opening = a?.pkg ?? ""; openingTimer.restart();
         const id = (a?.desktop || "").replace(/\.desktop$/, "");
         const entry = id ? DesktopEntries.byId(id) : null;
-        if (entry) entry.execute(); else if (id) Quickshell.execDetached(["gtk-launch", id]);
+        if (entry) entry.execute();
+        else if (id) { if (!openProc.running) { openProc.pkg = a.pkg; openProc.command = ["gtk-launch", id]; openProc.running = true; } }
+        else notOpen(a?.pkg ?? "");
     }
+    // Open that did not open anything is said on the capsule that was pressed, for a moment
+    function notOpen(pkg) { notOpened = pkg; notOpenedTimer.restart(); if (opening === pkg) opening = ""; }
     function get(pkg) {
         if (work) return;
         // known already (its page has its plan): ask about the updates at once, nothing is started yet
         if (appInfo?.pkg === pkg && appInfo?.plan?.why === "update" && appInfo.plan.updates !== undefined) {
             askUpdate = Object.assign({ pkg: pkg, name: appInfo.name }, appInfo.plan); return;
         }
-        work = { pkg: pkg, kind: "install", progress: 0, phase: "Starting" };
+        work = { pkg: pkg, kind: "install", progress: 0, phase: "Starting", from: whereAmI() };
         const o = Object.assign({}, outcome); delete o[pkg]; outcome = o;
         workProc.command = ["python3", "-I", backend, "install", pkg]; workProc.running = true;
     }
     // the system brought up to date and the app got in one step (pacman -Syu <app>): one password, never a partial update
     function getEverything(pkg) {
         if (work) return;
-        work = { pkg: pkg, kind: "install", progress: 0, phase: "Starting", everything: true };
+        work = { pkg: pkg, kind: "install", progress: 0, phase: "Starting", everything: true, from: whereAmI() };
         const o = Object.assign({}, outcome); delete o[pkg]; outcome = o;
         workProc.command = ["python3", "-I", backend, "install", pkg, "--everything"]; workProc.running = true;
     }
@@ -141,10 +153,74 @@ ApplicationWindow {
         const o = Object.assign({}, outcome); delete o[pkg]; outcome = o;
         workProc.command = ["python3", "-I", backend, "remove", pkg]; workProc.running = true;
     }
-    function act(a) { const st = stateOf(a); if (st === "installed") launch(a); else if (st === "get") get(a.pkg); }
-    function loadHome() { homeFailed = false; homeProc.running = true; }
+    // where the person is, to tell later whether they are still where Get was pressed
+    function whereAmI() { return page + ":" + (page === "app" ? appInfo?.pkg : page === "job" ? job?.name : page === "search" ? found?.query : ""); }
+    // a failed install shows the app's page, with its reason and Try again, only where Get was pressed; anywhere else the person
+    // is left where they are and told in a notification
+    function failedInstall(w) {
+        if (outcome[w.pkg] === "stopped") return;       // the person did that: they are where they were
+        if (!visible) { notice(w.pkg, outcome[w.pkg]); return; }       // the window was closed on it
+        if (whereAmI() !== w.from) notice(w.pkg, outcome[w.pkg]);
+        else if (!(page === "app" && appInfo?.pkg === w.pkg)) openApp(w.pkg);
+    }
+    // the window was closed while it worked and the work has ended: say how, and end with it
+    function endHidden(w) {
+        const r = outcome[w.pkg] ?? "failed", name = appOf(w.pkg)?.name ?? w.pkg;
+        if (r === "ok") Quickshell.execDetached(["notify-send", "-a", "Apps", w.kind === "remove" ? `${name} is removed` : `${name} is in your apps now`,
+                                                 ...(w.everything ? ["Restart to finish the updates."] : [])]);
+        else if (w.kind === "remove") notice(w.pkg, r);       // installs were told by failedInstall
+        Qt.quit();
+    }
+    // `result` as kept in outcome: a removal's are its own ("r-failed"), so the words are a removal's
+    function notice(pkg, result) {
+        const name = appOf(pkg)?.name ?? pkg;
+        const w = outcomeWords[result] ?? ["Couldn't finish", ""];
+        Quickshell.execDetached(["notify-send", "-a", "Apps", w[0], `${name}. ${w[1]}`]);
+    }
+    // ---- the keyboard: what can be pressed is reached with Tab and pressed with Enter or Space; the one the keys are on has a ring
+    // and is brought into view. Down from the search goes to the first of the page.
+    function isPick(event) { return !event.isAutoRepeat && [Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space].includes(event.key); }
+    readonly property bool onControl: !field.activeFocus && !!activeFocusItem && activeFocusItem !== contentItem && activeFocusItem.activeFocusOnTab
+    function show(item) {
+        const issued = page === "discover";
+        let p = item;
+        while (p && p !== pages && p !== issueView.contentItem) p = p.parent;
+        if (!p) return;       // the header and the sheet stay where they are
+        if (issued) {
+            const i = Math.max(0, Math.min(issue.length - 1, Math.floor(item.mapToItem(issueView.contentItem, 0, item.height / 2).y / Math.max(1, height))));
+            if (i !== spreadAt) turnTo(i);
+            return;
+        }
+        const y = item.mapToItem(scroller.contentItem, 0, 0).y, t = scroller.contentY;
+        const to = y < t + 120 ? y - 120 : y + item.height > t + scroller.height - 32 ? y + item.height - scroller.height + 32 : t;
+        scroller.contentY = Math.max(-scroller.topMargin, Math.min(Math.max(-scroller.topMargin, scroller.contentHeight - scroller.height), to));
+    }
+    function focusContent() {
+        let it = field;
+        for (let i = 0; i < 80; i++) {
+            it = it.nextItemInFocusChain(true);
+            if (!it || it === field) return;
+            let q = it;
+            while (q && q !== contentLayer) q = q.parent;
+            if (q) { it.forceActiveFocus(Qt.TabFocusReason); return; }
+        }
+    }
+    function restart() {
+        if (!restartArmed) { restartArmed = true; disarmTimer.restart(); }
+        else Session.reboot();
+    }
+    function act(a) { const st = stateOf(a); if (st === "installed") launch(a); else if (st === "get") get(a.pkg); else if (st === "getting") stop(); }
+    // Stop on an app being got: the helper is told to end and clears what it had started. Not offered once pacman runs as root
+    // (the backend says so with stop: false): that cannot be undone half way, and the password dialog has its own Cancel
+    readonly property bool canStop: work !== null && work.kind === "install" && work.stop !== false && !work.stopping
+    function stop() {
+        if (!canStop) return;
+        work = Object.assign({}, work, { stopping: true, phase: "Stopping" });
+        workProc.signal(15);
+    }
+    function loadHome() { homeFailed = false; homeProc.ask(); }
     // the search's answers too: they said Get after the app was in (the backend reads the installed list again)
-    function refresh() { homeProc.running = true; if (page === "app" && appInfo) loadApp(appInfo.pkg);
+    function refresh() { homeProc.ask(); if (page === "app" && appInfo) loadApp(appInfo.pkg);
         if (found?.query && searchProc.running) searchProc.write(JSON.stringify({ op: "search", q: found.query }) + "\n"); }
     function runSearch(q) {
         query = q;
@@ -173,7 +249,8 @@ ApplicationWindow {
     }
     readonly property var outcomeWords: ({
         "cancelled": ["Not installed", "The password was not given, so nothing changed."],
-        "denied": ["Not installed", "The password was not accepted, so nothing changed."],
+        "denied": ["Not installed", "The password was not accepted, or this account can't install apps. Try again, or ask an administrator."],
+        "stopped": ["Stopped", "You stopped it, so nothing was installed."],
         "busy": ["Another update is running", "Try again when it has finished."],
         "offline": ["No internet connection", "Connect to the internet, then try again."],
         "space": ["Not enough space", "Free up some space, then try again."],
@@ -181,16 +258,22 @@ ApplicationWindow {
         "failed": ["Couldn't install it", "Nothing was changed. Try again, or look again later."],
         "needed": ["Other apps use it", "It can't be removed while they need it."],
         "r-cancelled": ["Not removed", "The password was not given, so nothing changed."],
+        "r-denied": ["Not removed", "The password was not accepted, or this account can't remove apps. Try again, or ask an administrator."],
         "r-busy": ["Another update is running", "Try again when it has finished."],
         "r-failed": ["Couldn't remove it", "Nothing was changed. Try again, or look again later."],
         "unavailable": ["Not made for this computer", "There is no version of it for this computer's processor."]
     })
 
     // ---- the backend
+    // a request made while the backend is still answering the last one waits for it and goes out when it is done
     Process { id: homeProc; running: true; command: ["python3", "-I", root.backend, "home"]
+        property bool again: false
+        function ask() { if (running) again = true; else running = true; }
+        onExited: if (again) { again = false; running = true; }
         stdout: StdioCollector { onStreamFinished: { try { root.home = JSON.parse(text); root.homeFailed = false; } catch (e) { root.homeFailed = true; console.warn("store: home", e); } } } }
     Process { id: appProc; property string pkg: ""; property bool again: false; command: ["python3", "-I", root.backend, "app", pkg]
-        stdout: StdioCollector { onStreamFinished: { try { const j = JSON.parse(text); if (root.appInfo && j.pkg === root.appInfo.pkg) root.appInfo = j; } catch (e) { console.warn("store: app", e); } } }
+        // two lines: the page, then the same with its plan once the backend has it (that can wait on the network)
+        stdout: SplitParser { onRead: line => { try { const j = JSON.parse(line); if (root.appInfo && j.pkg === root.appInfo.pkg) root.appInfo = j; } catch (e) { console.warn("store: app", e); } } }
         onExited: if (again) { again = false; running = true; } }
     Process { id: heroProc; property string pkg: ""; command: ["python3", "-I", root.backend, "app", pkg, "--hero"]
         stdout: StdioCollector { onStreamFinished: { try {
@@ -211,17 +294,19 @@ ApplicationWindow {
     Process { id: workProc
         stdout: SplitParser { onRead: line => {
             let msg = null; try { msg = JSON.parse(line); } catch (e) { return; }
-            if (msg.progress !== undefined && root.work) root.work = Object.assign({}, root.work, { progress: msg.progress, phase: msg.phase });
+            if (msg.progress !== undefined && root.work) root.work = Object.assign({}, root.work, { progress: msg.progress, phase: root.work.stopping ? "Stopping" : msg.phase }, msg.stop === false ? { stop: false } : {});
             if (msg.result !== undefined && root.work) {
                 if (msg.result === "update" && msg.plan) {
                     // nothing went wrong: the app needs the waiting updates with it, so ask, here, where Get was pressed
                     root.askUpdate = Object.assign({ pkg: root.work.pkg, name: root.appOf(root.work.pkg)?.name ?? root.appInfo?.name ?? "" }, msg.plan);
+                    if (!root.visible) root.notice(root.work.pkg, "update");
                 } else {
                     const o = Object.assign({}, root.outcome);
-                    o[root.work.pkg] = root.work.kind === "remove" && !["ok", "needed"].includes(msg.result) ? (["cancelled", "busy"].includes(msg.result) ? "r-" + msg.result : "r-failed") : msg.result;
+                    o[root.work.pkg] = root.work.kind === "remove" && !["ok", "needed"].includes(msg.result) ? (["cancelled", "denied", "busy"].includes(msg.result) ? "r-" + msg.result : "r-failed") : msg.result;
                     root.outcome = o;
-                    if (msg.result !== "ok" && root.work.kind === "install" && !(root.page === "app" && root.appInfo?.pkg === root.work.pkg)) root.openApp(root.work.pkg);
+                    if (msg.result !== "ok" && root.work.kind === "install") root.failedInstall(root.work);
                 }
+                if (msg.result === "ok" && msg.restart) root.restartNeeded = true;
                 if (msg.result === "ok" && root.work.kind === "install") { root.justGot = root.work.pkg; tickTimer.restart(); }
             }
         } }
@@ -229,13 +314,18 @@ ApplicationWindow {
             // the backend ended without saying how it went (it crashed): say so, rather than let the button quietly come back
             const w = root.work;
             if (w && root.outcome[w.pkg] === undefined && !(w.kind === "install" && root.justGot === w.pkg) && !root.askUpdate) {
-                const o = Object.assign({}, root.outcome); o[w.pkg] = w.kind === "remove" ? "r-failed" : "failed"; root.outcome = o;
-                if (w.kind === "install" && !(root.page === "app" && root.appInfo?.pkg === w.pkg)) root.openApp(w.pkg);
+                const o = Object.assign({}, root.outcome); o[w.pkg] = w.kind === "remove" ? "r-failed" : w.stopping ? "stopped" : "failed"; root.outcome = o;
+                if (w.kind === "install") root.failedInstall(w);
             }
             root.work = null; root.refresh();
+            if (!root.visible && w) root.endHidden(w);
         } }
     Timer { id: openingTimer; interval: 15000; onTriggered: root.opening = "" }
     Timer { id: tickTimer; interval: 2600; onTriggered: root.justGot = "" }
+    Timer { id: disarmTimer; interval: 5000; onTriggered: root.restartArmed = false }
+    // gtk-launch ends as soon as it has started the app: a failure to find or start it is its non-zero exit
+    Process { id: openProc; property string pkg: ""; onExited: code => { if (code !== 0) root.notOpen(pkg); } }
+    Timer { id: notOpenedTimer; interval: 3200; onTriggered: root.notOpened = "" }
 
     // ---- colour: the ground, the inks measured on it (APCA, as Appearance.inkFor), the raised tones, the page's own colour
     // the front page as it was last time, drawn at once; the backend's fresh one replaces it a moment later
@@ -244,17 +334,23 @@ ApplicationWindow {
     readonly property color ground: { const mm = /\]11;(#[0-9a-fA-F]{6})/.exec(termColors.text() || ""); return mm ? mm[1] : Appearance.m3colors.m3surfaceContainerLow; }
     function inkAt(lc) {
         const g = root.ground, ink = Appearance.m3colors.m3onBackground;
-        const far = g.hslLightness < 0.5 ? "#ffffff" : "#000000";
+        const far = g.hslLightness < 0.5 ? root.photoLight : root.photoDark;
         const at = t => t <= 1 ? ColorUtils.mix(ink, g, t) : ColorUtils.mix(far, ink, t - 1);
         let lo = 0, hi = 2;
         for (let i = 0; i < 18; i++) { const mid = (lo + hi) / 2; if (Math.abs(ColorUtils.apcaLc(at(mid), g)) < lc) lo = mid; else hi = mid; }
         return at(hi);
     }
+    // over photographs the picture sets the colour, not the wallpaper's palette: the one pure light and dark, named here, and the
+    // light of the window's "sun" (a touch of the accent in the light)
+    readonly property color photoLight: "#ffffff"
+    readonly property color photoDark: "#000000"
+    readonly property color sun: ColorUtils.mix(photoLight, Tacit.accent, 0.86)
     readonly property color inkMain: inkAt(92)
     readonly property color inkSec: inkAt(78)
     readonly property color raised: ColorUtils.mix(inkMain, ground, 0.07)
     readonly property color raisedHot: ColorUtils.mix(inkMain, ground, 0.12)
     readonly property color card: ColorUtils.mix(inkMain, ground, 0.045)
+    readonly property color glass: ColorUtils.mix(inkMain, ground, 0.04)      // the search field's glass
     readonly property string toneHex: ""   // every page is lit by its own picture instead (the glow under the content)
     property color tint: toneHex ? toneHex : ground
     Behavior on tint { ColorAnimation { duration: 480; easing.type: Easing.OutCubic } }
@@ -278,10 +374,19 @@ ApplicationWindow {
     component Name: Body { font.weight: Font.DemiBold; font.letterSpacing: -0.1 }
     component Section: Body { font.pixelSize: 24; font.weight: Font.DemiBold; font.letterSpacing: -0.35 }
     component PageTitle: Body { font.pixelSize: 40; font.weight: Font.DemiBold; font.letterSpacing: -0.8 }
-    component Headline: Body { font.pixelSize: 48; font.weight: Font.DemiBold; font.letterSpacing: -1.1; color: "white" }
+    component Headline: Body { font.pixelSize: 48; font.weight: Font.DemiBold; font.letterSpacing: -1.1 }
 
     // ---- motion: springs, so a press, a lift and a growing capsule start from where they are and can turn back
     component Spring: SpringAnimation { spring: 5.5; damping: 0.42; mass: 1; epsilon: 0.004 }
+
+    // the ring on a control the keys are on (its parent); it also brings the control into view
+    component FocusMark: Rectangle {
+        property real inset: 0
+        readonly property Item host: parent
+        z: 10; x: -inset; y: -inset; width: host.width + 2 * inset; height: host.height + 2 * inset
+        color: "transparent"; border.width: 2; border.color: root.inkMain; visible: host.activeFocus
+        onVisibleChanged: if (visible) root.show(host)
+    }
 
     // ---- touch: anything that can be pressed takes a raised tone under the pointer and sinks a little when pressed
     component Press: Item {
@@ -295,6 +400,9 @@ ApplicationWindow {
         readonly property bool down: pressArea.pressed
         scale: down ? 0.975 : 1
         Behavior on scale { Spring {} }
+        activeFocusOnTab: true
+        Keys.onPressed: event => { if (root.isPick(event)) { event.accepted = true; press.picked(); } }
+        FocusMark { inset: press.inset; radius: press.rounding }
         transform: Translate { y: press.lifts && press.hovered && !press.down ? -3 : 0; Behavior on y { Spring {} } }
         Rectangle {
             x: -press.inset; y: -press.inset; width: press.width + 2 * press.inset; height: press.height + 2 * press.inset; radius: press.rounding
@@ -311,6 +419,9 @@ ApplicationWindow {
         implicitWidth: wr.implicitWidth; implicitHeight: 28
         scale: wa.pressed ? 0.94 : 1
         Behavior on scale { Spring {} }
+        activeFocusOnTab: true
+        Keys.onPressed: event => { if (root.isPick(event)) { event.accepted = true; wd.picked(); } }
+        FocusMark { inset: 6; radius: 10 }
         Row { id: wr; anchors.verticalCenter: parent.verticalCenter; spacing: 8
             MaterialSymbol { visible: wd.glyph !== ""; text: wd.glyph; iconSize: 18; anchors.verticalCenter: parent.verticalCenter
                 color: wa.containsMouse ? root.inkMain : wd.ink; Behavior on color { ColorAnimation { duration: 120 } } }
@@ -326,14 +437,21 @@ ApplicationWindow {
         property bool onPicture: false
         property bool solid: false            // on the issue: Get in sand, the way forward
         readonly property string st: root.stateOf(a)
+        readonly property bool ready: st === "get" && !root.work     // one thing is got or removed at a time: the others wait their turn
         readonly property bool got: root.justGot !== "" && root.justGot === a?.pkg
         readonly property real prog: st === "getting" ? Math.max(0, Math.min(1, root.work?.progress ?? 0)) : 0
+        readonly property bool stoppable: st === "getting" && root.canStop
         // the sand moves on smoothly between the steps the installer reports, never backwards
         property real fill: prog
         Behavior on fill { SmoothedAnimation { velocity: 0.35 } }
-        readonly property string word: st === "getting" ? (prog < 0.04 ? "Waiting" : `${Math.round(prog * 100)} %`) : st === "removing" ? "Removing"
-                                        : st === "installed" ? (root.opening === a?.pkg ? "Opening" : "Open") : st === "unavailable" ? "Not here" : "Get"
+        readonly property string word: st === "getting" ? (root.work?.stopping ? "Stopping" : stoppable && ca.containsMouse ? "Stop" : prog < 0.04 ? "Waiting" : `${Math.round(prog * 100)} %`) : st === "removing" ? "Removing"
+                                        : st === "installed" ? (!a?.desktop ? "Installed" : root.notOpened === a?.pkg ? "Didn't open" : root.opening === a?.pkg ? "Opening" : "Open")
+                                        : st === "unavailable" ? "Not here" : ready ? "Get" : "Wait"
+        readonly property bool actionable: ready || stoppable || (st === "installed" && !!a?.desktop)
         visible: st !== "none"
+        activeFocusOnTab: actionable
+        Keys.onPressed: event => { if (root.isPick(event)) { event.accepted = true; root.act(cap.a); } }
+        FocusMark { inset: 3; radius: cap.height / 2 + 3 }
         height: solid ? (large ? 48 : 40) : large ? 44 : 32
         // one width through the whole install, so nothing jumps while the numbers change
         width: Math.max(solid ? (large ? 128 : 84) : large ? 120 : 76, st === "getting" ? 0 : ct.implicitWidth + (got ? 30 : 0) + (large ? 52 : 36),
@@ -342,12 +460,12 @@ ApplicationWindow {
         scale: ca.pressed ? 0.94 : 1
         Behavior on scale { Spring {} }
         Rectangle { anchors.fill: parent; radius: height / 2
-            color: cap.solid && cap.st === "get" ? (ca.containsMouse ? ColorUtils.mix("#ffffff", Tacit.accent, 0.14) : Tacit.accent)
-                 : cap.solid ? Qt.rgba(1, 1, 1, ca.containsMouse ? 0.17 : 0.12)
-                 : cap.onPicture ? Qt.rgba(1, 1, 1, ca.pressed ? 0.34 : ca.containsMouse ? 0.28 : 0.2) : ca.pressed ? root.raisedHot : ca.containsMouse ? ColorUtils.mix(root.inkMain, root.ground, 0.1) : root.raised
+            color: cap.solid && cap.ready ? (ca.containsMouse ? ColorUtils.mix(root.photoLight, Tacit.accent, 0.14) : Tacit.accent)
+                 : cap.solid ? ColorUtils.transparentize(root.photoLight, ca.containsMouse ? 0.83 : 0.88)
+                 : cap.onPicture ? ColorUtils.transparentize(root.photoLight, ca.pressed ? 0.66 : ca.containsMouse ? 0.72 : 0.8) : ca.pressed ? root.raisedHot : ca.containsMouse ? ColorUtils.mix(root.inkMain, root.ground, 0.1) : root.raised
             Behavior on color { ColorAnimation { duration: 140 } } }
         Rectangle {    // the track, a quiet sand
-            visible: cap.st === "getting"; anchors.fill: parent; radius: height / 2; color: ColorUtils.mix(Tacit.accent, "#14100f", 0.2)
+            visible: cap.st === "getting"; anchors.fill: parent; radius: height / 2; color: ColorUtils.mix(Tacit.accent, root.ground, 0.2)
         }
         Rectangle {    // the sand, filling
             id: capFill
@@ -356,7 +474,7 @@ ApplicationWindow {
             Rectangle {    // light at its leading edge
                 anchors.right: parent.right; width: Math.min(parent.width, 28); height: parent.height
                 gradient: Gradient { orientation: Gradient.Horizontal
-                    GradientStop { position: 0; color: Qt.rgba(1, 1, 1, 0) } GradientStop { position: 1; color: Qt.rgba(1, 1, 1, 0.18) } }
+                    GradientStop { position: 0; color: ColorUtils.transparentize(root.photoLight, 1) } GradientStop { position: 1; color: ColorUtils.transparentize(root.photoLight, 0.82) } }
             }
             Body {    // the same words, dark where the sand is under them
                 x: cap.width / 2 - width / 2; anchors.verticalCenter: parent.verticalCenter
@@ -364,10 +482,11 @@ ApplicationWindow {
             }
         }
         Row { anchors.centerIn: parent; spacing: 6
-            MaterialSymbol { visible: cap.got; text: "check"; iconSize: cap.large ? 20 : 17; color: cap.onPicture ? "white" : Tacit.accent; anchors.verticalCenter: parent.verticalCenter }
+            MaterialSymbol { visible: cap.got; text: "check"; iconSize: cap.large ? 20 : 17; color: cap.onPicture ? root.photoLight : Tacit.accent; anchors.verticalCenter: parent.verticalCenter }
             Body { id: ct; anchors.verticalCenter: parent.verticalCenter; text: cap.word; font.pixelSize: cap.large ? 17 : 15; font.weight: Font.DemiBold; font.letterSpacing: 0.2
-                color: cap.st === "getting" ? Tacit.accent : cap.solid && cap.st === "get" ? Tacit.inkOnAccent : cap.onPicture ? "white" : cap.st === "get" ? Tacit.accent : cap.st === "unavailable" ? root.inkSec : root.inkMain } }
-        MouseArea { id: ca; anchors.fill: parent; anchors.margins: -4; hoverEnabled: true; enabled: cap.st === "get" || cap.st === "installed"
+                color: cap.st === "getting" ? Tacit.accent : cap.solid && cap.ready ? Tacit.inkOnAccent : cap.onPicture ? root.photoLight : cap.ready ? Tacit.accent
+                     : cap.st === "unavailable" || cap.st === "get" ? root.inkSec : root.inkMain } }
+        MouseArea { id: ca; anchors.fill: parent; anchors.margins: -4; hoverEnabled: true; enabled: cap.actionable
             cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: root.act(cap.a) }
     }
     component AppIcon: Image {
@@ -386,6 +505,10 @@ ApplicationWindow {
         property real ly: 0.3
         property bool edgeLight: true
         property string pkg: ""               // the app it shows: while it is being got, its lower edge carries the progress
+        property bool opens: false            // pressing it opens that app's page (by pointer or by key)
+        activeFocusOnTab: opens
+        Keys.onPressed: event => { if (ep.opens && root.isPick(event)) { event.accepted = true; root.openApp(ep.pkg); } }
+        FocusMark { inset: ep.r > 0 ? 3 : -16; radius: ep.r }
         readonly property real progress: !pkg ? -1 : root.work?.pkg === pkg && root.work?.kind === "install" ? Math.max(0.02, root.work.progress ?? 0)
                                          : root.justGot === pkg ? 1 : -1
         property real shownProgress: Math.max(0, progress)
@@ -405,8 +528,8 @@ ApplicationWindow {
                     fillGradient: RadialGradient {
                         centerX: ep.width * ep.lx; centerY: ep.height * ep.ly; focalX: centerX; focalY: centerY
                         centerRadius: Math.max(ep.width, ep.height) * 0.42
-                        GradientStop { position: 0; color: Qt.rgba(1, 0.93, 0.86, 0.10) }
-                        GradientStop { position: 1; color: Qt.rgba(1, 0.93, 0.86, 0) }
+                        GradientStop { position: 0; color: ColorUtils.transparentize(root.sun, 0.9) }
+                        GradientStop { position: 1; color: ColorUtils.transparentize(root.sun, 1) }
                     }
                     startX: 0; startY: 0
                     PathLine { x: ep.width; y: 0 }
@@ -415,15 +538,15 @@ ApplicationWindow {
                     PathLine { x: 0; y: 0 }
                 }
             }
-            Rectangle { width: parent.width; height: 1; color: Qt.rgba(1, 1, 1, 0.10) }
+            Rectangle { width: parent.width; height: 1; color: ColorUtils.transparentize(root.photoLight, 0.9) }
             Rectangle {
                 visible: ep.edgeLight && ep.progress < 0
                 anchors.bottom: parent.bottom; width: parent.width; height: 2
                 gradient: Gradient {
                     orientation: Gradient.Horizontal
-                    GradientStop { position: Math.max(0, Math.min(0.98, ep.lx - 0.3)); color: Qt.rgba(1, 0.886, 0.784, 0) }
-                    GradientStop { position: Math.max(0.01, Math.min(0.99, ep.lx)); color: Qt.rgba(1, 0.886, 0.784, 0.7) }
-                    GradientStop { position: Math.max(0.02, Math.min(1, ep.lx + 0.3)); color: Qt.rgba(1, 0.886, 0.784, 0) }
+                    GradientStop { position: Math.max(0, Math.min(0.98, ep.lx - 0.3)); color: ColorUtils.transparentize(root.sun, 1) }
+                    GradientStop { position: Math.max(0.01, Math.min(0.99, ep.lx)); color: ColorUtils.transparentize(root.sun, 0.3) }
+                    GradientStop { position: Math.max(0.02, Math.min(1, ep.lx + 0.3)); color: ColorUtils.transparentize(root.sun, 1) }
                 }
             }
         }
@@ -445,7 +568,7 @@ ApplicationWindow {
             width: (parent.width - 2 * epr.inset) * (epr.ep?.shownProgress ?? 0)
             Rectangle { anchors.right: parent.right; width: Math.min(parent.width, 40); height: 3
                 gradient: Gradient { orientation: Gradient.Horizontal
-                    GradientStop { position: 0; color: ColorUtils.transparentize("#ffffff", 1) } GradientStop { position: 1; color: Qt.rgba(1, 1, 1, 0.8) } } }
+                    GradientStop { position: 0; color: ColorUtils.transparentize(root.photoLight, 1) } GradientStop { position: 1; color: ColorUtils.transparentize(root.photoLight, 0.2) } } }
         }
     }
     // a headline lit from below by the same sun, brightest under the pointer
@@ -461,18 +584,18 @@ ApplicationWindow {
             id: ltText
             width: lt.width; visible: false; wrapMode: Text.Wrap; horizontalAlignment: lt.align
             font.family: Appearance.font.family.display; font.pixelSize: lt.size; font.weight: Font.DemiBold
-            font.letterSpacing: -lt.size * 0.02; lineHeight: 1.04; color: "white"; renderType: Text.QtRendering
+            font.letterSpacing: -lt.size * 0.02; lineHeight: 1.04; color: root.photoLight; renderType: Text.QtRendering
         }
         Rectangle {
             id: ltLight
             anchors.fill: ltText; visible: false
             gradient: Gradient {
                 orientation: Gradient.Horizontal
-                GradientStop { position: 0; color: "#e4ddd7" }
-                GradientStop { position: Math.max(0.01, Math.min(0.97, lt.lx - 0.28)); color: "#f6efe8" }
-                GradientStop { position: Math.max(0.02, Math.min(0.98, lt.lx)); color: "#ffe6cf" }
-                GradientStop { position: Math.max(0.03, Math.min(0.99, lt.lx + 0.28)); color: "#f6efe8" }
-                GradientStop { position: 1; color: "#e4ddd7" }
+                GradientStop { position: 0; color: ColorUtils.mix(root.inkMain, root.ground, 0.85) }
+                GradientStop { position: Math.max(0.01, Math.min(0.97, lt.lx - 0.28)); color: root.inkMain }
+                GradientStop { position: Math.max(0.02, Math.min(0.98, lt.lx)); color: ColorUtils.mix(root.inkMain, root.sun, 0.5) }
+                GradientStop { position: Math.max(0.03, Math.min(0.99, lt.lx + 0.28)); color: root.inkMain }
+                GradientStop { position: 1; color: ColorUtils.mix(root.inkMain, root.ground, 0.85) }
             }
         }
         GE.OpacityMask { anchors.fill: ltText; source: ltLight; maskSource: ltText }
@@ -514,7 +637,7 @@ ApplicationWindow {
         EdgePic {
             id: cpic
             x: -12; width: root.width + 24; height: root.height * 0.646; r: 0
-            src: cs.sp.picture ?? ""; pkg: cs.sp.pkg ?? ""
+            src: cs.sp.picture ?? ""; pkg: cs.sp.pkg ?? ""; opens: true
             lx: (root.sunX * root.width + 12) / width; ly: (root.sunY * root.height - cs.spreadTop) / height
             transform: Translate { x: cs.pdx; y: cs.pdy }
             Rectangle { anchors.fill: parent
@@ -545,7 +668,7 @@ ApplicationWindow {
         id: ss
         EdgePic {
             x: root.width * 0.48; y: root.height * 0.12; width: root.width * 0.52 + 24; height: root.height - 72 - y
-            src: ss.sp.picture ?? ""; pkg: ss.sp.pkg ?? ""
+            src: ss.sp.picture ?? ""; pkg: ss.sp.pkg ?? ""; opens: true
             lx: (root.sunX * root.width - x) / width; ly: (root.sunY * root.height - ss.spreadTop - y) / height
             transform: Translate { x: ss.pdx; y: ss.pdy }
             MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.openApp(ss.sp.pkg) }
@@ -571,7 +694,7 @@ ApplicationWindow {
         readonly property string html: parts.map(pt => {
             const t = (pt[0] ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
             const app = pt[1] ? root.appOf(pt[1]) : null;
-            return t + (app ? `<a href="${pt[1]}" style="text-decoration:none; color:#f6f1ea"><img src="file://${app.icon}" width="${Math.round(46 * root.k)}" height="${Math.round(46 * root.k)}" align="middle">&nbsp;${app.name}</a>` : "");
+            return t + (app ? `<a href="${pt[1]}" style="text-decoration:none; color:${root.inkMain}"><img src="file://${app.icon}" width="${Math.round(46 * root.k)}" height="${Math.round(46 * root.k)}" align="middle">&nbsp;${app.name}</a>` : "");
         }).join("")
         Column {
             anchors.centerIn: parent; anchors.verticalCenterOffset: 16; spacing: 0
@@ -582,7 +705,7 @@ ApplicationWindow {
                 width: Math.min(1180, root.width - 400); anchors.horizontalCenter: parent.horizontalCenter
                 textFormat: Text.RichText; wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter; text: ws.html
                 font.family: Appearance.font.family.display; font.pixelSize: Math.round(50 * root.k); font.weight: Font.DemiBold
-                font.letterSpacing: -0.6; lineHeight: 1.25; color: ColorUtils.mix(root.inkMain, root.inkSec, 0.5); linkColor: "#f6f1ea"
+                font.letterSpacing: -0.6; lineHeight: 1.25; color: ColorUtils.mix(root.inkMain, root.inkSec, 0.5); linkColor: root.inkMain
                 onLinkActivated: link => root.openApp(link)
                 HoverHandler { cursorShape: parent.hoveredLink ? Qt.PointingHandCursor : Qt.ArrowCursor }
             }
@@ -593,7 +716,7 @@ ApplicationWindow {
                     model: ws.parts.filter(pt => pt[1]).map(pt => root.appOf(pt[1])).filter(x => x)
                     Rectangle {
                         required property var modelData
-                        width: pillRow.implicitWidth + 36; height: 68; radius: 22; color: Qt.rgba(0.078, 0.067, 0.063, 0.5)
+                        width: pillRow.implicitWidth + 36; height: 68; radius: 22; color: ColorUtils.transparentize(root.ground, 0.5)
                         Row { id: pillRow; x: 22; anchors.verticalCenter: parent.verticalCenter; spacing: 16
                             AppIcon { src: modelData.icon; width: 32; height: 32; anchors.verticalCenter: parent.verticalCenter }
                             Column { anchors.verticalCenter: parent.verticalCenter; spacing: 1
@@ -610,7 +733,7 @@ ApplicationWindow {
         EdgePic {
             height: root.height * 0.474; width: Math.min(root.width - 2 * root.gutter, height * (os.sp.aspect ?? 1.4))
             x: (root.width - width) / 2; y: root.height * 0.125
-            src: os.sp.picture ?? ""; pkg: os.sp.pkg ?? ""
+            src: os.sp.picture ?? ""; pkg: os.sp.pkg ?? ""; opens: true
             lx: (root.sunX * root.width - x) / width; ly: (root.sunY * root.height - os.spreadTop - y) / height
             transform: Translate { x: os.pdx; y: os.pdy }
             MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.openApp(os.sp.pkg) }
@@ -633,7 +756,7 @@ ApplicationWindow {
     }
     component CinemaSpread: SpreadBase {
         id: cn
-        Rectangle { anchors.fill: parent; color: "#000000" }
+        Rectangle { anchors.fill: parent; color: root.photoDark }
         Item {
             x: root.gutter; y: root.height * 0.142; width: root.width - 2 * root.gutter; height: 48
             Kicker { anchors.verticalCenter: parent.verticalCenter; text: cn.sp.kicker ?? "" }
@@ -646,13 +769,13 @@ ApplicationWindow {
             readonly property real full: root.width + 24
             width: cn.sp.px ? Math.min(full, cn.sp.px * 1.2) : full; x: (root.width - width) / 2
             y: root.height * 0.211; height: Math.min(root.height * 0.603, width / (cn.sp.aspect ?? 1.85)); r: width < full ? 14 : 0
-            src: cn.sp.picture ?? ""; pkg: cn.sp.pkg ?? ""
+            src: cn.sp.picture ?? ""; pkg: cn.sp.pkg ?? ""; opens: true
             lx: (root.sunX * root.width + 12) / width; ly: (root.sunY * root.height - cn.spreadTop - y) / height
             transform: Translate { x: cn.pdx; y: cn.pdy * 0.5 }
             MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.openApp(cn.sp.pkg) }
         }
         Text { y: root.height * 0.855; width: root.width; horizontalAlignment: Text.AlignHCenter; text: cn.sp.line ?? ""
-            font.family: Appearance.font.family.main; font.pixelSize: Math.round(24 * root.k); color: "#f1ece4" }
+            font.family: Appearance.font.family.main; font.pixelSize: Math.round(24 * root.k); color: root.inkMain }
     }
     // the window's light, from a picture: drawn tiny, blurred, spread over the whole window
     component GlowPic: Item {
@@ -698,12 +821,15 @@ ApplicationWindow {
             visible: en.pic !== ""
             x: en.flip ? root.cw - width : 0; width: en.picW; height: en.picH; r: 18
             anchors.verticalCenter: parent.verticalCenter
-            src: en.pic; pkg: en.pkg; lx: 0.5; ly: 0.35
+            src: en.pic; pkg: en.pkg; lx: 0.5; ly: 0.35; opens: true
             MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.openApp(en.pkg) }
         }
         Item {    // no picture yet, or none at all: the icon stands where it would be
             visible: en.pic === ""
             x: en.flip ? root.cw - width : 0; width: en.picW; height: 200
+            activeFocusOnTab: visible
+            Keys.onPressed: event => { if (root.isPick(event)) { event.accepted = true; root.openApp(en.pkg); } }
+            FocusMark { radius: 18 }
             AppIcon { anchors.centerIn: parent; src: en.a?.icon ?? ""; width: 120; height: 120 }
             MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.openApp(en.pkg) }
         }
@@ -713,7 +839,7 @@ ApplicationWindow {
             Kicker { visible: !!en.a?.like; text: en.a?.like ?? "" }
             Item { width: 1; height: 10 }
             Text { width: parent.width; text: en.a?.name ?? ""; font.family: Appearance.font.family.display; font.pixelSize: Math.round(40 * root.k)
-                font.weight: Font.DemiBold; font.letterSpacing: -0.6; color: "#f3f0ea"; elide: Text.ElideRight
+                font.weight: Font.DemiBold; font.letterSpacing: -0.6; color: root.inkMain; elide: Text.ElideRight
                 MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.openApp(en.pkg) } }
             Item { width: 1; height: 12 }
             Quote { width: parent.width; text: en.a?.line ?? "" }
@@ -732,8 +858,11 @@ ApplicationWindow {
         readonly property string said: a ? (root.outcome[a.pkg] ?? "") : ""
         visible: !!a
         height: 84
+        activeFocusOnTab: true
+        Keys.onPressed: event => { if (root.isPick(event)) { event.accepted = true; root.openApp(lr.a.pkg); } }
+        FocusMark { x: -14; y: 4; width: lr.width + 28; height: lr.height - 8; radius: 16 }
         Rectangle { x: -14; y: 4; width: lr.width + 28; height: lr.height - 8; radius: 16
-            color: rowArea.containsMouse ? Qt.rgba(1, 1, 1, 0.045) : "transparent"; Behavior on color { ColorAnimation { duration: 140 } } }
+            color: rowArea.containsMouse ? ColorUtils.transparentize(root.inkMain, 0.955) : "transparent"; Behavior on color { ColorAnimation { duration: 140 } } }
         MouseArea { id: rowArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.openApp(lr.a.pkg) }
         AppIcon { src: lr.a?.icon ?? ""; width: 48; height: 48; anchors.verticalCenter: parent.verticalCenter }
         Column {
@@ -747,8 +876,8 @@ ApplicationWindow {
             anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; spacing: 18
             Small { anchors.verticalCenter: parent.verticalCenter; text: lr.removable ? "" : root.costWords(lr.a); visible: text !== "" }
             Capsule { a: lr.a; anchors.verticalCenter: parent.verticalCenter }
-            Word { visible: lr.removable; anchors.verticalCenter: parent.verticalCenter
-                text: root.work?.pkg === lr.a?.pkg && root.work?.kind === "remove" ? "Removing…" : "Remove"; glyph: "delete"; ink: Tacit.risk
+            Word { visible: lr.removable; anchors.verticalCenter: parent.verticalCenter; enabled: !root.work
+                text: root.work?.pkg === lr.a?.pkg && root.work?.kind === "remove" ? "Removing…" : "Remove"; glyph: "delete"; ink: root.work ? root.inkSec : Tacit.risk
                 onPicked: root.removeApp(lr.a.pkg) }
         }
         Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.inkMain; opacity: 0.07 }
@@ -780,15 +909,15 @@ ApplicationWindow {
                 sourceRect: Qt.rect(0, 0, width, height) }
             MultiEffect { id: bandBlur; anchors.fill: parent; source: bandSrc; blurEnabled: true; blurMax: 40; blur: 1; saturation: 0.15; visible: false }
             Rectangle { id: bandMask; anchors.fill: parent; visible: false
-                gradient: Gradient { GradientStop { position: 0; color: "white" } GradientStop { position: 0.42; color: "white" } GradientStop { position: 1; color: "transparent" } } }
+                gradient: Gradient { GradientStop { position: 0; color: root.photoLight } GradientStop { position: 0.42; color: root.photoLight } GradientStop { position: 1; color: "transparent" } } }
             GE.OpacityMask { anchors.fill: parent; source: bandBlur; maskSource: bandMask }
         }
         Rectangle {    // the glass's tint, fading out downward: no line where it ends
             width: parent.width; height: 150
             gradient: Gradient {
-                GradientStop { position: 0; color: Qt.rgba(0.086, 0.07, 0.067, Math.min(0.9, root.scrim + 0.15)) }
-                GradientStop { position: 0.5; color: Qt.rgba(0.086, 0.07, 0.067, root.scrim) }
-                GradientStop { position: 1; color: Qt.rgba(0.086, 0.07, 0.067, 0) }
+                GradientStop { position: 0; color: ColorUtils.transparentize(root.ground, 1 - Math.min(0.9, root.scrim + 0.15)) }
+                GradientStop { position: 0.5; color: ColorUtils.transparentize(root.ground, 1 - root.scrim) }
+                GradientStop { position: 1; color: ColorUtils.transparentize(root.ground, 1) }
             }
         }
         // left: the store's name, which is the way back to the issue; on an app's page, Back
@@ -798,15 +927,18 @@ ApplicationWindow {
             inset: 8; rounding: 12; lit: false
             onPicked: { field.text = ""; root.leaveSearch(); root.history = []; root.page = "discover"; }
             Body { id: nameText; anchors.verticalCenter: parent.verticalCenter; text: "Apps"; font.family: Appearance.font.family.display
-                font.pixelSize: 21; font.weight: Font.DemiBold; color: "#f6f1ea" }
+                font.pixelSize: 21; font.weight: Font.DemiBold }
         }
         Word { visible: root.page === "app"; x: root.gutter - 4; anchors.verticalCenter: parent.verticalCenter; text: "Back"; glyph: "arrow_back"; ink: root.inkMain; onPicked: root.back() }
         // right: your apps, with the sand tick when it is the page
         Item {
             anchors.right: parent.right; anchors.rightMargin: root.gutter; anchors.verticalCenter: parent.verticalCenter
             width: yoursText.implicitWidth; height: 30
+            activeFocusOnTab: true
+            Keys.onPressed: event => { if (root.isPick(event)) { event.accepted = true; yoursArea.clicked(null); } }
+            FocusMark { inset: 8; radius: 12 }
             Body { id: yoursText; anchors.verticalCenter: parent.verticalCenter; text: "Your apps"; font.pixelSize: 16; font.weight: Font.Medium
-                color: yoursArea.containsMouse || root.page === "yours" ? "#f6f1ea" : root.inkMain }
+                color: yoursArea.containsMouse || root.page === "yours" ? root.inkMain : ColorUtils.mix(root.inkMain, root.inkSec, 0.35) }
             Rectangle { y: 28; height: 3; radius: 1.5; color: Tacit.accent; width: root.page === "yours" ? 22 : 0; Behavior on width { Spring {} } }
             MouseArea { id: yoursArea; anchors.fill: parent; anchors.margins: -8; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                 onClicked: { field.text = ""; root.leaveSearch(); if (root.page !== "yours") root.go("yours"); } }
@@ -824,12 +956,12 @@ ApplicationWindow {
                     sourceRect: Qt.rect(searchBox.x, searchBox.y, searchBox.width, searchBox.height)
                 }
                 MultiEffect { anchors.fill: parent; source: frostSrc; blurEnabled: true; blurMax: 48; blur: 1; saturation: 0.2 }
-                Rectangle { anchors.fill: parent; color: field.activeFocus ? Qt.rgba(0.102, 0.086, 0.082, 0.78)
-                                                         : Qt.rgba(0.102, 0.086, 0.082, 0.32 + root.scrim * 0.5)
+                Rectangle { anchors.fill: parent; color: field.activeFocus ? ColorUtils.transparentize(root.glass, 0.22)
+                                                         : ColorUtils.transparentize(root.glass, 1 - (0.32 + root.scrim * 0.5))
                     Behavior on color { ColorAnimation { duration: 260 } } }
             }
             Rectangle { anchors.fill: parent; radius: 30; color: "transparent"; border.width: 1
-                border.color: field.activeFocus ? ColorUtils.transparentize(Tacit.accent, 0.62) : Qt.rgba(1, 1, 1, 0.07) }
+                border.color: field.activeFocus ? ColorUtils.transparentize(Tacit.accent, 0.62) : ColorUtils.transparentize(root.inkMain, 0.93) }
             MaterialSymbol { x: 24; anchors.verticalCenter: parent.verticalCenter; text: "search"; iconSize: 24; color: field.activeFocus ? root.inkMain : root.inkSec }
             TextInput {
                 id: field
@@ -839,6 +971,7 @@ ApplicationWindow {
                 cursorDelegate: Rectangle { width: 2; color: Tacit.accent; visible: field.activeFocus }
                 onTextChanged: searchDelay.restart()
                 Keys.onReturnPressed: { searchDelay.stop(); root.runSearch(text); }
+                Keys.onDownPressed: root.focusContent()
                 Keys.onEscapePressed: { if (text) text = ""; else { root.leaveSearch(); if (root.page !== "discover") root.back(); } }
             }
             Body { x: 62; anchors.verticalCenter: parent.verticalCenter; visible: !field.text; text: "What do you want to do?"; color: root.inkSec; font.pixelSize: 20 }
@@ -852,7 +985,7 @@ ApplicationWindow {
     MouseArea {    // the page behind it rests, dimmed; a click there is "Not now"
         parent: canvas; z: 4; anchors.fill: parent
         visible: sheet.shown > 0.01
-        Rectangle { anchors.fill: parent; color: "#000000"; opacity: 0.35 * sheet.shown }
+        Rectangle { anchors.fill: parent; color: root.photoDark; opacity: 0.35 * sheet.shown }
         onClicked: root.askUpdate = null
     }
     Item {
@@ -861,6 +994,8 @@ ApplicationWindow {
         readonly property var u: root.askUpdate
         property var last: null
         onUChanged: if (u) last = u
+        onVisibleChanged: if (visible && u) goButton.forceActiveFocus(Qt.TabFocusReason)      // Enter does it; Esc or Not now declines
+                          else if (!visible && !field.activeFocus) keys.forceActiveFocus()        // and typing searches again
         property real shown: u ? 1 : 0
         Behavior on shown { NumberAnimation { duration: 380; easing.type: Easing.OutCubic } }
         visible: shown > 0.01
@@ -869,7 +1004,7 @@ ApplicationWindow {
         y: -height * (1 - shown)
         DockedRect {
             anchors.fill: parent; edge: "top"; cornerRadius: 28; fillet: 18
-            color: ColorUtils.mix("#ffffff", root.ground, 0.07)
+            color: root.raised
         }
         Column {
             id: sheetBody
@@ -878,7 +1013,7 @@ ApplicationWindow {
                 AppIcon { src: root.appOf(sheet.last?.pkg ?? "")?.icon ?? ""; width: 44; height: 44; anchors.verticalCenter: parent.verticalCenter }
                 Text { anchors.verticalCenter: parent.verticalCenter; width: sheetBody.width - 60; wrapMode: Text.Wrap
                     text: `${sheet.last?.name ?? ""} comes with Tacit's latest updates`
-                    font.family: Appearance.font.family.display; font.pixelSize: 26; font.weight: Font.DemiBold; font.letterSpacing: -0.3; color: "#f3f0ea" } }
+                    font.family: Appearance.font.family.display; font.pixelSize: 26; font.weight: Font.DemiBold; font.letterSpacing: -0.3; color: root.inkMain } }
             Item { width: 1; height: 18 }
             Quote {
                 width: parent.width; font.pixelSize: 17
@@ -886,14 +1021,19 @@ ApplicationWindow {
                 readonly property string leftWords: leftMB >= 1000 ? (leftMB / 1000).toFixed(1) + " GB" : Math.max(1, Math.round(leftMB)) + " MB"
                 text: `There are ${sheet.last?.updates ?? 0} updates waiting for Tacit and your apps. They come first, then ${sheet.last?.name ?? "it"}. `
                       + (leftMB < 50 ? "They're already downloaded, so it takes about a minute." : `${leftWords} to download, a few minutes, and you can keep working.`)
+                      + " Restart afterwards to finish the updates."
             }
             Item { width: 1; height: 30 }
             Row {
                 spacing: 28
                 Rectangle {
+                    id: goButton
                     height: 48; radius: 24; width: goText.implicitWidth + 52
-                    color: goArea.containsMouse ? ColorUtils.mix("#ffffff", Tacit.accent, 0.14) : Tacit.accent
+                    color: goArea.containsMouse ? ColorUtils.mix(root.photoLight, Tacit.accent, 0.14) : Tacit.accent
                     scale: goArea.pressed ? 0.96 : 1; Behavior on scale { Spring {} }
+                    activeFocusOnTab: true
+                    Keys.onPressed: event => { if (root.isPick(event)) { event.accepted = true; goArea.clicked(null); } }
+                    FocusMark { inset: 3; radius: 27 }
                     Body { id: goText; anchors.centerIn: parent; text: `Get ${sheet.last?.name ?? ""} and the updates`; font.pixelSize: 16; font.weight: Font.DemiBold; color: Tacit.inkOnAccent }
                     MouseArea { id: goArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: { const pk = root.askUpdate?.pkg; root.askUpdate = null; if (pk) root.getEverything(pk); } }
@@ -909,7 +1049,8 @@ ApplicationWindow {
         anchors.horizontalCenter: parent.horizontalCenter; y: root.height * 0.42; spacing: 14
         Body { anchors.horizontalCenter: parent.horizontalCenter; font.weight: Font.DemiBold
             text: root.homeFailed ? "Couldn't load the apps" : "Getting the apps…" }
-        Small { visible: root.homeFailed; anchors.horizontalCenter: parent.horizontalCenter; text: "Nothing was changed. Try again in a moment." }
+        Small { anchors.horizontalCenter: parent.horizontalCenter
+            text: root.homeFailed ? "Nothing was changed. Try again in a moment." : "The first time takes a moment." }
         Word { visible: root.homeFailed; anchors.horizontalCenter: parent.horizontalCenter; text: "Try again"; glyph: "refresh"; ink: root.inkMain; onPicked: root.loadHome() }
     }
 
@@ -934,7 +1075,7 @@ ApplicationWindow {
                     Column {
                         anchors.verticalCenter: parent.verticalCenter; spacing: 6
                         Text { text: modelData.name; font.family: Appearance.font.family.display; font.pixelSize: 32; font.weight: Font.DemiBold
-                            font.letterSpacing: -0.3; color: jobArea.containsMouse ? "#f3f0ea" : root.inkSec; Behavior on color { ColorAnimation { duration: 160 } } }
+                            font.letterSpacing: -0.3; color: jobArea.containsMouse ? root.inkMain : root.inkSec; Behavior on color { ColorAnimation { duration: 160 } } }
                         Small { text: modelData.pkgs.map(p => root.appOf(p)?.name).filter(x => x).join(", ") }
                     }
                     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.inkMain; opacity: 0.07 }
@@ -962,8 +1103,6 @@ ApplicationWindow {
     }
     Shortcut { sequences: ["Ctrl+F", "Ctrl+K"]; onActivated: field.forceActiveFocus() }
     Shortcut { sequence: "Escape"; enabled: !field.activeFocus; onActivated: { if (root.askUpdate) root.askUpdate = null; else root.back(); } }
-    Shortcut { sequences: ["Return", "Enter"]; enabled: !!root.askUpdate && !field.activeFocus
-        onActivated: { const pk = root.askUpdate.pkg; root.askUpdate = null; root.getEverything(pk); } }
 
     Component { id: coverC; CoverSpread {} }
     Component { id: splitC; SplitSpread {} }
@@ -971,7 +1110,8 @@ ApplicationWindow {
     Component { id: objectC; ObjectSpread {} }
     Component { id: cinemaC; CinemaSpread {} }
     function turnTo(i) { snapAnim.to = Math.max(0, Math.min(issue.length - 1, i)) * height; snapAnim.restart(); }
-    Shortcut { sequences: ["Down", "PgDown", "Space"]; enabled: root.page === "discover" && !field.activeFocus; onActivated: root.turnTo(root.spreadAt + 1) }
+    Shortcut { sequences: ["Down", "PgDown"]; enabled: root.page === "discover" && !field.activeFocus; onActivated: root.turnTo(root.spreadAt + 1) }
+    Shortcut { sequence: "Space"; enabled: root.page === "discover" && !field.activeFocus && !root.onControl; onActivated: root.turnTo(root.spreadAt + 1) }
     Shortcut { sequences: ["Up", "PgUp"]; enabled: root.page === "discover" && !field.activeFocus; onActivated: root.turnTo(root.spreadAt - 1) }
     function reveal() { pageIn.stop(); pages.opacity = 0; pages.y = 10; scroller.contentY = page === "app" ? 0 : -116; pageIn.restart(); }
     ParallelAnimation { id: pageIn
@@ -1032,6 +1172,17 @@ ApplicationWindow {
             GlideWheel { id: issueGlide; view: issueView; gain: 1.6; gainPerSpeed: 3; gainMax: 6 }
             HoverHandler { onPointChanged: { root.ptrX = point.position.x / Math.max(1, issueView.width); root.ptrY = point.position.y / Math.max(1, issueView.height); } }
             onContentYChanged: if (!snapAnim.running) settle.restart()
+            // a window of another height keeps the spread in view: contentY follows the page it was on, not the old height
+            // (set after the layout has the new contentHeight, which would otherwise clamp it)
+            property real pageH: 0
+            property int pendingPage: -1
+            Component.onCompleted: pageH = height
+            onHeightChanged: {
+                if (pageH > 0 && pendingPage < 0) pendingPage = Math.round(contentY / pageH);
+                pageH = height;
+                snapAnim.stop();
+                Qt.callLater(() => { if (pendingPage >= 0) { contentY = pendingPage * height; pendingPage = -1; } });
+            }
             Column {
                 Repeater {
                     model: root.issue
@@ -1069,7 +1220,7 @@ ApplicationWindow {
                 Rectangle {
                     required property int index
                     width: 3; height: 16; radius: 1.5
-                    color: index === root.spreadAt ? Tacit.accent : Qt.rgba(1, 1, 1, 0.18)
+                    color: index === root.spreadAt ? Tacit.accent : ColorUtils.transparentize(root.inkMain, 0.82)
                     Behavior on color { ColorAnimation { duration: 300 } }
                     MouseArea { anchors.fill: parent; anchors.margins: -6; cursorShape: Qt.PointingHandCursor; onClicked: root.turnTo(parent.index) }
                 }
@@ -1116,7 +1267,7 @@ ApplicationWindow {
             Column {
                 visible: root.page === "search" && root.found !== null
                 x: root.m; width: root.cw
-                readonly property var others: (root.found?.apps ?? []).filter(x => !(root.found?.job?.pkgs ?? []).includes(x.pkg)).slice(0, 16)
+                readonly property var others: (root.found?.apps ?? []).filter(x => !(root.found?.job?.pkgs ?? []).includes(x.pkg))
                 PageHead {
                     kicker: root.found?.job ? "What you can do" : "Search"
                     title: root.found?.job ? root.found.job.name : `“${root.query.trim()}”`
@@ -1192,8 +1343,12 @@ ApplicationWindow {
                         Small { anchors.right: parent.right; horizontalAlignment: Text.AlignRight
                             text: appPage.st === "getting" ? (root.work?.phase ?? "") : root.justGot === appPage.a?.pkg ? "It's in your apps now."
                                   : appPage.st === "installed" ? "On this computer"
+                                  : appPage.st === "get" && root.work ? `After ${root.appOf(root.work.pkg)?.name ?? root.work.pkg}`
                                   : [appPage.a?.plan?.download ? `${appPage.a.plan.download} MB` : appPage.a?.plan?.appMB ? `${appPage.a.plan.appMB} MB` : "",
                                      appPage.a?.free === false ? "Free to use" : "Free"].filter(x => x).join(" · ") }
+                        Word { visible: root.restartNeeded && !["getting", "removing"].includes(appPage.st); anchors.right: parent.right
+                            text: root.restartArmed ? "Press again" : "Restart to finish the updates"; glyph: "restart_alt"; ink: root.restartArmed ? Tacit.risk : root.inkMain
+                            onPicked: root.restart() }
                     }
                 }
                 Column {
@@ -1203,7 +1358,7 @@ ApplicationWindow {
                     Body { text: (root.outcomeWords[appPage.w] ?? ["", ""])[0]; font.weight: Font.DemiBold }
                     Small { text: (root.outcomeWords[appPage.w] ?? ["", ""])[1]; font.pixelSize: 16 }
                     Item { width: 1; height: 8 }
-                    Word { visible: ["cancelled", "denied", "busy", "offline", "failed"].includes(appPage.w); text: "Try again"; glyph: "refresh"; ink: root.inkMain; onPicked: root.get(appPage.a.pkg) }
+                    Word { visible: ["cancelled", "denied", "stopped", "busy", "offline", "failed"].includes(appPage.w); enabled: !root.work; text: "Try again"; glyph: "refresh"; ink: root.work ? root.inkSec : root.inkMain; onPicked: root.get(appPage.a.pkg) }
                 }
                 Item { width: 1; height: 44 }
                 Rectangle { width: root.cw; height: 1; color: root.inkMain; opacity: 0.1 }

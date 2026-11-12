@@ -104,7 +104,10 @@ ContentPage {
             ipSection.readFailed = false;
             if (ipSection.conn.length === 0)
                 return;
-            Network.getIpv4Config(ipSection.conn, cfg => {
+            const asked = ipSection.conn;
+            Network.getIpv4Config(asked, cfg => {
+                if (asked !== ipSection.conn)
+                    return;   // a reply for the network left behind: the new load answers for this one
                 if (!cfg) {
                     ipSection.readFailed = true;
                     return;
@@ -306,7 +309,7 @@ ContentPage {
                                 }
                                 SmallAction {
                                     label: Translation.tr("Forget")
-                                    onClicked: Network.forgetWifiNetwork(netRow.modelData.name)
+                                    onClicked: Network.forgetWifiNetwork(netRow.modelData.ssid, netRow.modelData.name)
                                 }
                             }
                         }
@@ -321,7 +324,7 @@ ContentPage {
                                 onClicked: {
                                     for (const c of knownGroup.list)
                                         if (!(c.lastUsed > 0))
-                                            Network.forgetWifiNetwork(c.name);
+                                            Network.forgetWifiNetwork(c.ssid, c.name);
                                 }
                             }
                         }

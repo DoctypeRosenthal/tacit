@@ -41,30 +41,25 @@ OverlayBackground {
             return;
         }
 
-        var cfgPaths = [
-            "~/.config/MangoHud/MangoHud.conf",
-        ]; // MangoHud config files
+        // the file and its folder may not exist yet (a Steam-only install); MangoHud is told only once it is written
+        var cfgPath = FileUtils.trimFileProtocol(Directories.config) + "/MangoHud/MangoHud.conf";
+        var cmd = 'mkdir -p "$(dirname "$1")" && touch "$1" && ' +
+            'if grep -q "^fps_limit=" "$1"; then sed -i "s/^fps_limit=.*/fps_limit=$2/" "$1"; ' +
+            'else echo "fps_limit=$2" >> "$1"; fi && { pkill -SIGUSR2 mangohud; true; }';
 
-        var updateCommands = cfgPaths.map(path => {
-            return "if grep -q '^fps_limit=' " + path + "; " +
-            "then sed -i 's/^fps_limit=.*/fps_limit=" + fpsValue + "/' " + path + "; " +
-            "else echo 'fps_limit=" + fpsValue + "' >> " + path + "; fi";
-        }).join("; ");
-
-        var cmd = "mkdir -p ~/.config/MangoHud; " + updateCommands + "; pkill -SIGUSR2 mangohud";
-
-        fpsSetter.command = ["bash", "-c", cmd];
-        fpsSetter.startDetached();
-
-        root.currentState = FpsLimiterContent.State.Success;
-        iconResetTimer.restart();
-
-        // Clear the field after applying
-        fpsField.text = "";
+        fpsSetter.command = ["bash", "-c", cmd, "bash", cfgPath, String(fpsValue)];
+        fpsSetter.running = true;
     }
 
     Process {
         id: fpsSetter
+        onExited: (exitCode, exitStatus) => {
+            root.currentState = exitCode === 0 ? FpsLimiterContent.State.Success : FpsLimiterContent.State.Error;
+            iconResetTimer.restart();
+            // keep what was typed when it failed
+            if (exitCode === 0)
+                fpsField.text = "";
+        }
     }
 
     Process {

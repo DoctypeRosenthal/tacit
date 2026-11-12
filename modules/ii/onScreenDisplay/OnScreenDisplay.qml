@@ -15,10 +15,9 @@ Scope {
     property string protectionMessage: ""
     property var focusedScreen: Quickshell.screens.find(s => s.name === Hyprland.focusedMonitor?.name)
 
-    // The island draws its own volume/brightness meters, so those two triggers are muted while it
-    // owns them - but only while it can actually answer: transients are suppressed on the lock and
-    // session screens, where the OSD keeps working as upstream. Gamma and the sink-protection
-    // warning have no island state at all and stay live in every case.
+    // The island draws its own volume/brightness meters, the gamma meter and the sink-protection
+    // warning, so those triggers are muted while it owns them - but only while it can actually
+    // answer: transients are suppressed on the lock and session screens, where the OSD takes over.
     readonly property bool islandOwnsVolume: Config.options.island.enable
         && Config.options.island.states.volume
         && !IslandController.suppressed
@@ -58,6 +57,15 @@ Scope {
         }
     }
 
+    // Closed by the pointer or the timer: the next volume change must not show the old warning
+    Connections {
+        target: GlobalStates
+        function onOsdVolumeOpenChanged() {
+            if (!GlobalStates.osdVolumeOpen)
+                root.protectionMessage = "";
+        }
+    }
+
     Connections {
         target: Brightness
         enabled: !root.islandOwnsBrightness
@@ -70,6 +78,7 @@ Scope {
 
     Connections {
         target: Hyprsunset
+        enabled: !root.islandOwnsBrightness
         function onGammaChangeAttempt() {
             root.protectionMessage = "";
             root.currentIndicator = "gamma";

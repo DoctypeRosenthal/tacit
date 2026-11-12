@@ -77,7 +77,11 @@ Singleton {
 
     Process {
         id: overwriteProc
-        onExited: root.refresh()
+        onExited: {
+            root.refresh()
+            root.refreshOnline()
+            root.refreshImported()
+        }
     }
 
     Process {
@@ -102,7 +106,8 @@ Singleton {
             description = raw.substring(commaIndex + 1).trim()
         }
 
-        name = name.replace(/\s/g, "_")
+        // the name is a file name in the presets folder: no slashes, and no leading dot (".." or a hidden file)
+        name = name.replace(/[\/\s]/g, "_").replace(/^\.+/, "")
         if (name.length === 0) return
 
         saveProc.command = ["bash", Directories.presetsScriptPath, "--save", name, description]
@@ -145,14 +150,15 @@ Singleton {
         Quickshell.execDetached(["bash", Directories.presetsScriptPath, "--apply", name, "--imported"])
     }
 
-    function overwrite(name) {
+    // source: "" for a saved preset, "--online" or "--imported" for the card's own folder
+    function overwrite(name, source = "") {
         // Overwrite with same name (presets.sh --save filters General+Services)
-        overwriteProc.command = ["bash", Directories.presetsScriptPath, "--save", name]
+        overwriteProc.command = ["bash", Directories.presetsScriptPath, "--save", name, ...(source ? [source] : [])]
         overwriteProc.running = true
     }
 
-    function exportZip(name) {
-        exportZipProc.command = ["bash", Directories.presetsScriptPath, "--export-zip", name]
+    function exportZip(name, source = "") {
+        exportZipProc.command = ["bash", Directories.presetsScriptPath, "--export-zip", name, ...(source ? [source] : [])]
         exportZipProc.running = true
     }
 

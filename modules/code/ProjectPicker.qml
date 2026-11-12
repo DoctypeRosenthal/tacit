@@ -18,13 +18,14 @@ Item {
 
     property var recents: []
     property var found: []
+    property var gone: ({})              // recent projects whose folder is no longer there
     readonly property bool pathMode: filter.text.startsWith("/") || filter.text.startsWith("~")
     property var pathHits: []
-    function expand(t) { return t.startsWith("~") ? Quickshell.env("HOME") + t.substring(1) : t; }
+    function expand(t) { return t === "~" || t.startsWith("~/") ? Quickshell.env("HOME") + t.substring(1) : t; }
     readonly property var all: {
         if (picker.pathMode) return picker.pathHits;
         const seen = {}, out = [];
-        for (const p of picker.recents.concat(picker.found)) if (p.length && !seen[p]) { seen[p] = true; out.push(p); }
+        for (const p of picker.recents.concat(picker.found)) if (p.length && !seen[p] && !picker.gone[p]) { seen[p] = true; out.push(p); }
         const q = filter.text.toLowerCase();
         return q.length ? out.filter(p => p.toLowerCase().includes(q)) : out;
     }
@@ -32,13 +33,14 @@ Item {
     property bool canGoBack: false       // over an open project: Esc goes back to it
     signal back()
 
-    function refresh() { if (!scan.running) scan.running = true; }
+    function refresh() { if (!scan.running) scan.running = true; if (!here.running) here.running = true; }
     function focusFilter() { filter.forceActiveFocus(); }
     function typeFilter(t) { filter.text = t; }        // for scripted checks
     // Only when it is actually on screen: with a project given, this scan of the whole home
-    // folder was run on every launch for a picker nobody sees.
-    onVisibleChanged: if (picker.visible) { picker.focusFilter(); if (picker.found.length === 0) picker.refresh(); }
-    function home(p) { const h = Quickshell.env("HOME"); return p.startsWith(h) ? "~" + p.substring(h.length) : p; }
+    // folder was run on every launch for a picker nobody sees. Each time it shows, as the window stays
+    // alive hidden: a repository cloned or deleted since is then right.
+    onVisibleChanged: if (picker.visible) { picker.focusFilter(); picker.refresh(); }
+    function home(p) { const h = Quickshell.env("HOME"); return p === h || p.startsWith(h + "/") ? "~" + p.substring(h.length) : p; }
 
     // the folders in the typed path's parent that start with its last part; the typed folder itself first
     Timer { id: pathLater; interval: 60; onTriggered: picker.listPath() }
@@ -70,6 +72,18 @@ Item {
                     .map(n => base + "/" + n)
                     .filter(f => f !== pathLs.typed);
                 picker.pathHits = self.concat(kids).slice(0, 200);
+            }
+        }
+    }
+
+    Process {
+        id: here
+        command: ["sh", "-c", 'for d in "$@"; do [ -d "$d" ] || echo "$d"; done', "sh"].concat(picker.recents)
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const g = {};
+                for (const l of this.text.split("\n")) if (l.length) g[l] = true;
+                picker.gone = g;
             }
         }
     }

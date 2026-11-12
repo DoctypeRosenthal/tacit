@@ -65,11 +65,12 @@ Item {
     property real workspaceImplicitWidth: Math.max(root.minCardWidth, Math.min(root.maxCardWidth,
         (root.screenWidth - 2 * root.fillet - 2 * root.sidePadding - (root.count - 1) * root.cardGap - 16) / root.count))
 
-    // The monitor's work area (what a maximised window fills), in the card's proportions.
+    // The monitor's work area (what a maximised window fills), in the card's proportions. The monitor's size is in
+    // physical pixels, the reserved edges in layout pixels, so they are scaled up before they are taken off.
     readonly property var reserved: root.monitorData?.reserved ?? [0, 0, 0, 0]
     readonly property bool rotated: root.monitorData?.transform % 2 === 1
-    readonly property real workWidth: (rotated ? monitor.height : monitor.width) - reserved[0] - reserved[2]
-    readonly property real workHeight: (rotated ? monitor.width : monitor.height) - reserved[1] - reserved[3]
+    readonly property real workWidth: (rotated ? monitor.height : monitor.width) - (reserved[0] + reserved[2]) * monitor.scale
+    readonly property real workHeight: (rotated ? monitor.width : monitor.height) - (reserved[1] + reserved[3]) * monitor.scale
     // Card pixels per work-area pixel, as OverviewWindow reads `scale` (it sizes a tile from the
     // window's own size).
     property real scale: root.workspaceImplicitWidth * monitor.scale / root.workWidth
@@ -340,9 +341,11 @@ Item {
                                 interval: Config.options.hacks.arbitraryRaceConditionDelay
                                 repeat: false
                                 running: false
+                                // Back to its place as a binding, not a plain write: a write ends the binding for good and the
+                                // tile would stop following its window when Hyprland's data changes.
                                 onTriggered: {
-                                    window.x = Math.round(xWithinWorkspaceWidget + xOffset)
-                                    window.y = Math.round(yWithinWorkspaceWidget + yOffset)
+                                    window.x = Qt.binding(() => Math.round(window.xWithinWorkspaceWidget + window.xOffset))
+                                    window.y = Qt.binding(() => Math.round(window.yWithinWorkspaceWidget + window.yOffset))
                                 }
                             }
 
@@ -378,9 +381,14 @@ Item {
                                             updateWindowPosition.restart()
                                             return
                                         }
-                                        const percentageX = (window.x - xOffset) / root.workspaceImplicitWidth
-                                        const percentageY = (window.y - yOffset) / root.workspaceImplicitHeight
-                                        Hyprland.dispatch(`hl.dsp.window.move({ x = "${percentageX * root.screen.width}", y = "${percentageY * root.screen.height}", window = "address:${window.windowData?.address}" })`)
+                                        // a click, or a drag that went nowhere, leaves the window where it is
+                                        if (Math.abs(window.x - window.initX) < 1 && Math.abs(window.y - window.initY) < 1)
+                                            return
+                                        // the tile's place undone: card pixels to layout pixels, from the work area's corner on
+                                        // the window's own monitor
+                                        const layoutX = window.monitorData.x + window.monitorData.reserved[0] + (window.x - xOffset) / (window.widthRatio * root.scale)
+                                        const layoutY = window.monitorData.y + window.monitorData.reserved[1] + (window.y - yOffset) / (window.heightRatio * root.scale)
+                                        Hyprland.dispatch(`hl.dsp.window.move({ x = "${Math.round(layoutX)}", y = "${Math.round(layoutY)}", window = "address:${window.windowData?.address}" })`)
                                     }
                                 }
                                 onClicked: (event) => {

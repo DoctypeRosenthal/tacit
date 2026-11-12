@@ -36,7 +36,7 @@ Item {
             id: input
             x: Look.px(26); y: Look.px(31)
             width: parent.width - x - (f.secret ? Look.px(150) : Look.px(26))
-            height: Look.px(28)
+            height: Look.fs(28)
             color: Look.main
             selectionColor: Qt.rgba(0.95, 0.77, 0.60, 0.4)
             font.family: Appearance.font.family.main
@@ -56,8 +56,11 @@ Item {
             anchors.right: parent.right; anchors.rightMargin: Look.px(22); anchors.verticalCenter: parent.verticalCenter
             spacing: Look.px(14)
             T {
-                text: f.shown ? "Hide" : "Show"; font.pixelSize: Look.fs(16); color: showMa.containsMouse ? Look.main : Look.sec
+                text: f.shown ? "Hide" : "Show"; font.pixelSize: Look.fs(16); color: showMa.containsMouse || activeFocus ? Look.main : Look.sec
                 anchors.verticalCenter: parent.verticalCenter
+                activeFocusOnTab: true
+                Keys.onReturnPressed: f.shown = !f.shown
+                Keys.onSpacePressed: f.shown = !f.shown
                 MouseArea { id: showMa; anchors.fill: parent; anchors.margins: -Look.px(8); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: f.shown = !f.shown }
             }
             Rectangle {

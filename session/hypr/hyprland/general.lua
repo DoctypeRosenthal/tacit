@@ -1,15 +1,25 @@
 -- MONITOR CONFIG
+-- scale "auto": Hyprland picks 1 to 2 from the panel's density, so a new computer with a 4K or 2880 x 1800 panel starts
+-- readable. A person's choice (Settings writes monitors.lua) loads after this and wins.
 hl.monitor({
     output = "",
     mode = "preferred",
     position = "auto",
-    scale = 1
+    scale = "auto"
 })
 
 -- Three fingers do what the window band does, to the window under the pointer (Discord 2026-10-29: the band's line
--- takes fiddling on a touchpad): up closes it into the notch, down hides it into the dock, left and right take that
--- half. It acts once the fingers have travelled far enough; a short brush does nothing. (Three fingers moved the window
--- before; the band's line still does.)
+-- takes fiddling on a touchpad): down hides it into the dock, left and right take that half, up puts it back to its
+-- size. It acts once the fingers have travelled far enough; a short brush does nothing. (Three fingers moved the window
+-- before; the band's line still does.) Up used to close it, and people swiping up to bring a window back lost it
+-- (Discord, Mustiya and Noid, #70); closing stays with the band's line, its menu, a middle click and Super+Q.
+-- "back" is the way out of the other three: a window filled to the screen is restored, a window taken to a half goes
+-- back to where it was and how big; with neither, the plugin answers "nothing to undo" and nothing moves.
+local function bandVerb(verb)
+    if verb ~= "back" then return verb end
+    local w = hl.get_active_window()
+    return (w and tonumber(w.fullscreen) == 1) and "fill" or "unside"
+end
 local function bandSwipe(direction, verb)
     local travelled = 0
     hl.gesture({
@@ -23,13 +33,13 @@ local function bandSwipe(direction, verb)
             end,
             finish = function(e)
                 if not e.cancelled and travelled >= 120 then
-                    hl.dispatch(hl.dsp.exec_cmd("hyprctl tacitgrip " .. verb .. " active"))
+                    hl.dispatch(hl.dsp.exec_cmd("hyprctl tacitgrip " .. bandVerb(verb) .. " active"))
                 end
             end
         }
     })
 end
-bandSwipe("up", "close")
+bandSwipe("up", "back")
 bandSwipe("down", "hide")
 bandSwipe("left", "left")
 bandSwipe("right", "right")
@@ -58,7 +68,9 @@ hl.config({
         workspace_swipe_min_speed_to_force = 5,
         workspace_swipe_direction_lock = true,
         workspace_swipe_direction_lock_threshold = 10,
-        workspace_swipe_create_new = true
+        workspace_swipe_create_new = true,
+        -- relative (r-1, r+1) instead of through the existing desktops only: an empty desktop 1 can be reached
+        workspace_swipe_use_r = true
     },
     general = {
         -- Gaps and border (the owner's, 2026-10-16: Settings writes the person's own over these)
@@ -277,19 +289,23 @@ hl.animation({
     bezier = "standardDecel"
 })
 
--- The keyboard layout chosen in Setup: tacit-install writes it to /etc/vconsole.conf as XKBLAYOUT, so a password made
--- in Setup is typed the same at the lock. US where none is written (the Book4 has only a console KEYMAP there).
-local function system_kb_layout()
+-- The keyboard chosen in Setup: tacit-install writes the layout to /etc/vconsole.conf as XKBLAYOUT, so a password made
+-- in Setup is typed the same at the lock. The variant and options are read too, for a file written by hand or by another
+-- tool, and a value may be quoted. US where no layout is written (the Book4 has only a console KEYMAP there).
+local function system_kb(key)
     local f = io.open("/etc/vconsole.conf", "r")
-    if not f then return "us" end
+    if not f then return nil end
     local s = "\n" .. f:read("a")
     f:close()
-    return s:match("\nXKBLAYOUT=([%w,]+)") or "us"
+    local v = s:match("\n" .. key .. "=[\"']?([^\"'\n]*)")
+    return v ~= "" and v or nil
 end
 
 hl.config({
     input = {
-        kb_layout = system_kb_layout(),
+        kb_layout = system_kb("XKBLAYOUT") or "us",
+        kb_variant = system_kb("XKBVARIANT") or "",
+        kb_options = system_kb("XKBOPTIONS") or "",
         numlock_by_default = true,
         repeat_delay = 250,
         repeat_rate = 35,
@@ -341,7 +357,9 @@ hl.config({
     },
 
     xwayland = {
-        force_zero_scaling = true
+        -- an X program on a scaled screen is scaled up with the rest (soft, but as large as everything else); at
+        -- true the scale-2 screens "auto" gives would show it half size
+        force_zero_scaling = false
     }
 })
 
@@ -359,6 +377,8 @@ end
 
 -- The window band (tacit-boot's tacit-frame.so): the line above every window; up to the notch closes, down to the dock
 -- hides, to a side takes that half, a right click opens the window's menu (the shell's WindowBand and WindowMenu)
-if is_file_exists("/usr/lib/tacit/hyprland/tacit-frame.so") then
+-- Settings > Windows > Line on windows turns it off by making this file (the plugin is also let go at once)
+if is_file_exists("/usr/lib/tacit/hyprland/tacit-frame.so")
+    and not is_file_exists((os.getenv("XDG_STATE_HOME") or (HOME .. "/.local/state")) .. "/quickshell/user/window-line-off") then
     hl.plugin.load("/usr/lib/tacit/hyprland/tacit-frame.so")
 end

@@ -1,0 +1,8 @@
+// The person at the computer refreshes the login screen's ground and colours as they log out (Session.logout starts
+// tacit-login-ground.service, which copies their own files for the greeter); everything else systemd does still asks.
+polkit.addRule(function (action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" && subject.local && subject.active &&
+        subject.isInGroup("wheel") && action.lookup("verb") == "start" &&
+        action.lookup("unit") == "tacit-login-ground.service")
+        return polkit.Result.YES;
+});

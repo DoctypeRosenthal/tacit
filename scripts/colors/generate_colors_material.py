@@ -32,7 +32,10 @@ args = parser.parse_args()
 
 rgba_to_hex = lambda rgba: "#{:02X}{:02X}{:02X}".format(rgba[0], rgba[1], rgba[2])
 argb_to_hex = lambda argb: "#{:02X}{:02X}{:02X}".format(*map(round, rgba_from_argb(argb)))
-hex_to_argb = lambda hex_code: argb_from_rgb(int(hex_code[1:3], 16), int(hex_code[3:5], 16), int(hex_code[5:], 16))
+def hex_to_argb(hex_code):
+    # switchwall.sh accepts the accent with or without the '#'
+    hex_code = hex_code.lstrip('#')
+    return argb_from_rgb(int(hex_code[0:2], 16), int(hex_code[2:4], 16), int(hex_code[4:], 16))
 display_color = lambda rgba : "\x1B[38;2;{};{};{}m{}\x1B[0m".format(rgba[0], rgba[1], rgba[2], "\x1b[7m   \x1b[7m")
 
 def calculate_optimal_size (width: int, height: int, bitmap_size: int) -> (int, int):
@@ -68,10 +71,14 @@ if args.path is not None:
     image = Image.open(args.path)
 
     if image.format == "GIF":
-        image.seek(1)
+        # a still GIF has no second frame
+        try:
+            image.seek(1)
+        except EOFError:
+            pass
 
-    if image.mode in ["L", "P"]:
-        image = image.convert('RGB')
+    # the quantizer takes RGB tuples only: transparency, 16-bit and CMYK images are flattened
+    image = image.convert('RGB')
     wsize, hsize = image.size
     wsize_new, hsize_new = calculate_optimal_size(wsize, hsize, args.size)
     if wsize_new < wsize or hsize_new < hsize:
@@ -142,7 +149,7 @@ if args.termscheme is not None:
 
     primary_color_argb = hex_to_argb(material_colors['primary_paletteKeyColor'])
     for color, val in term_source_colors.items():
-        if(args.scheme == 'monochrome') :
+        if(args.scheme == 'scheme-monochrome') :
             term_colors[color] = val
             continue
         if args.blend_bg_fg and color == "term0":

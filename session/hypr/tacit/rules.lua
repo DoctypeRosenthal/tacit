@@ -99,9 +99,11 @@ hl.window_rule({ match = { class = "^(praxis)$" }, opacity = "1.0 override 1.0 o
 hl.window_rule({ match = { class = "^(activity)$" }, float = true })
 hl.window_rule({ match = { class = "^(activity)$" }, size = { "840", "680" } })
 hl.window_rule({ match = { class = "^(activity)$" }, center = true })
--- Apps (store.qml): floating, at the size its pages are laid out for (1528 x 928 fits a 1920 x 1080 screen with room)
+-- Apps (store.qml): floating, at the size its pages are laid out for: 1528 x 928 on a 1920 x 1080 screen, as a share of
+-- the screen (logical pixels: a screen at scale 1.25 or a 1366 x 768 laptop is smaller than its panel, and a fixed
+-- 928 hung off the bottom). store.qml scales its content to the window and holds it to 1120 x 760 at least.
 hl.window_rule({ match = { class = "^(store)$" }, float = true })
-hl.window_rule({ match = { class = "^(store)$" }, size = { "1528", "928" } })
+hl.window_rule({ match = { class = "^(store)$" }, size = { "(monitor_w*0.8)", "(monitor_h*0.86)" } })
 hl.window_rule({ match = { class = "^(store)$" }, center = true })
 -- The viewer floats in the middle at its own 1280 x 820 (viewer.qml): Files floats, and a floating window stays above
 -- every tiled one, so a picture opened from Files came up tiled behind it (Discord 2026-10-21). Focused, it is on top.
@@ -112,7 +114,8 @@ hl.window_rule({ match = { class = "^(viewer)$" }, opacity = "1.0 override 1.0 o
 hl.window_rule({ match = { class = "^(viewer)$" }, center = true })
 
 -- Tacit setup's practice run (setup.qml with TACIT_SETUP_WINDOWED=1): a 16:9 window in the middle, the shape it is
--- drawn for. On the stick it is full screen and this never applies.
+-- drawn for: three quarters of the screen's width and 9/16 of that high (1440 x 810 on 1920 x 1080; setup.qml scales
+-- to any size). On the stick it is full screen and this never applies.
 hl.window_rule({ match = { class = "^(tacit-setup)$" }, float = true })
-hl.window_rule({ match = { class = "^(tacit-setup)$" }, size = { "1440", "810" } })
+hl.window_rule({ match = { class = "^(tacit-setup)$" }, size = { "(monitor_w*0.75)", "(monitor_w*0.421875)" } })
 hl.window_rule({ match = { class = "^(tacit-setup)$" }, center = true })

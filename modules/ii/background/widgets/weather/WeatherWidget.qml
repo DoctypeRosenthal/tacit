@@ -20,15 +20,11 @@ AbstractBackgroundWidget {
     implicitHeight: card.implicitHeight
     implicitWidth: card.implicitWidth
 
-    // The service gives "6:41:12 AM"; the card shows hours and minutes.
-    function clockOnly(text) {
-        return (text ?? "--").replace(/:\d{2}(?= |$)/, "");
-    }
     readonly property var stats: [
         { glyph: "thermostat", label: Translation.tr("Feels like"), value: Weather.data?.tempFeelsLike ?? "--" },
         { glyph: "air", label: Translation.tr("Wind"), value: Weather.data?.wind ?? "--" },
         { glyph: "water_drop", label: Translation.tr("Humidity"), value: Weather.data?.humidity ?? "--" },
-        { glyph: "wb_twilight", label: Translation.tr("Sunrise"), value: root.clockOnly(Weather.data?.sunrise) }
+        { glyph: "wb_twilight", label: Translation.tr("Sunrise"), value: Weather.data?.sunrise ?? "--" }
     ]
 
     WidgetCard {

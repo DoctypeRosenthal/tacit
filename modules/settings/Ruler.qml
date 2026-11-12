@@ -22,6 +22,17 @@ Slider {
     rightPadding: ruler.wordArea
     live: true
 
+    // Said once a value is chosen: on release, and once the keys (arrows, Page Up/Down, Home/End) have rested. A row
+    // that wrote on release alone never heard of a value set from the keyboard: the bar moved and nothing was saved.
+    signal settled()
+    onPressedChanged: if (!ruler.pressed) ruler.settled()
+    onMoved: if (!ruler.pressed) keysRest.restart()
+    Timer {
+        id: keysRest
+        interval: 350
+        onTriggered: ruler.settled()
+    }
+
     background: Item {
         x: ruler.leftPadding
         width: ruler.availableWidth
@@ -47,7 +58,8 @@ Slider {
         height: 14
         radius: 7
         color: Appearance.colors.colInkMain
-        opacity: ruler.enabled && (ruler.hovered || ruler.pressed) ? 1 : 0
+        // and while it has the keyboard's focus, so a Tab to it shows where it is
+        opacity: ruler.enabled && (ruler.hovered || ruler.pressed || ruler.visualFocus) ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 110 } }
     }
 

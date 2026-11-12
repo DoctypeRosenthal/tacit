@@ -15,12 +15,29 @@ esac
 case "$title" in
     *"Private Browsing"*|*"Private browsing"*|*"Incognito"*) title="" ;;
 esac
-# Opsis (class browser) titles a private window "Private · <page>"
-[ "$class" = browser ] && case "$title" in Private|"Private · "*) title="" ;; esac
+# Opsis (class browser, browser-cef) titles a private window "Private · <page>"
+case "$class" in browser|browser-cef) case "$title" in Private|"Private · "*) title="" ;; esac ;; esac
+# Other browsers say "private" in the window's own language ("Privater Modus", "Navigation privée"),
+# which no list here can cover. A normal window's title ends with the browser's name, so for the
+# browsers services/Claude.qml knows the title is kept only when it does; anything after the name
+# may be the private mark, and the title is dropped.
+brand=""
+case "$class" in
+    zen) brand="Zen Browser" ;;
+    firefox) brand="Mozilla Firefox" ;;
+    chromium) brand="Chromium" ;;
+    google-chrome) brand="Google Chrome" ;;
+    brave-browser) brand="Brave" ;;
+    vivaldi-stable) brand="Vivaldi" ;;
+esac
+[ -n "$brand" ] && case "$title" in
+    "$brand"|*" — $brand"|*" – $brand"|*" - $brand") ;;
+    *) title="" ;;
+esac
 cwd=""
 if [ "$class" = praxis ]; then
     # Praxis: the open session's folder
-    cwd=$(qs -p "$TACIT_SHELL/claude.qml" ipc call claudeapp state 2>/dev/null | jq -r '.cwd // empty' 2>/dev/null)
+    cwd=$(timeout 2 qs -p "$TACIT_SHELL/claude.qml" ipc call claudeapp state 2>/dev/null | jq -r '.cwd // empty' 2>/dev/null)
     [ -d "$cwd" ] || cwd=""
 fi
 [ -n "$cwd" ] || cwd=$("$T_BIN/focus-folder")
@@ -34,8 +51,8 @@ case "$class" in
     graphis)
         # the editor has a window class of its own, so the class is the whole test
         P="$TACIT_SHELL/code.qml"
-        root=$(qs -p "$P" ipc call code root 2>/dev/null)
-        s=$(qs -p "$P" ipc call code state 2>/dev/null)
+        root=$(timeout 2 qs -p "$P" ipc call code root 2>/dev/null)
+        s=$(timeout 2 qs -p "$P" ipc call code state 2>/dev/null)
         file=$(printf %s "$s" | jq -r '.rel // empty' 2>/dev/null)
         line=$(printf %s "$s" | jq -r '.line // empty' 2>/dev/null) ;;
 esac

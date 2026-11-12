@@ -16,8 +16,10 @@ for repo in "$@"; do
 	count=0; oldest=$now; paths=()
 	while IFS= read -r -d '' entry; do
 		paths+=("${entry:3}")
+		# a rename or copy is followed by its old name, a field of its own with no status: not a file
+		case "${entry:0:2}" in *[RC]*) IFS= read -r -d '' _ ;; esac
 		count=$((count + 1))
-	done < <(timeout 20 git -C "$repo" status --porcelain -z --untracked-files=normal 2>/dev/null)
+	done < <(timeout 20 git --no-optional-locks -C "$repo" status --porcelain -z --untracked-files=normal 2>/dev/null)
 	[ "$count" -gt 0 ] || continue
 	# one stat for all of them; a path that is gone just prints nothing
 	while read -r mt; do

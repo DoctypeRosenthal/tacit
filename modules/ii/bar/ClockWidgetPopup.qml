@@ -1,5 +1,6 @@
 import qs.modules.common
 import qs.modules.common.widgets
+import qs.modules.common.functions
 import qs.services
 import QtQuick
 import QtQuick.Layouts
@@ -44,13 +45,7 @@ StyledPopup {
                 delegate: Rectangle {
                     required property int index
 
-                    readonly property var date: {
-                        const today = root.today
-                        const dow = today.getDay()
-                        const d = new Date(today)
-                        d.setDate(today.getDate() - dow + index)
-                        return d
-                    }
+                    readonly property var date: DateUtils.getIthDayDateOfSameWeek(root.today, index, Qt.locale().firstDayOfWeek)
                     readonly property bool isToday: {
                         const t = root.today
                         return date.getDate()     === t.getDate() &&

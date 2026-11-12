@@ -21,7 +21,7 @@ SettingRow {
     activeFocusOnTab: false
     // puts the saved value back, for a caller that refuses what was typed
     function revert() {
-        input.text = root.text;
+        input.text = Qt.binding(() => root.text);
     }
     clickable: false
 
@@ -55,7 +55,7 @@ SettingRow {
             // with the leading slash scrolled off, because setting the text leaves the cursor at the end.
             onTextChanged: if (!activeFocus) cursorPosition = 0
             onActiveFocusChanged: if (!activeFocus) cursorPosition = 0
-            Keys.onEscapePressed: { text = root.text; focus = false; }
+            Keys.onEscapePressed: { text = Qt.binding(() => root.text); focus = false; }
         }
         StyledText {
             anchors.left: parent.left

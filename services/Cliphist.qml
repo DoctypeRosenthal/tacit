@@ -13,7 +13,8 @@ Singleton {
     // property string cliphistBinary: FileUtils.trimFileProtocol(`${Directories.home}/.cargo/bin/stash`)
     property string cliphistBinary: "cliphist"
     property real pasteDelay: 0.15
-    property string pressPasteCommand: "ydotool key -d 1 29:1 47:1 47:0 29:0"
+    // press_paste is defined by pasteFocusGuard(), which every synthetic paste starts with
+    property string pressPasteCommand: "press_paste"
     // The only surface that asks for a synthetic paste is the launcher; it keeps the keyboard for a
     // moment after it closes, and a paste that lands there is lost.
     readonly property string launcherLayerNamespace: "quickshell:overview"
@@ -81,23 +82,35 @@ Singleton {
         }
     }
 
-    // ydotool types into whatever holds the keyboard. Every synthetic paste waits for the launcher
+    // The keys go to whatever holds the keyboard. Every synthetic paste waits for the launcher
     // surface to unmap, then refuses to type unless the window that asked for it is still the
     // focused one - keystrokes in the wrong window are worse than no paste at all.
+    // The window is asked of the running compositor (Hyprland or niri), and press_paste sends the paste
+    // that window takes: Ctrl+Shift+V in a terminal, Ctrl+V elsewhere. wtype names the key v, so it is the
+    // one on any layout; without wtype ydotool sends the physical key that is v on a QWERTY keyboard.
     function pasteFocusGuard(): string {
         const stopped = StringUtils.shellSingleQuoteEscape(Translation.tr("The window that asked for it is not focused any more"));
         const stoppedTitle = StringUtils.shellSingleQuoteEscape(Translation.tr("Paste stopped"));
         const failedTitle = StringUtils.shellSingleQuoteEscape(Translation.tr("Paste failed"));
         const noYdotool = StringUtils.shellSingleQuoteEscape(Translation.tr("ydotool is not installed"));
-        return `target=$(hyprctl activewindow -j | jq -r '.address // empty'); `
-            + `for i in $(seq 1 40); do hyprctl layers | grep -q '${root.launcherLayerNamespace}' || break; sleep 0.05; done; `
+        const niri = WM.compositor === "niri";
+        const activeWindow = niri ? "niri msg -j focused-window" : "hyprctl activewindow -j";
+        const windowId = niri ? ".id" : ".address";
+        const windowApp = niri ? ".app_id" : ".class";
+        const layers = niri ? "niri msg layers" : "hyprctl layers";
+        return `press_paste() { case "$app" in ${Attention.terminalApps.join("|")}) `
+            + `if command -v wtype >/dev/null; then wtype -M ctrl -M shift v -m shift -m ctrl; else ydotool key -d 1 29:1 42:1 47:1 47:0 42:0 29:0; fi;; `
+            + `*) if command -v wtype >/dev/null; then wtype -M ctrl v -m ctrl; else ydotool key -d 1 29:1 47:1 47:0 29:0; fi;; esac; }; `
+            + `target=$(${activeWindow} | jq -r '${windowId} // empty'); `
+            + `for i in $(seq 1 40); do ${layers} | grep -q '${root.launcherLayerNamespace}' || break; sleep 0.05; done; `
             + `sleep ${root.pasteDelay}; `
-            + `focused=$(hyprctl activewindow -j | jq -r '.address // empty'); `
-            // A focused layer surface can leave hyprctl with no active window, so an empty reading
+            + `focused=$(${activeWindow} | jq -r '${windowId} // empty'); `
+            // A focused layer surface can leave the compositor with no active window, so an empty reading
             // before the wait is not treated as the target - an empty one after it still aborts.
             + `if [ -z "$focused" ] || { [ -n "$target" ] && [ "$focused" != "$target" ]; }; then `
             + `notify-send '${stoppedTitle}' '${stopped}' -a "Tacit"; exit 1; fi; `
-            + `command -v ydotool >/dev/null || { notify-send '${failedTitle}' '${noYdotool}' -a "Tacit"; exit 1; }; `
+            + `app=$(${activeWindow} | jq -r '(${windowApp} // empty) | ascii_downcase'); `
+            + `command -v wtype >/dev/null || command -v ydotool >/dev/null || { notify-send '${failedTitle}' '${noYdotool}' -a "Tacit"; exit 1; }; `
     }
 
     function pasteFailureReport(): string {

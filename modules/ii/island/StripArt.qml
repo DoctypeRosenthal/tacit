@@ -10,7 +10,7 @@ Item {
     property string source: ""   // a URL or a path
     property real veil: 0
     property bool wide: false
-    readonly property string url: art.source === "" || /^[a-z]+:/.test(art.source) ? art.source : "file://" + art.source
+    readonly property string url: art.source === "" || /^[a-z]+:/.test(art.source) ? art.source : FileUtils.fileUrl(art.source)
     readonly property bool pdf: /\.pdf$/i.test(art.source)
     readonly property real r: art.wide ? 4 : 5
     implicitWidth: art.wide ? 32 : 20
@@ -68,6 +68,6 @@ Item {
         radius: art.r
         color: "transparent"
         border.width: 1
-        border.color: ColorUtils.transparentize("#ffffff", 0.92)
+        border.color: ColorUtils.transparentize(Tacit.inkMain, 0.92)
     }
 }
