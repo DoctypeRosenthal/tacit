@@ -246,8 +246,128 @@ Column {
                 ink: "meta"
             }
 
+            Item {
+                id: htmlPresentation
+
+                property real reveal: 0
+                width: message.textWidth
+                height: 0
+                visible: state !== ""
+                clip: true
+                state: htmlBody.item?.ready ? "ready" : htmlBody.loading ? "loading" : ""
+
+                Loader {
+                    id: htmlBody
+                    readonly property string html: message.entry.bodyHtml ?? message.entry.body_html ?? ""
+                    readonly property string fixture: message.entry.bodyHtmlFixture ?? ""
+                    readonly property bool loading: status === Loader.Loading || !!item?.loading
+                    active: message.expanded && !message.entry.excerpt && (fixture !== "" || html.trim() !== "")
+                    width: parent.width
+                    z: 0
+                    // Keep the surface paintable during the covered layout phase.
+                    opacity: Math.max(0.001, htmlPresentation.reveal)
+                    enabled: htmlPresentation.reveal === 1
+
+                    Component.onCompleted: setSource(Qt.resolvedUrl("MailHtmlView.qml"), {
+                        html: Qt.binding(() => htmlBody.html),
+                        fixture: Qt.binding(() => htmlBody.fixture)
+                    })
+
+                    Connections {
+                        target: htmlBody.item
+                        function onExternalLinkRequested(link) { Qt.openUrlExternally(link); }
+                    }
+                }
+
+                Column {
+                    id: htmlProgress
+                    readonly property real loadValue: htmlBody.item?.progress ?? 0
+                    width: parent.width
+                    z: 2
+                    spacing: message.t.space.s
+                    opacity: htmlBody.loading && loadValue < 1 ? 1 : 0
+                    visible: opacity > 0
+
+                    Behavior on opacity {
+                        enabled: htmlProgress.loadValue >= 1
+                        SequentialAnimation {
+                            PauseAnimation { duration: K.Kit.ms(K.Kit.motion("hover").ms) }
+                            NumberAnimation {
+                                duration: K.Kit.ms(K.Kit.motion("fadeFast").ms)
+                                easing.type: Easing.BezierSpline
+                                easing.bezierCurve: K.Kit.motion("fadeFast").curve
+                            }
+                        }
+                    }
+
+                    K.TacitText {
+                        text: qsTr("Loading message…")
+                        size: "meta"
+                        ink: "sec"
+                        Accessible.ignored: true
+                    }
+
+                    Item {
+                        width: parent.width
+                        height: progressBar.implicitHeight
+
+                        K.Progress {
+                            id: progressBar
+                            objectName: "htmlLoadProgress"
+                            anchors.fill: parent
+                            visible: htmlProgress.loadValue < 1
+                            value: htmlProgress.loadValue
+                            label: qsTr("Loading message")
+                        }
+
+                        K.Progress {
+                            objectName: "htmlLoadComplete"
+                            anchors.fill: parent
+                            visible: htmlProgress.loadValue >= 1
+                            value: 1
+                            label: progressBar.label
+                        }
+                    }
+                }
+
+                states: [
+                    State {
+                        name: "loading"
+                        PropertyChanges { htmlPresentation.height: htmlProgress.implicitHeight }
+                    },
+                    State {
+                        name: "ready"
+                        PropertyChanges { htmlPresentation.height: htmlBody.implicitHeight }
+                        PropertyChanges { htmlPresentation.reveal: 1 }
+                    }
+                ]
+
+                transitions: Transition {
+                    from: "loading"
+                    to: "ready"
+                    SequentialAnimation {
+                        NumberAnimation {
+                            target: htmlPresentation
+                            property: "height"
+                            duration: K.Kit.ms(K.Kit.motion("arriveSmall").ms)
+                            easing.type: Easing.BezierSpline
+                            easing.bezierCurve: K.Kit.motion("arriveSmall").curve
+                        }
+                        // Let Chromium paint the newly exposed viewport before revealing it.
+                        PauseAnimation { duration: 140 }
+                        NumberAnimation {
+                            target: htmlPresentation
+                            property: "reveal"
+                            duration: K.Kit.ms(K.Kit.motion("fade").ms)
+                            easing.type: Easing.BezierSpline
+                            easing.bezierCurve: K.Kit.motion("fade").curve
+                        }
+                    }
+                }
+            }
+
             Repeater {
-                model: (message.entry.body ?? "").split("\n\n")
+                model: htmlPresentation.visible ? [] : (message.entry.body ?? "").split("\n\n")
                 delegate: K.TacitText {
                     required property string modelData
                     width: message.textWidth
@@ -276,6 +396,9 @@ Column {
 
             RowLayout {
                 visible: message.expanded && message.actionsVisible
+                opacity: htmlPresentation.visible ? htmlPresentation.reveal : 1
+                enabled: opacity === 1
+                Accessible.ignored: opacity === 0
                 anchors.left: parent.left
                 spacing: message.t.space.xl
 

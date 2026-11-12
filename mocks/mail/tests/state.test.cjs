@@ -1,7 +1,8 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const context=vm.createContext({});vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../mail-store.js'),'utf8'),context);
 const {initial,reduce,results,draft,canSend,current,folderCount}=context;
-let s=initial('read');assert.equal(results(s).length,9);assert.equal(folderCount(s,'Inbox'),4);
+let s=initial('read');assert.equal(results(s).length,10);assert.equal(folderCount(s,'Inbox'),4);
+assert.equal(current(initial('roastmarket')).bodyHtmlFixture,'roastmarket');
 s=reduce(s,'select',{id:'studio'});assert.equal(current(s).unread,false);assert.equal(folderCount(s,'Inbox'),3);
 s=reduce(s,'search',{text:'palettes'});assert.equal(results(s).length,3);s=reduce(s,'closeSearch');
 s=reduce(s,'folder',{folder:'Later'});assert.equal(results(s).length,0);

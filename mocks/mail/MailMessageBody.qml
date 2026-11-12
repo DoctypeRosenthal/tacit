@@ -6,11 +6,19 @@ Item {
     property bool expanded: true
     default property alias contents: content.data
     width: parent.width
-    height: expanded ? content.height : 0
+    height: content.height
     visible: height > 0
     clip: true
-    Behavior on height {
+    states: State {
+        name: "collapsed"
+        when: !body.expanded
+        PropertyChanges { body.height: 0 }
+    }
+    // Animate toggles; the HTML presentation already animates its own height.
+    transitions: Transition {
         NumberAnimation {
+            target: body
+            property: "height"
             duration: K.Kit.ms(body.expanded ? K.Kit.motion("arriveSmall").ms : K.Kit.motion("leave").ms)
             easing.type: Easing.BezierSpline
             easing.bezierCurve: body.expanded ? K.Kit.motion("arriveSmall").curve : K.Kit.motion("leave").curve

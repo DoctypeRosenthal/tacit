@@ -17,6 +17,15 @@ function initial(surface) {
         message("lena","Lena Fischer","Re: The Dusk and Moss pass","Here are the two palettes as we left them on Friday.","Work","Monday","10:05",false),
         message("colour","Studio Newsletter","Colour for calm software","Three palettes that stay quiet on dark grounds.","Personal","12 Oct","12:00",false)
     ];
+    messages[4].bodyHtml = [
+        "<style>.stories{width:100%;max-width:600px}.stories td{width:50%;padding:12px;vertical-align:top}",
+        "@media(max-width:420px){.stories td{display:block;width:auto}}</style>",
+        "<h2>This week's reading list</h2>",
+        "<table class='stories' width='600' cellspacing='0'><tr>",
+        "<td><strong>Quieter interfaces</strong><p>How to make software feel calm.</p></td>",
+        "<td><strong>Thoughtful tools</strong><p>Small choices that help people focus.</p></td>",
+        "</tr></table>"
+    ].join("");
     messages[0].files=[{id:"review",name:"Review summary.pdf",path:"fixtures/review-summary.pdf",bytes:895,detail:"6 pages, 180 kB",kind:"document",content:"Design review\n\nDusk and Moss palettes\n\nKeep the navigation quiet. Give the sender and date one line. Put attachments with the message they belong to.\n\nKeyboard review\nTab moves between controls. Escape returns to the inbox. Every action has a keyboard equivalent."}];
     messages[0].history=[{id:"lena-first",from:"Lena Fischer",date:"Monday",body:"Here are the two palettes as we left them on Friday.",expanded:false},{id:"nils-first",from:"Nils Berger",date:"Yesterday",body:"The moss reads well on dark. The header spacing still feels tight.",expanded:false}];
     messages[0].cc="nils.berger@example.com, lena.fischer@example.com";
@@ -49,8 +58,15 @@ function initial(surface) {
     messages[7].category="Receipts";messages[5].category="Family";messages[1].category="Clients";messages[9].folder="Archive";messages[10].folder="Archive";
     var s={messages:messages,accounts:[{name:"Personal",email:"lorenz@example.com",provider:"Google"},{name:"Work",email:"lorenz@moss.example",provider:"Fastmail"}],drafts:[],jobs:[],sequence:0,settings:{agentDrafts:true,agentSort:false,agentScope:"Work only",undoSeconds:10,workSignature:"Lorenz\nMoss Studio",personalSignature:"Lorenz",pictures:"Ask first",notifications:"From people only",reducedMotion:false},ui:{view:"read",selected:"mara",folder:"Inbox",account:"All accounts",rail:false,query:"",searching:false,filter:"All mail",sort:"Newest first",draftId:"",notice:"",undo:null,notification:false,provider:"",providerEmail:"lorenz@example.com",imported:0,online:true,attachment:null},now:0};
     var d=makeDraft(s,"mara","Reply all",true);s.drafts.push(d);
+    const roastmarket = message("roastmarket", "roastmarket", "Roastmarket Newsletter",
+        "Hallo Kaffeefan,\n\nEntdecke die aktuellen Kaffeeangebote von roastmarket.",
+        "Personal", "12 Oct", "10:30", false);
+    roastmarket.bodyHtmlFixture = "roastmarket";
+    messages.push(roastmarket);
     if(surface==="switch")s.ui.rail=true;
     if(surface==="plain"){s.ui.selected="studio";messages[1].unread=false;}
+    if(surface==="html"){s.ui.selected="newsletter";messages[4].unread=false;}
+    if(surface==="roastmarket")s.ui.selected="roastmarket";
     if(surface==="draft"){s.ui.view="draft";s.ui.draftId=d.id;}
     if(surface==="compose"){var n=makeDraft(s,"","New message",false);n.to="Anna Ri";s.drafts.push(n);s.ui.draftId=n.id;s.ui.view="compose";}
     if(surface==="search"){s.ui.query="palettes";s.ui.searching=true;}

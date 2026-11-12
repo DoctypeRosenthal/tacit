@@ -7,6 +7,7 @@ import Tacit.Kit as K
 FocusScope {
     id: workspace
     required property var controller
+    property bool prewarmHtml: false
     readonly property var t: K.Kit.tokens
     readonly property real listMinimum: t.width.rail + t.space.xl
     readonly property real readerMinimum: t.width.panel + t.space.page * 2
@@ -38,6 +39,40 @@ FocusScope {
     }
 
     focus: true
+
+    Timer {
+        interval: 250
+        running: workspace.prewarmHtml && workspace.visible && !htmlWarmup.attempted
+            && workspace.activeView === "read" && workspace.controller.ui.folder === "Inbox"
+            && workspace.controller.rows.some(row => row.bodyHtml || row.body_html || row.bodyHtmlFixture)
+        onTriggered: {
+            htmlWarmup.attempted = true;
+            const message = workspace.controller.selected;
+            if (!message?.bodyHtml && !message?.body_html && !message?.bodyHtmlFixture)
+                htmlWarmup.active = true;
+        }
+    }
+
+    Loader {
+        id: htmlWarmup
+        property bool attempted: false
+        readonly property bool loaded: !!item?.ready
+        active: false
+        visible: false
+        width: 1
+
+        // Warm the engine with an empty document, then release the view and its profile.
+        Component.onCompleted: setSource(Qt.resolvedUrl("MailHtmlView.qml"), {html: ""})
+        onLoadedChanged: if (loaded) Qt.callLater(() => { htmlWarmup.active = false; })
+        onStatusChanged: if (status === Loader.Error) active = false
+
+        Timer {
+            interval: 5000
+            running: htmlWarmup.active
+            onTriggered: htmlWarmup.active = false
+        }
+    }
+
     component Rule: Rectangle {
         height: 1
         color: K.Kit.tokens.hairline

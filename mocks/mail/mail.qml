@@ -36,7 +36,7 @@ ShellRoot {
                     layer.effect:MultiEffect {maskEnabled:true;maskSource:mask}
                     K.WindowGround {}
                 }
-                MailWorkspace {id:workspace;anchors.fill:parent;controller:model}
+                MailWorkspace {id:workspace;anchors.fill:parent;controller:model;prewarmHtml:true}
             }
 
         }
