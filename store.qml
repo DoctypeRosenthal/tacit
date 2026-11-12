@@ -261,6 +261,7 @@ ApplicationWindow {
         "r-denied": ["Not removed", "The password was not accepted, or this account can't remove apps. Try again, or ask an administrator."],
         "r-busy": ["Another update is running", "Try again when it has finished."],
         "r-failed": ["Couldn't remove it", "Nothing was changed. Try again, or look again later."],
+        "r-not-removable": ["Not removed", "Apps removes only what it got itself."],
         "unavailable": ["Not made for this computer", "There is no version of it for this computer's processor."]
     })
 
@@ -302,7 +303,7 @@ ApplicationWindow {
                     if (!root.visible) root.notice(root.work.pkg, "update");
                 } else {
                     const o = Object.assign({}, root.outcome);
-                    o[root.work.pkg] = root.work.kind === "remove" && !["ok", "needed"].includes(msg.result) ? (["cancelled", "denied", "busy"].includes(msg.result) ? "r-" + msg.result : "r-failed") : msg.result;
+                    o[root.work.pkg] = root.work.kind === "remove" && !["ok", "needed"].includes(msg.result) ? (["cancelled", "denied", "busy", "not-removable"].includes(msg.result) ? "r-" + msg.result : "r-failed") : msg.result;
                     root.outcome = o;
                     if (msg.result !== "ok" && root.work.kind === "install") root.failedInstall(root.work);
                 }
