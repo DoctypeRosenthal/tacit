@@ -46,7 +46,7 @@ func TestStreamedAttachmentsRemainOutsideJSON(t *testing.T) {
 			if e = rows.Scan(&raw); e != nil {
 				t.Fatal(e)
 			}
-			if bytes.Contains(raw, []byte(`"data":`)) || len(raw) > 20000 {
+			if bytes.Contains(raw, []byte(`"data":`)) || bytes.Contains(raw, []byte(`data:image/`)) {
 				t.Fatalf("binary in %s JSON", table)
 			}
 		}

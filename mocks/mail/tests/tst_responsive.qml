@@ -2,17 +2,18 @@ import QtQuick
 import QtTest
 import Tacit.Kit as K
 import ".." as Mail
+import "fixtures/mailbox.js" as Fixture
 import "../mail-store.js" as Store
 
 Item {
     id:fixture
     width:1720;height:972
-    Mail.MailState {id:state}
+    Mail.MailWorkspaceSession {id:state; reduceAction: Fixture.reduce}
     Mail.MailWorkspace {id:workspace;anchors.fill:parent;controller:state}
     TestCase {
         name:"MailResponsive"
         when:windowShown
-        function init(){fixture.width=1720;fixture.height=972;state.data=Store.initial("read");K.Kit.reducedMotion=true;workspace.compactReading=true;wait(40);}
+        function init(){fixture.width=1720;fixture.height=972;state.data=Fixture.initial("read");K.Kit.reducedMotion=true;workspace.compactReading=true;wait(40);}
         function item(name){var result=findChild(workspace,name);verify(result!==null,"Missing "+name);return result;}
         function inside(control){var at=control.mapToItem(workspace,0,0);verify(at.x>=-1&&at.y>=-1,control.objectName+" starts outside the window at "+at);verify(at.x+control.width<=workspace.width+1&&at.y+control.height<=workspace.height+1,control.objectName+" ends outside the window");}
         function test_sizes_data(){return [

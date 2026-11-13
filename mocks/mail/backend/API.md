@@ -17,6 +17,7 @@ Transport: HTTP/JSON over a Unix domain socket. No TCP port. Use `http://localho
 | POST | `/v1/drafts` | Create draft; returns 201 |
 | PUT | `/v1/drafts/{id}` | Replace draft; returns 200 |
 | POST | `/v1/send` | `draft_id`, `idempotency_key`; returns durable job, 202 |
+| GET | `/v1/outbox` | Active and retryable jobs as `{jobs:[...]}` |
 | GET | `/v1/outbox/{id}` | Job state, attempts and last error |
 | POST | `/v1/outbox/{id}/retry` | `{}`; retry `failed` or `uncertain` job |
 | POST | `/v1/sync` | `account_id`; receive one batch (up to 100 events) |

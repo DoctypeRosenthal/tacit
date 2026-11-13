@@ -3,104 +3,8 @@ function copy(value) { return JSON.parse(JSON.stringify(value)); }
 function message(id, from, subject, body, account, day, time, unread) {
     return {id:id, from:from, address:from.toLowerCase().replace(/[^a-z]/g, ".")+"@example.com", subject:subject, body:body, account:account, day:day, time:time, unread:!!unread, starred:false, folder:"Inbox", files:[], replies:[], generated:false};
 }
-function initial(surface) {
-    var messages = [
-        message("mara","Mara Klein","The Dusk and Moss pass","Hi Lorenz,\n\nThe final design review is ready. I have attached our notes on the Dusk and Moss palettes.\n\nCould you take a look at the navigation and the message header before Thursday? The interface should stay quiet, with the content doing most of the talking.\n\nThanks,\nMara","Work","Today","09:42",false),
-        message("studio","Tactical Studio","Monday notes, prototype review","Good morning,\n\nThe prototype is ready for a short review. We have updated the keyboard map and the spacing in the header, as discussed on Monday.\n\nCould you try it this week and tell us what still feels slow?\n\nBest,\nTactical Studio","Work","Today","08:15",true),
-        message("nils","Nils Berger","Train details for Friday","Hi Lorenz,\n\nThe train leaves at 08:34 from platform 7. Our seats are in carriage 24. I have attached the ticket and the rest of the travel notes.\n\nSee you on Friday,\nNils","Work","Yesterday","18:20",false),
-        message("quiet","Quiet Hours","Your weekly summary","You made room for three focused sessions and kept two evenings free.\n\nTake a little time for yourself this week.","Personal","Yesterday","07:00",false),
-        message("newsletter","Studio Newsletter","A few things worth reading","Quieter interfaces, thoughtful tools, and making software feel calm.\n\nThis week's reading list is ready.","Personal","Monday","16:02",true),
-        message("anna","Anna Richter","A small question about Tuesday","Hi Lorenz,\n\nWould Tuesday still work for you? I can make either 11:00 or 14:30.\n\nAnna","Personal","Monday","11:47",true),
-        message("lea","Lea Hoffmann","Feedback on the reading view","The denser overview is much easier to scan. A little more room around the sender would help.\n\nThanks for sharing it!","Personal","Monday","09:30",true),
-        message("book","Bookshop","Your reservation is ready","The book you asked us to set aside has arrived.\n\nYou can collect it any time this week.","Personal","Sunday","18:40",false),
-        message("felix","Felix Braun","Photos from the weekend","Here are a few pictures from our walk. The light by the lake was lovely.","Personal","Sunday","12:05",false),
-        message("lena","Lena Fischer","Re: The Dusk and Moss pass","Here are the two palettes as we left them on Friday.","Work","Monday","10:05",false),
-        message("colour","Studio Newsletter","Colour for calm software","Three palettes that stay quiet on dark grounds.","Personal","12 Oct","12:00",false)
-    ];
-    messages[4].bodyHtml = [
-        "<style>.stories{width:100%;max-width:600px}.stories td{width:50%;padding:12px;vertical-align:top}",
-        "@media(max-width:420px){.stories td{display:block;width:auto}}</style>",
-        "<h2>This week's reading list</h2>",
-        "<table class='stories' width='600' cellspacing='0'><tr>",
-        "<td><strong>Quieter interfaces</strong><p>How to make software feel calm.</p></td>",
-        "<td><strong>Thoughtful tools</strong><p>Small choices that help people focus.</p></td>",
-        "</tr></table>"
-    ].join("");
-    messages[0].files=[{id:"review",name:"Review summary.pdf",path:"fixtures/review-summary.pdf",bytes:895,detail:"6 pages, 180 kB",kind:"document",content:"Design review\n\nDusk and Moss palettes\n\nKeep the navigation quiet. Give the sender and date one line. Put attachments with the message they belong to.\n\nKeyboard review\nTab moves between controls. Escape returns to the inbox. Every action has a keyboard equivalent."}];
-    messages[0].history=[{id:"lena-first",from:"Lena Fischer",date:"Monday",body:"Here are the two palettes as we left them on Friday.",expanded:false},{id:"nils-first",from:"Nils Berger",date:"Yesterday",body:"The moss reads well on dark. The header spacing still feels tight.",expanded:false}];
-    messages[0].cc="nils.berger@example.com, lena.fischer@example.com";
-    Object.assign(messages[0].history[0], {address:"lena.fischer@example.com", to:"lorenz@moss.example", cc:"mara.klein@example.com, nils.berger@example.com"});
-    Object.assign(messages[0].history[1], {address:"nils.berger@example.com", to:"lorenz@moss.example", cc:"mara.klein@example.com, lena.fischer@example.com"});
-    var packet = ["01 Overview", "02 Navigation", "03 Keyboard shortcuts", "04 Layout and spacing",
-        "05 Dusk palette", "06 Moss palette", "07 Accessibility", "08 Attachment previews",
-        "09 Review questions", "10 Next steps"];
-    messages[1].files = packet.map(function(name, index) {
-        return {id:"prototype-"+(index+1), name:name+".md", path:"fixtures/prototype-review/"+name+".md", bytes:[89,79,104,98,75,87,89,91,91,80][index]};
-    });
-    messages[1].body += "\n\nThe ten notes in the review packet are attached.";
-    messages[2].starred=true;messages[2].files=[{id:"ticket",name:"Train ticket.pdf",path:"fixtures/train-ticket.pdf",bytes:790,detail:"1 page, 94 kB",kind:"document",content:"Friday\nDeparture 08:34 · Platform 7\nCarriage 24 · Seat 42"}];
-    var travelNotes = [
-        ["Seat reservation", "Carriage 24 · Seats 42 and 43"],
-        ["Friday itinerary", "08:34 departure · Meet at platform 7 at 08:20."],
-        ["Transfer instructions", "Follow the signs to platform 3 after arrival."],
-        ["Hotel confirmation", "Check-in from 15:00. Reservation under Berger."],
-        ["Return journey", "Sunday · 17:12 departure from platform 4."]
-    ];
-    messages[2].files.push(...travelNotes.map(function(note, index) {
-        return {id:"travel-"+(index+1), name:note[0]+".md", kind:"document", content:note[1], bytes:encodeURIComponent(note[1]).replace(/%[0-9A-F]{2}/g, "x").length};
-    }));
-    messages[2].files.push(
-        {id:"travel-cells", name:"Cells.jpg", path:"fixtures/Cells.jpg", kind:"image", bytes:398499},
-        {id:"travel-moss", name:"Moss.jpg", path:"fixtures/Moss.jpg", kind:"image", bytes:309416},
-        {id:"travel-terracotta", name:"Terracotta.jpg", path:"fixtures/Terracotta.jpg", kind:"image", bytes:170341},
-        Object.assign({}, messages[0].files[0], {id:"travel-review"})
-    );
-    messages[7].category="Receipts";messages[5].category="Family";messages[1].category="Clients";messages[9].folder="Archive";messages[10].folder="Archive";
-    var s={messages:messages,accounts:[{name:"Personal",email:"lorenz@example.com",provider:"Google"},{name:"Work",email:"lorenz@moss.example",provider:"Fastmail"}],drafts:[],jobs:[],sequence:0,settings:{agentDrafts:true,agentSort:false,agentScope:"Work only",undoSeconds:10,workSignature:"Lorenz\nMoss Studio",personalSignature:"Lorenz",pictures:"Ask first",notifications:"From people only",reducedMotion:false},ui:{view:"read",selected:"mara",folder:"Inbox",account:"All accounts",rail:false,query:"",searching:false,filter:"All mail",sort:"Newest first",draftId:"",notice:"",undo:null,notification:false,provider:"",providerEmail:"lorenz@example.com",imported:0,online:true,attachment:null},now:0};
-    var d=makeDraft(s,"mara","Reply all",true);s.drafts.push(d);
-    const roastmarket = message("roastmarket", "roastmarket", "Roastmarket Newsletter",
-        "Hallo Kaffeefan,\n\nEntdecke die aktuellen Kaffeeangebote von roastmarket.",
-        "Personal", "12 Oct", "10:30", false);
-    roastmarket.bodyHtmlFixture = "roastmarket";
-    messages.push(roastmarket);
-    const richText = message("rich-text", "Moss Studio", "Rich-Text-Beispiel · Notizen zur Designrunde",
-        "Hallo Lorenz,\n\nDie Designrunde ist am Donnerstag. Bitte prüfe bis dahin den Mail-Editor.\n\n"
-        + "1. Öffne einen Entwurf.\n2. Prüfe Listen, Links und Schriftgrößen.\n\n"
-        + "Merker: Der Fokus soll beim Schreiben sichtbar bleiben.\n\n"
-        + "Vorschau: tacit-mail --preview\nDesignsystem: https://design.tacitos.co/\n\nDanke!\nMoss Studio",
-        "Work", "Yesterday", "12:30", false);
-    richText.bodyHtml = [
-        "<p>Hallo Lorenz,</p>",
-        "<p>Die Designrunde ist am <strong>Donnerstag</strong>. Bitte prüfe bis dahin den <em>Mail-Editor</em>.</p>",
-        "<ol><li>Öffne einen Entwurf.</li><li>Prüfe Listen, Links und Schriftgrößen.</li></ol>",
-        "<blockquote><mark>Merker:</mark> Der Fokus soll beim Schreiben sichtbar bleiben.</blockquote>",
-        "<p>Vorschau: <code>tacit-mail --preview</code><br>Designsystem: <a href='https://design.tacitos.co/'>Tacit</a></p>",
-        "<p><img width='470' height='278' alt='Katze mit Lauchstange' src='tacit-fixture:funny-cat-52'></p>",
-        "<p>Danke!<br>Moss Studio</p>"
-    ].join("");
-    richText.bodyHtmlFixture = "rich-text";
-    richText.files = [{
-        id: "rich-text-cat",
-        inline: true,
-        name: "funny-cat-52.gif",
-        path: "fixtures/funny-cat-52.gif",
-        kind: "image",
-        bytes: 410569
-    }];
-    messages.push(richText);
-    if(surface==="switch")s.ui.rail=true;
-    if(surface==="plain"){s.ui.selected="studio";messages[1].unread=false;}
-    if(surface==="html"){s.ui.selected="newsletter";messages[4].unread=false;}
-    if(surface==="roastmarket")s.ui.selected="roastmarket";
-    if(surface==="draft"){s.ui.view="draft";s.ui.draftId=d.id;}
-    if(surface==="compose"){var n=makeDraft(s,"","New message",false);n.to="Anna Ri";s.drafts.push(n);s.ui.draftId=n.id;s.ui.view="compose";}
-    if(surface==="search"){s.ui.query="palettes";s.ui.searching=true;}
-    if(surface==="empty"){s.ui.folder="Later";s.ui.selected="";}
-    if(surface==="setup"||surface==="settings")s.ui.view=surface;
-
-    if(surface==="importing"){s.ui.view="importing";s.ui.imported=1240;}
-    if(surface==="notify"){s.ui.view="read";s.ui.selected="anna";}
-    if(surface==="sent"||surface==="offline"){s.ui.draftId=d.id;s.ui.online=surface!=="offline";s=reduce(s,"send",{now:0});s.ui.notice="";}
+function emptyMailbox() {
+    var s={messages:[],accounts:[],drafts:[],jobs:[],sequence:0,settings:{agentDrafts:true,agentSort:false,agentScope:"Work only",undoSeconds:10,workSignature:"Lorenz\nMoss Studio",personalSignature:"Lorenz",pictures:"Ask first",notifications:"From people only",reducedMotion:false},ui:{view:"read",selected:"",folder:"Inbox",account:"All accounts",rail:false,query:"",searching:false,filter:"All mail",sort:"Newest first",draftId:"",notice:"",undo:null,notification:false,provider:"",providerEmail:"",imported:0,online:true,attachment:null},now:0};
     return s;
 }
 function find(s,id){return s.messages.find(function(m){return m.id===id;})||null;}
@@ -141,6 +45,50 @@ function replySource(s, thread, sourceId) {
     var account = s.accounts.find(function(item) { return item.name === thread.account; });
     return Object.assign({}, sent, {from:"You", address:account ? account.email : "", replyAddress:recipients[0] || "", cc:recipients.slice(1).concat(sent.cc || []).join(", ")});
 }
+function fromMailbox(state, messages, sourceRows) {
+    const rows = messages.filter(entry => entry.mailbox !== "Drafts" && entry.mailbox !== "Outbox")
+        .map(entry => {
+            const date = new Date(entry.date);
+            const row = message(entry.id, entry.from.name || entry.from.email, entry.subject,
+                entry.body_text || "", entry.account_id === "work" ? "Work" : "Personal",
+                date.toLocaleDateString(), date.toLocaleTimeString().slice(0, 5), entry.unread);
+            row.address = entry.from.email;
+            row.backendAccount = entry.account_id;
+            row.backendConversation = entry.conversation_id;
+            row.cc = (entry.cc || []).map(address => address.email).join(", ");
+            row.folder = entry.mailbox;
+            row.starred = entry.flagged;
+            row.bodyHtml = entry.body_html || "";
+            row.files = (entry.attachments || []).map(file => ({
+                id: file.id, messageId: entry.id, name: file.filename, bytes: file.size,
+                kind: file.media_type.startsWith("image/") ? "image" : "document",
+                inline: file.inline || row.bodyHtml.includes('cid:' + file.id)
+            }));
+            return row;
+        });
+    const drafts = messages.filter(entry => entry.mailbox === "Drafts").map(entry => {
+        const source = (sourceRows || rows).find(row => row.backendConversation === entry.conversation_id
+            && row.account === (entry.account_id === "work" ? "Work" : "Personal"));
+        const addresses = values => (values || []).map(address => address.email).join(", ");
+        return {
+            id: entry.id, backendId: entry.id, backendConversation: entry.conversation_id, conversation: source?.id || "",
+            mode: source ? "Reply" : "New message", account: entry.account_id === "work" ? "Work" : "Personal",
+            to: addresses(entry.to), cc: addresses(entry.cc), bcc: addresses(entry.bcc),
+            showCc: !!entry.cc?.length, showBcc: !!entry.bcc?.length, subject: entry.subject,
+            body: entry.body_text || "", bodyHtml: entry.body_html || "",
+            files: (entry.attachments || []).map(file => ({id: file.id, messageId: entry.id, backendId: file.id, name: file.filename, inline: file.inline, inlineSource: file.inlineSource}))
+        };
+    });
+    return Object.assign({}, state, {
+        messages: rows, drafts, jobs: [],
+        ui: Object.assign({}, state.ui, {
+            selected: rows.some(row => row.id === state.ui.selected)
+                ? state.ui.selected : rows.find(row => row.folder === "Inbox")?.id || "",
+            view: drafts.some(draft => draft.id === state.ui.draftId) ? state.ui.view : "read"
+        })
+    });
+}
+
 function makeDraft(s,conversation,mode,agent,sourceId){
     var thread=find(s,conversation),m=replySource(s,thread,sourceId),account=thread?thread.account:(s.ui.account==="All accounts"?"Personal":s.ui.account);
     var signature=account==="Work"?s.settings.workSignature:s.settings.personalSignature;
@@ -152,7 +100,7 @@ function canSend(d){return !!d&&validRecipients(d.to)&&(!d.cc||validRecipients(d
 function results(s){
     if(s.ui.folder==="Drafts"&&!s.ui.searching)return s.drafts.filter(function(d){return s.ui.account==="All accounts"||d.account===s.ui.account;}).map(function(d){return {id:d.id,draft:true,from:d.agent?"Your agent":"You",subject:d.subject||"No subject",body:d.body,account:d.account,day:"Drafts",time:"Not sent",unread:false,files:d.files};});
     var q=s.ui.query.toLowerCase().trim();var list=s.messages.filter(function(m){
-        if(s.ui.searching){if(m.folder==="Trash"||m.folder==="Junk")return false;return (m.from+" "+m.address+" "+m.subject+" "+m.body+" "+m.files.map(function(f){return f.name;}).join(" ")).toLowerCase().includes(q);}
+        if(s.ui.searching){if(m.folder==="Trash"||m.folder==="Junk")return false;if(s.searchIds)return s.searchIds.includes(m.id);return (m.from+" "+m.address+" "+m.subject+" "+m.body+" "+m.files.map(function(f){return f.name;}).join(" ")).toLowerCase().includes(q);}
         if(s.ui.account!=="All accounts"&&m.account!==s.ui.account)return false;
         if(s.ui.folder==="Starred"){if(!m.starred||m.folder==="Trash")return false;}
         else if(s.ui.folder==="Sent"){if(!m.replies.some(function(r){return r.status==="sent";})&&m.folder!=="Sent")return false;}
@@ -168,7 +116,6 @@ function results(s){
 }
 function folderCount(s,folder,account){var c={messages:s.messages,drafts:s.drafts,ui:Object.assign({},s.ui)};c.ui.searching=false;c.ui.filter="All mail";c.ui.folder=folder;c.ui.account=account||"All accounts";var rows=results(c);return folder==="Inbox"?rows.filter(function(m){return m.unread;}).length:rows.length;}
 function remember(s){s.ui.undo={messages:copy(s.messages),drafts:copy(s.drafts),jobs:copy(s.jobs),accounts:copy(s.accounts),selected:s.ui.selected};}
-function restoreJob(s,job){var m=find(s,job.conversation);if(m)m.replies=m.replies.filter(function(r){return r.id!==job.id;});if(!s.drafts.some(function(d){return d.id===job.draft.id;}))s.drafts.push(copy(job.draft));s.ui.draftId=job.draft.id;s.ui.selected=job.conversation;s.ui.view=job.draft.conversation?"draft":"compose";s.jobs=s.jobs.filter(function(j){return j.id!==job.id;});if(job.created){s.messages=s.messages.filter(function(m){return m.id!==job.conversation;});s.ui.selected="";}}
 function reduce(previous,action,p){
     p=p||{};var s=copy(previous),u=s.ui,m=current(s),d=draft(s);s.now=p.now===undefined?s.now:p.now;
     switch(action){
@@ -189,24 +136,8 @@ function reduce(previous,action,p){
     case "draft":if(d){if(p.body!==undefined&&p.bodyHtml===undefined)d.bodyHtml="";Object.keys(p).forEach(function(key){if(key!=="now")d[key]=p[key];});d.edited=p.edited===undefined?true:p.edited;}break;
     case "keepDraft":u.view="read";u.notice="Draft kept. Nothing was sent.";break;
     case "discard":if(d){remember(s);s.drafts=s.drafts.filter(function(x){return x.id!==d.id;});u.draftId="";u.view="read";u.notice="Draft moved to Trash";}break;
-    case "attach":if(d){d.files.push({id:"local-"+(++s.sequence),name:p.name||"Notes.md",detail:p.url?"Local file":"Preview attachment",kind:"document",inline:!!p.inline,url:p.url||"",content:p.url?"A local file chosen for this draft.":"# Notes\n\nA local mock attachment. No file was uploaded."});}break;
+    case "attach":if(d&&p.url&&p.name){d.files.push({id:"local-"+(++s.sequence),name:p.name,kind:"document",inline:!!p.inline,url:p.url});}break;
     case "detach":if(d)d.files=d.files.filter(function(f){return f.id!==p.id;});break;
-    case "send":
-        if (d && typeof p.body === "string" && typeof p.bodyHtml === "string") {
-            d.body = p.body;
-            d.bodyHtml = p.bodyHtml;
-        }
-        if(!canSend(d)){u.notice="Add valid recipients and a message or attachment.";break;}
-        var originalDraft=copy(d);var created=!d.conversation;if(created){var own=message("sent-"+(++s.sequence),"You",d.subject||"No subject",d.body,d.account,"Today","Now",false);own.folder="Sent";own.outgoing=true;own.address=d.to;own.files=[];s.messages.unshift(own);d.conversation=own.id;u.selected=own.id;m=own;}else m=find(s,d.conversation);
-        var sendId="send-"+(++s.sequence),expires=s.now+s.settings.undoSeconds*1000;var sent={id:sendId,body:d.body,bodyHtml:d.bodyHtml??"",to:d.to,cc:d.cc,files:copy(d.files),agent:d.agent,edited:d.edited,status:u.online?"sending":"queued",date:"Now"};m.replies.push(sent);s.jobs.push({id:sendId,conversation:m.id,draft:originalDraft,expires:expires,created:created});s.drafts=s.drafts.filter(function(x){return x.id!==d.id;});u.view="read";u.notice=u.online?"Sending · you can still undo":"No connection. Your message is waiting safely.";u.undo=null;break;
-    case "tick":
-        s.messages.forEach(function(mail){if(mail.folder==="Later"&&mail.returnAt&&s.now>=mail.returnAt){mail.folder="Inbox";delete mail.returnAt;mail.unread=true;u.notice="A message returned from Later";}});
-        s.jobs=s.jobs.filter(function(j){if(s.now<j.expires||!u.online)return true;var thread=find(s,j.conversation);if(thread){var r=thread.replies.find(function(x){return x.id===j.id;});if(r)r.status="sent";}u.notice="Message sent (local preview)";return false;});
-        if(u.view==="importing"){u.imported=Math.min(8600,u.imported+1240);if(u.imported===8600){u.view="read";u.account="All accounts";u.selected="studio";s.messages[1].unread=false;u.notice="Your mail is ready (local preview)";}}break;
-    case "undoSend":if(s.jobs.length){var last=s.jobs[s.jobs.length-1];if(s.now<=last.expires||!u.online){restoreJob(s,last);u.notice="Sending cancelled. Your draft is ready.";}}break;
-    case "editQueued":var j=s.jobs.find(function(x){return x.conversation===u.selected;});if(j)restoreJob(s,j);break;
-    case "retry":if(u.online){s.jobs.forEach(function(j){if(j.conversation===u.selected)j.expires=s.now;});return reduce(s,"tick",{now:s.now});}u.notice="Still offline. Your message remains queued.";break;
-    case "online":u.online=p.value===undefined?!u.online:!!p.value;s.jobs.forEach(function(j){var mail=find(s,j.conversation);var reply=mail&&mail.replies.find(function(r){return r.id===j.id;});if(reply)reply.status=u.online?"sending":"queued";});u.notice=u.online?"Back online (local preview)":"Working offline";break;
     case "move":if(m){remember(s);m.folder=p.folder;u.notice="Moved to "+p.folder;var rows=results(s);if(!rows.some(function(x){return x.id===m.id;}))u.selected=rows.length?rows[0].id:"";}break;
     case "star":if(m){m.starred=!m.starred;u.notice=m.starred?"Starred":"Star removed";}break;
     case "unread":if(m){m.unread=p.value===undefined?!m.unread:!!p.value;u.notice=m.unread?"Marked unread":"Marked read";}break;
@@ -214,26 +145,16 @@ function reduce(previous,action,p){
     case "expand":if(m){var h=(m.history||[]).find(function(x){return x.id===p.id;});if(h)h.expanded=!h.expanded;}break;
     case "preview":u.attachment=p.file;break;
     case "closePreview":u.attachment=null;break;
-    case "saveAttachment":u.notice="Save to Files requested for "+p.name+" (local preview)";break;
     case "settings":u.view="settings";u.rail=false;break;
     case "setting":s.settings[p.key]=p.value;break;
     case "back":u.view="read";u.provider="";u.attachment=null;break;
     case "setup":u.view="setup";u.provider="";u.rail=false;break;
     case "provider":u.provider=p.name;break;
     case "providerEmail":u.providerEmail=p.text;break;
-    case "connect":
-        if(!validRecipients(u.providerEmail)){u.notice="Enter a valid email address for the preview.";break;}
-        if(!s.accounts.some(function(a){return a.email===u.providerEmail;}))s.accounts.push({name:u.providerEmail.split("@")[0],email:u.providerEmail,provider:u.provider||"Another provider"});u.provider="";u.view="importing";u.imported=0;u.notice="Connecting locally · no sign-in or network request";break;
-    case "removeAccount":
-        if(s.accounts.length<=1){u.notice="Keep one account in this preview.";break;}var account=s.accounts.find(function(a){return a.email===p.email;});if(account){remember(s);s.accounts=s.accounts.filter(function(a){return a.email!==p.email;});s.messages=s.messages.filter(function(x){return x.account!==account.name;});s.drafts=s.drafts.filter(function(x){return x.account!==account.name;});u.notice="Account removed from this preview";}break;
-    case "notify":u.notification=s.settings.notifications!=="Off";if(!find(s,"anna-notification")){var incoming=message("anna-notification","Anna Richter","A small question about Tuesday","Hi Lorenz,\n\nWould Tuesday still work for you? I can make either 11:00 or 14:30.\n\nAnna","Personal","Today","Now",true);if(s.settings.agentSort)incoming.category="Family";s.messages.unshift(incoming);if(s.settings.agentDrafts&&(s.settings.agentScope==="All accounts"||s.settings.agentScope==="Personal only"))s.drafts.push(makeDraft(s,incoming.id,"Reply",true));}else find(s,"anna-notification").unread=true;break;
-    case "openNotification":u.notification=false;u.view="read";u.folder="Inbox";u.account="All accounts";u.selected=find(s,"anna-notification")?"anna-notification":"anna";find(s,u.selected).unread=false;if(p.reply||p.agent)return reduce(s,"reply",{mode:"Reply",agent:!!p.agent});break;
-    case "readNotification":var n=find(s,"anna-notification")||find(s,"anna");n.unread=false;u.notification=false;break;
-    case "dismissNotification":u.notification=false;if(u.view==="notification")u.view="read";break;
     case "notice":u.notice=p.text;break;
     case "clearNotice":u.notice="";u.undo=null;break;
     case "escape":if(u.attachment)u.attachment=null;else if(u.view==="draft"||u.view==="compose")u.view="read";else if(u.view!=="read")u.view="read";else if(u.searching){u.searching=false;u.query="";}else if(u.rail)u.rail=false;else u.selected="";break;
-    case "reset":return initial("read");
+    case "reset":return emptyMailbox();
     }
     return s;
 }

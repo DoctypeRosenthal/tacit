@@ -2,16 +2,11 @@ import QtQuick
 import QtWebEngine
 import Tacit.Kit as K
 import Tacit.MailHtml
-import "fixtures/roastmarket.js" as Roastmarket
-import "fixtures/rich-text-gif.js" as RichTextGif
 
 Item {
     id: view
 
     required property string html
-    property string fixture: ""
-    readonly property string documentHtml: fixture === "roastmarket" ? Roastmarket.html
-        : fixture === "rich-text" ? html.replace("tacit-fixture:funny-cat-52", RichTextGif.src) : html
     readonly property bool ready: browser.loaded
     readonly property bool loading: browser.loadingMessage
     readonly property real progress: browser.displayProgress
@@ -63,7 +58,7 @@ Item {
             loadingMessage = true;
             height = 1;
             const t = K.Kit.tokens;
-            const html = view.documentHtml;
+            const html = view.html;
             // Keep the initial data URL below Chromium's navigation limit.
             pendingHtml = html.length > 200000 ? html : "";
             loadHtml("<!doctype html><meta charset='utf-8'>"
@@ -169,5 +164,5 @@ Item {
         onPermissionRequested: permission => permission.deny()
     }
 
-    onDocumentHtmlChanged: if (browser.initialized) browser.loadMessage()
+    onHtmlChanged: if (browser.initialized) browser.loadMessage()
 }

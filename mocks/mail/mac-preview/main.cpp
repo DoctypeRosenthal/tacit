@@ -1,11 +1,17 @@
+#include "PreviewMailbox.h"
 #include <QApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
+#include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QMenuBar>
+#include <QMimeDatabase>
+#include <QHash>
+#include <QProcess>
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
@@ -13,6 +19,7 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QSaveFile>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QtWebEngineQuick>
 
@@ -101,6 +108,7 @@ int main(int argc, char *argv[])
     window.resize(1320, 780);
 
     PreviewFiles files;
+    PreviewMailbox mailbox;
     std::unique_ptr<QQmlEngine> engine;
     std::unique_ptr<QQuickItem> scene;
     const auto resizeScene = [&] {
@@ -115,6 +123,7 @@ int main(int argc, char *argv[])
         nextEngine->addImportPath(imports.absolutePath());
         auto *context = nextEngine->rootContext();
         context->setContextProperty("previewFiles", &files);
+        context->setContextProperty("previewMailbox", &mailbox);
         context->setContextProperty("previewWindow", &window);
         context->setContextProperty("previewPalette", readJson(palette));
         context->setContextProperty("previewScale",
@@ -192,13 +201,8 @@ int main(int argc, char *argv[])
             QMetaObject::invokeMethod(scene.get(), "simulate", Q_ARG(QVariant, QVariant(action)));
         });
     };
-    simulate(QObject::tr("Simulate incoming mail"), "notify");
-    simulate(QObject::tr("Toggle online"), "online");
-    simulate(QObject::tr("Add account"), "setup");
-    simulate(QObject::tr("Complete sign-in"), "authorize");
+    preview->addAction(QObject::tr("Receive demo mail"), &mailbox, &PreviewMailbox::receiveDemoMail);
     simulate(QObject::tr("Settings"), "settings");
-    simulate(QObject::tr("Undo pending send"), "undoSend");
-    preview->addAction(QObject::tr("Reset local data"), &window, [&] { loadScene(false); });
 
     auto *palettes = preview->addMenu(QObject::tr("Palette"));
     const auto selectPalette = [&](const QString &name) {

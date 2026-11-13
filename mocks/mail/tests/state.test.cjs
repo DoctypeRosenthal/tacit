@@ -1,5 +1,6 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const context=vm.createContext({});vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../mail-store.js'),'utf8'),context);
+context.Store={...context};vm.runInContext(fs.readFileSync(require("node:path").join(__dirname,"fixtures/mailbox.js"),"utf8").replace(/^\.import[^\n]*\n/,""),context);
 const {initial,reduce,results,draft,canSend,current,folderCount}=context;
 let s=initial('read');assert.equal(results(s).length,11);assert.equal(folderCount(s,'Inbox'),4);
 assert.equal(current(initial('roastmarket')).bodyHtmlFixture,'roastmarket');

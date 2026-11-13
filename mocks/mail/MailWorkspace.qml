@@ -6,7 +6,13 @@ import Tacit.Kit as K
 
 FocusScope {
     id: workspace
-    required property var controller
+    property var mailboxClient: null
+    property var controller: localSession
+    MailWorkspaceSession {
+        id: localSession
+        mailboxClient: workspace.mailboxClient
+        agentInk: workspace.t.accent
+    }
     property bool prewarmHtml: false
     readonly property var t: K.Kit.tokens
     readonly property real listMinimum: t.width.rail + t.space.xl
@@ -108,6 +114,11 @@ FocusScope {
         fileMode: FileDialog.SaveFile
         currentFolder: StandardPaths.writableLocation(StandardPaths.DownloadLocation)
         onAccepted: {
+            if (attachment.messageId && workspace.controller.mailboxClient) {
+                workspace.controller.mailboxClient.saveAttachment(attachment.messageId, attachment.id, selectedFile);
+                Qt.callLater(openNext);
+                return;
+            }
             const source = attachment.url || Qt.resolvedUrl(attachment.path || "");
             if (typeof previewFiles !== "undefined" && previewFiles.copy(source, selectedFile))
                 workspace.controller.act("notice", {
@@ -124,12 +135,12 @@ FocusScope {
         target: workspace.controller
 
         function onSaveRequested(file) {
-            const files = Array.isArray(file) ? file : [file];
-            saveFile.pending = files.filter(item => item.url || item.path);
+            const files = file && typeof file.length === "number" ? Array.from(file) : [file];
+            saveFile.pending = files.filter(item => item && (item.url || item.path || item.messageId));
             if (saveFile.pending.length)
                 saveFile.openNext();
             else
-                workspace.controller.act("notice", {text: "This sample has no file bytes to save."});
+                workspace.controller.act("notice", {text: "No attachment is available to save."});
         }
     }
     Shortcut {

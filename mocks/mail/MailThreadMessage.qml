@@ -259,9 +259,8 @@ Column {
                 Loader {
                     id: htmlBody
                     readonly property string html: message.entry.bodyHtml ?? message.entry.body_html ?? ""
-                    readonly property string fixture: message.entry.bodyHtmlFixture ?? ""
                     readonly property bool loading: status === Loader.Loading || !!item?.loading
-                    active: message.expanded && !message.entry.excerpt && (fixture !== "" || html.trim() !== "")
+                    active: message.expanded && !message.entry.excerpt && html.trim() !== ""
                     width: parent.width
                     z: 0
                     // Keep the surface paintable during the covered layout phase.
@@ -269,8 +268,7 @@ Column {
                     enabled: htmlPresentation.reveal === 1
 
                     Component.onCompleted: setSource(Qt.resolvedUrl("MailHtmlView.qml"), {
-                        html: Qt.binding(() => htmlBody.html),
-                        fixture: Qt.binding(() => htmlBody.fixture)
+                        html: Qt.binding(() => htmlBody.html)
                     })
 
                     Connections {

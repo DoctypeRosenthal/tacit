@@ -184,6 +184,10 @@ func New(s *backend.Service, p *backend.MockProvider) http.Handler {
 		w.WriteHeader(202)
 		json.NewEncoder(w).Encode(v)
 	})
+	mux.HandleFunc("GET /v1/outbox", func(w http.ResponseWriter, r *http.Request) {
+		jobs, err := store.ActiveJobs(r.Context())
+		respond(w, map[string]any{"jobs": jobs}, err)
+	})
 	mux.HandleFunc("GET /v1/outbox/{id}", func(w http.ResponseWriter, r *http.Request) {
 		v, e := store.Job(r.Context(), r.PathValue("id"))
 		respond(w, v, e)

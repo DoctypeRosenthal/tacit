@@ -20,6 +20,25 @@ func job(ctx context.Context, q interface {
 	return j, e
 }
 func (s *Store) Job(ctx context.Context, id string) (Job, error) { return job(ctx, s.db, "id", id) }
+
+// ActiveJobs includes retryable jobs so the client can recover their status after a restart.
+func (s *Store) ActiveJobs(ctx context.Context) ([]Job, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,message_id,idempotency_key,state,attempts,last_error FROM outbox WHERE state!='sent' ORDER BY rowid`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	jobs := []Job{}
+	for rows.Next() {
+		var job Job
+		if err := rows.Scan(&job.ID, &job.MessageID, &job.Key, &job.State, &job.Attempts, &job.LastError); err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, rows.Err()
+}
+
 func (s *Store) Queue(ctx context.Context, draft, key string) (Job, error) {
 	if strings.TrimSpace(key) == "" || len(key) > 200 {
 		return Job{}, ErrInvalid

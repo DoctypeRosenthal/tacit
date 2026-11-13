@@ -337,7 +337,7 @@ Item {
                             controller: reader.controller
                             entry: modelData
                             textInset: reader.textInset
-                            expanded: modelData.historical ? !!modelData.expanded : reader.isExpanded(modelData.id) && !(modelData.context && reader.queued)
+                            expanded: modelData.historical && !modelData.backendAccount ? !!modelData.expanded : (modelData.historical ? !!reader.collapsedMessages[modelData.id] : reader.isExpanded(modelData.id)) && !(modelData.context && reader.queued)
                             hasPrevious: index > 0
                             hasNext: index + 1 < reader.entries.length
                             followingTickOffset: {
@@ -350,7 +350,7 @@ Item {
                             replyEditorComponent: index === reader.replySourceIndex && !reader.controller.ui.attachment ? editorComponent : null
                             actionsVisible: !modelData.context && !reader.editing && modelData.status !== "queued"
                             onToggleRequested: {
-                                if (entry.historical)
+                                if (entry.historical && !entry.backendAccount)
                                     reader.controller.act("expand", {id: entry.id});
                                 else
                                     reader.toggleMessage(entry.id);

@@ -46,7 +46,7 @@ func run() error {
 	}
 	flag.StringVar(&data, "data-dir", data, "private directory for the SQLite cache")
 	flag.StringVar(&socket, "socket", socket, "absolute Unix socket path (private parent directory required)")
-	seed := flag.Bool("seed", true, "seed realistic mock mail once")
+	seed := flag.Bool("seed", false, "seed realistic mock mail once")
 	interval := flag.Duration("worker-interval", 250*time.Millisecond, "outbox polling interval; 0 disables automatic delivery")
 	flag.Parse()
 	if *interval < 0 {

@@ -1,6 +1,6 @@
 # Tacit Mail frontend
 
-Interactive QML prototype using Tacit.Kit. `MailWorkspace.qml` lays out the app, `MailState.qml` exposes its state to QML, and `mail-store.js` implements the state transitions. The prototype uses in-memory sample data. Sending, provider import and agent drafts are simulations. The Go backend and external services are outside this frontend.
+Tacit Mail loads mailbox, search, thread and saved draft data from local maild over its Unix socket. The workspace owns a UI session and the editor keeps a working copy. MailDraftSync writes changes after 400 ms or immediately after attachment changes and before sending.
 
 ## macOS preview
 
@@ -21,13 +21,24 @@ The **Preview** menu can simulate incoming mail, connectivity and sign-in, undo 
 ## Behaviour and boundaries
 
 - The reader and message list share the window at wider sizes. At narrow widths they become separate views, with the mailbox menu providing access to folders, accounts and settings.
-- Fixtures in `fixtures/` are local files. A click on an attachment chip saves a copy on macOS, and a double-click opens the preview. Sample PDF previews show a text summary.
+- Demo messages are seeded by maild. SQLite stores message content and attachment references. The daemon streams attachment bytes from its blob directory.
 - Expanded messages with HTML use Qt WebEngine and an in-memory profile. If the inbox contains HTML mail, the app warms the engine once with an empty local document. Scripts, external resources, downloads and embedded navigation are blocked. Clicking an HTTP(S) link opens it in the default browser. Plain text remains the fallback if the HTML module or rendering is unavailable.
-- Quickshell starts the prototype through `mail.qml`. The shell owns sign-in, notifications and send-status UI. Integrations can listen for `authorizationRequested`, `notificationRequested` and `sendStatusChanged` on `MailState`. Call `completeAuthorization(email)`, `notificationAction(action)` or `act("undoSend")` to return the user's action.
+- Quickshell starts through `mail.qml` with the `Tacit.Mailbox` module on its QML import path. Set `TACIT_MAIL_SOCKET` to use a separate daemon.
 
 The editor supports bold, italic, links and bulleted lists. Drafts and the local send queue keep both plain text and formatted HTML. Paste uses plain text to keep the editor's typography consistent.
 
-For local Quickshell development, build `html-engine` and `editor-engine` with CMake and add each build's absolute `qml/` path to `QML_IMPORT_PATH`. For example, `cmake -S editor-engine -B mac-preview/build-editor-engine` followed by `cmake --build mac-preview/build-editor-engine`. The Mac launcher builds both modules and sets its own import path. Without the editor module, the composer remains usable in plain text.
+For Quickshell development, build the three Qt modules and include their absolute QML paths. From this directory, with the same Qt installation used by Quickshell:
+
+```sh
+mail_build="$(mktemp -d)"
+for module in mailbox-engine html-engine editor-engine; do
+    cmake -S "$module" -B "$mail_build/$module"
+    cmake --build "$mail_build/$module" --parallel
+done
+export QML_IMPORT_PATH="$mail_build/mailbox-engine/qml:$mail_build/html-engine/qml:$mail_build/editor-engine/qml${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}"
+```
+
+Run the Tacit Quickshell entry point with this environment and `curl` on `PATH`. The Mac launcher builds all three modules and sets its own import path. Without the editor module, the composer remains usable in plain text.
 
 ## Checks
 

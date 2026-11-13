@@ -277,7 +277,7 @@ func (s *Store) Patch(ctx context.Context, id string, p MessagePatch) (Message, 
 		default:
 			return m, ErrInvalid
 		}
-		if m.Mailbox == "Outbox" || m.Mailbox == "Drafts" {
+		if m.Mailbox == "Outbox" || (m.Mailbox == "Drafts" && p.Mailbox != "Trash") {
 			return m, ErrConflict
 		}
 		m.Mailbox = p.Mailbox

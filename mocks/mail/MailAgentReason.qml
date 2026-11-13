@@ -7,7 +7,8 @@ Flow {
     required property var controller
     required property string conversationId
     readonly property var t: K.Kit.tokens
-    readonly property string explanation: conversationId === "mara"
+    readonly property var notes: controller.selected?.files?.find(file => file.name === "Header notes.md")
+    readonly property string explanation: (conversationId === "mara" || conversationId === "seed-02")
         ? qsTr("To answer both of Mara's questions, from your header notes.")
         : qsTr("To acknowledge this message, for you to review.")
     readonly property real leadingInset: Math.max(0, (openNotes.height - reasonText.implicitHeight) / 2)
@@ -29,10 +30,7 @@ Flow {
     MailAction {
         id: openNotes
         text: qsTr("Open notes")
-        onActivated: reason.controller.act("preview", {file: {
-            name: "Header notes.md",
-            path: "fixtures/header-notes.md",
-            content: "Sender and date on one line.\nAttachments immediately below the message."
-        }})
+        visible: !!reason.notes
+        onActivated: reason.controller.act("preview", {file: reason.notes})
     }
 }

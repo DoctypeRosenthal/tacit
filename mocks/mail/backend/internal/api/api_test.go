@@ -79,10 +79,20 @@ func TestAPIReceiveSearchDraftSendAndAttachments(t *testing.T) {
 	}
 	d := decode[backend.Message](t, request(t, h, "POST", "/v1/drafts", map[string]any{"account_id": "work", "conversation_id": "api-thread", "to": []any{map[string]string{"email": "new@example.org"}}, "subject": "Re: API search needle", "body_text": "An explicit mock reply"}, 201))
 	job := decode[backend.Job](t, request(t, h, "POST", "/v1/send", map[string]string{"draft_id": d.ID, "idempotency_key": "api-send"}, 202))
+	type jobPage struct {
+		Jobs []backend.Job `json:"jobs"`
+	}
+	pending := decode[jobPage](t, request(t, h, "GET", "/v1/outbox", nil, 200))
+	if len(pending.Jobs) != 1 || pending.Jobs[0].ID != job.ID || pending.Jobs[0].State != "queued" {
+		t.Fatalf("queued jobs: %+v", pending.Jobs)
+	}
 	request(t, h, "POST", "/v1/mock/flush", map[string]any{}, 200)
 	done := decode[backend.Job](t, request(t, h, "GET", "/v1/outbox/"+job.ID, nil, 200))
 	if done.State != "sent" {
 		t.Fatalf("job: %+v", done)
+	}
+	if remaining := decode[jobPage](t, request(t, h, "GET", "/v1/outbox", nil, 200)); len(remaining.Jobs) != 0 {
+		t.Fatalf("sent job still in active outbox: %+v", remaining.Jobs)
 	}
 	stored, _ := s.Get(context.Background(), d.ID)
 	if stored.Mailbox != "Sent" {

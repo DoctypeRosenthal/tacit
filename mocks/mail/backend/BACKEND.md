@@ -23,10 +23,10 @@ Explicit paths are often easier for development. The socket parent must be priva
 ```sh
 mkdir -p /tmp/tacit-mail-dev
 chmod 700 /tmp/tacit-mail-dev
-./bin/maild --data-dir /tmp/tacit-mail-dev/data --socket /tmp/tacit-mail-dev/mail.sock
+./bin/maild --seed --data-dir /tmp/tacit-mail-dev/data --socket /tmp/tacit-mail-dev/mail.sock
 ```
 
-Stop with Ctrl+C. Restart with the same data directory to retain changes. `--worker-interval=0` disables automatic mock delivery, allowing deterministic tests through `/v1/mock/flush`. `--seed=false` skips fixtures and is mainly useful for tests; there is currently no account-creation API.
+Stop with Ctrl+C. Restart with the same data directory to retain changes. `--worker-interval=0` disables automatic mock delivery, allowing deterministic tests through `/v1/mock/flush`. `--seed` opts into demo fixtures. Without it, the daemon opens the database without seeding; there is currently no account-creation API.
 
 An existing socket is never replaced, even if stale. After checking that no daemon owns it, remove a stale socket manually. Do not run multiple daemons against one database using different sockets.
 

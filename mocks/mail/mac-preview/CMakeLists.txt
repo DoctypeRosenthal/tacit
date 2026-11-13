@@ -10,6 +10,9 @@ target_compile_features(TacitMailMacPreview PRIVATE cxx_std_17)
 target_link_libraries(TacitMailMacPreview PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Widgets Qt6::WebEngineQuick)
 add_subdirectory(../html-engine html-engine)
 add_subdirectory(../editor-engine editor-engine)
+add_subdirectory(../mailbox-engine mailbox-engine)
+target_link_libraries(TacitMailMacPreview PRIVATE TacitMailMailboxEngine)
+add_dependencies(TacitMailMacPreview TacitMailMailboxEngineplugin)
 add_dependencies(TacitMailMacPreview TacitMailHtmlEngineplugin TacitMailEditorEngineplugin)
 find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
 find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
@@ -29,3 +32,12 @@ add_custom_target(stagePreview
     VERBATIM
 )
 add_dependencies(TacitMailMacPreview stagePreview)
+
+
+find_package(Qt6 6.8 QUIET COMPONENTS QuickTest)
+if(TARGET Qt6::QuickTest)
+    qt_add_executable(TacitMailIntegrationTest ../tests/maild_frontend_main.cpp)
+    target_link_libraries(TacitMailIntegrationTest PRIVATE Qt6::QuickTest Qt6::WebEngineQuick TacitMailMailboxEngine)
+    target_include_directories(TacitMailIntegrationTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    add_dependencies(TacitMailIntegrationTest TacitMailMacPreview)
+endif()

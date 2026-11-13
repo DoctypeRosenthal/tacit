@@ -2,16 +2,17 @@ import QtQuick
 import QtTest
 import Tacit.Kit as K
 import ".." as Mail
+import "fixtures/mailbox.js" as Fixture
 import "../mail-store.js" as Store
 
 Item {
     width:1720;height:972
-    Mail.MailState {id:state}
+    Mail.MailWorkspaceSession {id:state; reduceAction: Fixture.reduce}
     Mail.MailWorkspace {id:workspace;anchors.fill:parent;controller:state}
     TestCase {
         name:"MailFrontend"
         when:windowShown
-        function init(){state.data=Store.initial("read");K.Kit.reducedMotion=true;wait(30);}
+        function init(){state.data=Fixture.initial("read");K.Kit.reducedMotion=true;wait(30);}
         function keyClicks(text){for(var i=0;i<text.length;i++)keyClick(text[i]);}
         function button(name){var found=findChild(workspace,name);verify(found!==null,"Missing "+name);return found;}
         function click(name){var b=button(name);mouseClick(b,b.width/2,b.height/2);wait(30);}

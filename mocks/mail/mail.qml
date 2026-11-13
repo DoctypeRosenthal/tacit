@@ -1,22 +1,22 @@
-// Interactive local mail prototype. All mail/provider/agent operations are in-memory simulations.
+// Tacit Mail workspace backed by the local mail daemon.
 import QtQuick
 import QtQuick.Effects
 import Quickshell
 import qs.services
 import Tacit.Kit as K
+import Tacit.Mailbox
 
 ShellRoot {
     id:shell
     readonly property int sw:parseInt(Quickshell.env("DUNE_W") ?? "1720")
     readonly property int sh:parseInt(Quickshell.env("DUNE_H") ?? "972")
-    property alias controller:model
-    MailState {
-        id:model
-        initialScreen:Quickshell.env("DUNE_SURFACE") ?? "read"
-        agentInk:Qt.hsla(Math.abs(K.Kit.tokens.accent.hslHue-0.70)<0.10?0.48:0.70,0.42,0.76,1)
-        onSettingsChanged:K.Kit.reducedMotion=settings.reducedMotion
+    readonly property var controller: workspace.controller
+    PreviewMailbox { id: mailbox }
+    Component.onCompleted: {
+        MaterialThemeLoader.reapplyTheme();
+        controller.draftQuery.refresh();
+        mailbox.loadOutbox();
     }
-    Component.onCompleted:MaterialThemeLoader.reapplyTheme()
     FloatingWindow {
         objectName:"mailWindow"
         implicitWidth:shell.sw;implicitHeight:shell.sh
@@ -36,7 +36,7 @@ ShellRoot {
                     layer.effect:MultiEffect {maskEnabled:true;maskSource:mask}
                     K.WindowGround {}
                 }
-                MailWorkspace {id:workspace;anchors.fill:parent;controller:model;prewarmHtml:true}
+                MailWorkspace {id:workspace;anchors.fill:parent;mailboxClient:mailbox;prewarmHtml:true}
             }
 
         }

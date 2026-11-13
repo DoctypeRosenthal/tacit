@@ -6,15 +6,13 @@ FocusScope {
     id: scene
 
     property string initialScreen: "read"
-    property alias controller: model
+    readonly property var controller: workspace.controller
     readonly property real groundRadius: K.Kit.tokens.radius.window
     focus: true
 
-    Mail.MailState {
-        id: model
-        initialScreen: scene.initialScreen
-        agentInk: K.Kit.tokens.accent
-        onSettingsChanged: K.Kit.reducedMotion = settings.reducedMotion
+    Component.onCompleted: {
+        scene.controller.draftQuery.refresh();
+        previewMailbox.loadOutbox();
     }
 
     K.WindowGround {
@@ -30,19 +28,31 @@ FocusScope {
     }
 
     Mail.MailWorkspace {
+        id: workspace
         objectName: "mailScene"
         prewarmHtml: true
         anchors.fill: parent
-        controller: model
+        mailboxClient: previewMailbox
     }
 
-    function snapshot() { return JSON.stringify(model.data); }
-    function restore(snapshot) { model.data = JSON.parse(snapshot); }
-
-    function simulate(action) {
-        if (action === "authorize")
-            model.completeAuthorization("preview@example.test");
-        else
-            model.act(action);
+    function snapshot() { return JSON.stringify(scene.controller.ui); }
+    function restore(snapshot) {
+        const ui = JSON.parse(snapshot);
+        scene.controller.data = Object.assign({}, scene.controller.data, {
+            ui: Object.assign({}, scene.controller.ui, {
+                folder: ui.folder, account: ui.account, rail: ui.rail,
+                query: ui.query, searching: ui.searching, filter: ui.filter, sort: ui.sort
+            })
+        });
     }
+
+    Connections {
+        target: previewMailbox
+        function onDemoMailReceived(ok) {
+            if (!ok)
+                scene.controller.act("notice", {text: qsTr("Could not receive demo mail.")});
+        }
+    }
+
+    function simulate(action) { scene.controller.act(action); }
 }
