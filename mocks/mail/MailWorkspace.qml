@@ -461,6 +461,7 @@ FocusScope {
                 controller: workspace.controller
                 compact: workspace.compact
                 onBackRequested: workspace.compactReading = false
+                attachmentDialogOpen: files.visible
                 onAttachRequested: files.open()
             }
             Column {

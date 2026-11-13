@@ -128,6 +128,107 @@ Item {
             verify(sendY+send.height<=editor.height,"Send must stay inside its editor");
             verify(body.width<=scroll.width,"The editor must fit the reading column");
         }
+        function test_replyGifFitsShortViewport() {
+            const previousHeight = workspace.parent.height;
+            try {
+                click("replyAll");
+                workspace.parent.height = 500;
+                wait(30);
+                const body = button("draftBody");
+                if (!button("formatBold").visible)
+                    skip("Optional editor-engine module is unavailable");
+                body.insertAttachment(Qt.resolvedUrl("../fixtures/funny-cat-52.gif"),
+                    {id: "fit-gif", name: "funny-cat-52.gif"}, 0);
+                const dimensions = /<img [^>]* width="([\d.]+)" height="([\d.]+)"/.exec(body.snapshot().bodyHtml);
+                verify(dimensions !== null);
+                const width = Number(dimensions[1]);
+                const height = Number(dimensions[2]);
+                verify(height <= button("readingScroll").height * 0.45);
+                verify(Math.abs(width / height - 470 / 278) < 0.01);
+            } finally {
+                workspace.parent.height = previousHeight;
+            }
+        }
+        function test_sendReplyWithGifAndTrailingText() {
+            click("replyAll");
+            const body = button("draftBody");
+            if (!button("formatBold").visible)
+                skip("Optional editor-engine module is unavailable");
+
+            body.input.forceActiveFocus();
+            keyClicks("Before the GIF");
+            const file = Qt.resolvedUrl("../fixtures/funny-cat-52.gif");
+            const attachment = { id: "test-gif", name: "funny-cat-52.gif" };
+            body.insertAttachment(file, attachment, body.input.cursorPosition);
+            keyClicks("lol");
+
+            const html = body.snapshot().bodyHtml;
+            verify(html.indexOf("Before the GIF") < html.indexOf("data:image/gif;base64,"));
+            verify(html.indexOf("lol", html.indexOf("</a>")) > html.indexOf("</a>"));
+            verify(html.length > 200000, "Exercise the large HTML loading path");
+
+            button("mailEditor").sendDraft();
+            compare(state.selected.replies[state.selected.replies.length - 1].bodyHtml, html);
+            tryVerify(() => findChild(workspace, "mailHtmlBrowser")?.loaded === true, 10000);
+            const browser = button("mailHtmlBrowser");
+            verify(waitForRendering(browser));
+            compare(browser.backgroundColor, Qt.rgba(0, 0, 0, 0));
+            let rendered = false;
+            browser.runJavaScript(
+                "(() => { const image = document.querySelector('img');"
+                + " const range = document.createRange(); range.selectNodeContents(document.body);"
+                + " return !!image && image.naturalWidth > 0 && document.body.innerText.trim().endsWith('lol')"
+                + " && range.getBoundingClientRect().bottom <= window.innerHeight + 1; })()",
+                1, result => { rendered = result; });
+            tryVerify(() => rendered);
+        }
+        function test_richTextDraft(){
+            state.act("new");
+            state.act("draft", {to: "anna@example.net", body: "First\nSecond"});
+            wait(30);
+            var body = button("draftBody");
+            var bold = button("formatBold");
+            if (!bold.visible)
+                skip("Optional editor-engine module is unavailable");
+
+            body.input.forceActiveFocus();
+            body.input.select(0, 5);
+            click("formatBold");
+            tryVerify(() => state.draft.bodyHtml.includes("<strong>First</strong>"));
+            click("formatItalic");
+            tryVerify(() => state.draft.bodyHtml.includes("<em><strong>First</strong></em>"));
+
+            click("formatLink");
+            var url = button("formatLinkUrl");
+            url.input.text = "https://example.org/";
+            click("applyFormatLink");
+            tryVerify(() => state.draft.bodyHtml.includes('href="https://example.org/"'));
+            body.input.selectAll();
+            click("formatList");
+            tryVerify(() => state.draft.bodyHtml.includes("<ul>"));
+            compare(state.draft.body, "First\nSecond");
+
+            var id = state.draft.id;
+            var html = state.draft.bodyHtml;
+            state.act("keepDraft");
+            state.act("select", {id: id});
+            tryCompare(button("draftBody").input, "length", 12);
+            tryVerify(() => button("draftBody").snapshot().bodyHtml.includes("<strong>"));
+            html = button("draftBody").snapshot().bodyHtml;
+            verify(html.includes("<ul>") && html.includes('href="https://example.org/"'));
+            body = button("draftBody");
+            body.input.forceActiveFocus();
+            body.input.cursorPosition = body.input.length;
+            click("formatBold");
+            keyClicks("X");
+            tryVerify(() => state.draft.bodyHtml.includes("<strong>X</strong>"));
+            body.input.undo();
+            tryVerify(() => state.draft.bodyHtml === html);
+            state.act("send");
+            compare(state.selected.replies[0].bodyHtml, html);
+            state.act("undoSend");
+            compare(state.draft.bodyHtml, html);
+        }
         function test_sidebar(){click("folderMenu");compare(state.ui.rail,true);verify(button("mailboxes").visible);}
     }
 }

@@ -3,13 +3,15 @@ import QtWebEngine
 import Tacit.Kit as K
 import Tacit.MailHtml
 import "fixtures/roastmarket.js" as Roastmarket
+import "fixtures/rich-text-gif.js" as RichTextGif
 
 Item {
     id: view
 
     required property string html
     property string fixture: ""
-    readonly property string documentHtml: fixture === "roastmarket" ? Roastmarket.html : html
+    readonly property string documentHtml: fixture === "roastmarket" ? Roastmarket.html
+        : fixture === "rich-text" ? html.replace("tacit-fixture:funny-cat-52", RichTextGif.src) : html
     readonly property bool ready: browser.loaded
     readonly property bool loading: browser.loadingMessage
     readonly property real progress: browser.displayProgress
@@ -29,6 +31,7 @@ Item {
 
     WebEngineView {
         id: browser
+        objectName: "mailHtmlBrowser"
 
         property bool loaded: false
         property bool loadingMessage: false
@@ -36,10 +39,11 @@ Item {
         property bool initialized: false
         property real displayProgress: 0
         property int documentRevision: 0
+        property string pendingHtml: ""
         width: parent.width
         height: 1
         profile: mailProfile
-        backgroundColor: K.Kit.tokens.windowGround
+        backgroundColor: "transparent"
 
         settings.javascriptEnabled: false
         settings.javascriptCanOpenWindows: false
@@ -59,25 +63,40 @@ Item {
             loadingMessage = true;
             height = 1;
             const t = K.Kit.tokens;
+            const html = view.documentHtml;
+            // Keep the initial data URL below Chromium's navigation limit.
+            pendingHtml = html.length > 200000 ? html : "";
             loadHtml("<!doctype html><meta charset='utf-8'>"
                 + "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'\">"
                 + "<meta http-equiv='x-dns-prefetch-control' content='off'>"
-                + "<style>body{margin:0;color:" + t.inkMain + ";background:" + t.windowGround
+                + "<style>body{margin:0;color:" + t.inkMain
                 + ";font:" + t.size.body + "px sans-serif;overflow-wrap:anywhere}"
+                + ":where(body > :first-child, body > style + :first-of-type){margin-block-start:0}"
                 + "a{color:" + t.accent + "}img{max-width:100%;height:auto}</style>"
-                + view.documentHtml);
+                + (pendingHtml ? "<body></body>" : html));
         }
+        function finishLoad() {
+            displayProgress = 1;
+            waitingForLayout = true;
+            measureLayout.restart();
+        }
+
         function fitDocument() {
             const revision = documentRevision;
             const measuredWidth = width;
             // Query actual DOM geometry in our isolated world. The page's own scripts stay disabled.
-            runJavaScript("Math.max(document.body.scrollHeight, document.body.offsetHeight)", 1, result => {
+            runJavaScript("Array.from(document.images).some(image => !image.complete)"
+                + " ? -1 : (() => { const range = document.createRange(); range.selectNodeContents(document.body); return Math.max(document.body.scrollHeight, document.body.offsetHeight, range.getBoundingClientRect().bottom + window.scrollY); })()", 1, result => {
                 if (revision !== documentRevision || measuredWidth !== width || (!waitingForLayout && !loaded))
                     return;
                 if (!Number.isFinite(result)) {
                     loaded = false;
                     waitingForLayout = false;
                     loadingMessage = false;
+                    return;
+                }
+                if (result === -1) {
+                    measureLayout.restart();
                     return;
                 }
                 height = Math.max(1, Math.ceil(result));
@@ -101,9 +120,25 @@ Item {
         onLoadProgressChanged: if (loadingMessage) displayProgress = Math.max(displayProgress, loadProgress / 100)
         onLoadingChanged: info => {
             if (info.status === WebEngineView.LoadSucceededStatus) {
-                displayProgress = 1;
-                waitingForLayout = true;
-                measureLayout.restart();
+                if (pendingHtml) {
+                    const revision = documentRevision;
+                    const html = pendingHtml;
+                    pendingHtml = "";
+                    runJavaScript("(() => { const html = " + JSON.stringify(html)
+                        + "; const parsed = new DOMParser().parseFromString(html, 'text/html');"
+                        + " for (const name of ['style', 'bgcolor', 'background', 'class', 'id']) {"
+                        + " if (parsed.body.hasAttribute(name)) document.body.setAttribute(name, parsed.body.getAttribute(name)); }"
+                        + " document.body.innerHTML = html; return true; })()", 1, inserted => {
+                            if (revision !== documentRevision)
+                                return;
+                            if (inserted)
+                                finishLoad();
+                            else
+                                loadingMessage = false;
+                        });
+                } else {
+                    finishLoad();
+                }
             } else if (info.status === WebEngineView.LoadFailedStatus || info.status === WebEngineView.LoadStoppedStatus) {
                 measureLayout.stop();
                 waitingForLayout = false;

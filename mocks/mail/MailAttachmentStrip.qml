@@ -94,10 +94,10 @@ ColumnLayout {
 
                 required property var modelData
                 required property int index
-                readonly property string fileName: modelData.name
+                readonly property string fileName: modelData.inline ? qsTr("%1, In text").arg(modelData.name) : modelData.name
 
                 objectName: "attachment-" + modelData.id
-                width: Math.min(chips.width, fileLabel.implicitWidth + 2 * strip.t.space.m)
+                width: Math.min(chips.width, fileLabel.implicitWidth + (modelData.inline ? inlineLabel.implicitWidth + strip.t.space.s : 0) + 2 * strip.t.space.m)
                 height: strip.t.height.field
                 radius: height / 2
                 color: Qt.alpha(strip.t.inkMain, pointer.pressed ? strip.t.wash.pressed
@@ -132,11 +132,23 @@ ColumnLayout {
                     id: fileLabel
                     anchors.fill: parent
                     anchors.leftMargin: strip.t.space.m
-                    anchors.rightMargin: strip.t.space.m
+                    anchors.rightMargin: strip.t.space.m + (inlineLabel.visible ? inlineLabel.implicitWidth + strip.t.space.s : 0)
                     verticalAlignment: Text.AlignVCenter
-                    text: chip.fileName
+                    text: chip.modelData.name
                     ink: "sec"
                     elide: Text.ElideMiddle
+                    Accessible.ignored: true
+                }
+
+                K.TacitText {
+                    id: inlineLabel
+                    anchors.right: parent.right
+                    anchors.rightMargin: strip.t.space.m
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: !!chip.modelData.inline
+                    text: qsTr("In text")
+                    size: "meta"
+                    ink: "past"
                     Accessible.ignored: true
                 }
 

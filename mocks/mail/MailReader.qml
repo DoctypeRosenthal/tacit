@@ -67,6 +67,7 @@ Item {
     property var collapsedMessages:({})
     function isExpanded(id){return !collapsedMessages[id];}
     function toggleMessage(id){var next=Object.assign({},collapsedMessages);next[id]=!next[id];collapsedMessages=next;}
+    property bool attachmentDialogOpen: false
     signal attachRequested()
     onShownMessageChanged:{paper.contentY=0;collapsedMessages=({});}
     property real readingPosition: 0
@@ -129,7 +130,7 @@ Item {
             messageBlocks.forceLayout();
             thread.forceLayout();
             const top = row.mapToItem(thread, 0, 0).y + thread.y;
-            if (top >= paper.contentY && top + row.height <= paper.contentY + paper.height)
+            if (top >= paper.contentY && top < paper.contentY + paper.height)
                 return;
             const limit = Math.max(0, paper.contentHeight - paper.height);
             paper.contentY = Math.min(limit, Math.max(0, top - reader.t.space.m));
@@ -163,7 +164,7 @@ Item {
         x: reader.columnX - reader.focusRoom
         y: reader.t.space.m
         width:reader.columnWidth+reader.focusRoom*2;height:Math.max(0,reader.height-y)
-        spacing: reader.showConversationHeader ? 0 : reader.t.space.l
+        spacing: reader.showConversationHeader ? 0 : (reader.composing ? reader.t.space.xs : reader.t.space.l)
         RowLayout {
             id: messageToolbar
             objectName: "messageToolbar"
@@ -173,8 +174,14 @@ Item {
             Layout.rightMargin: reader.focusRoom
             spacing: reader.t.space.xxl
             MailAction {objectName:visible ? "backToInbox" : "";visible:reader.compact;text:"Inbox";onActivated:reader.backRequested()}
-            MailAction {objectName:"keepDraft";visible:reader.editing && !reader.showConversationHeader;text:"Close, keep the draft";onActivated:reader.controller.act("keepDraft")}
+            MailAction {objectName:visible ? "keepDraft" : "";visible:reader.editing && !reader.showConversationHeader;text:"Close, keep the draft";onActivated:reader.controller.act("keepDraft")}
             MailAction {visible:!!reader.controller.ui.attachment;text:"Back to message";onActivated:reader.controller.act("closePreview")}
+        }
+        Rule {
+            visible: reader.composing
+            Layout.fillWidth: true
+            Layout.leftMargin: reader.textInset + reader.focusRoom
+            Layout.rightMargin: reader.focusRoom
         }
         ColumnLayout {
             visible: reader.showConversationHeader
@@ -188,7 +195,7 @@ Item {
                 spacing: reader.t.space.l
                 Layout.leftMargin: reader.textInset + reader.focusRoom
                 MailAction {
-                    objectName: "keepDraft"
+                    objectName: reader.editing && reader.showConversationHeader ? "keepDraft" : ""
                     text: qsTr("Close, keep the draft")
                     onActivated: reader.controller.act("keepDraft")
                 }
@@ -237,13 +244,21 @@ Item {
         }
     Item {
         Layout.fillWidth:true;Layout.fillHeight:true;Layout.minimumHeight:0
+        Layout.topMargin: reader.composing ? reader.t.space.l - reader.t.space.xs : 0
     Flickable {
         id:paper;objectName:"readingScroll"
         anchors.fill:parent
         contentWidth: width
         contentHeight: {
             const naturalHeight = thread.y + thread.height + reader.t.space.l;
-            if (!reader.editing || reader.composing || !footerEditor.visible)
+            if (!reader.editing) {
+                const latest = reader.entries[reader.entries.length - 1];
+                const row = latest && ["queued", "sending"].includes(latest.status)
+                    ? threadRows.itemAt(reader.entries.length - 1) : null;
+                return row ? Math.max(naturalHeight, row.mapToItem(thread, 0, 0).y + thread.y + height)
+                    : naturalHeight;
+            }
+            if (reader.composing || !footerEditor.visible)
                 return naturalHeight;
             if (reader.controller.draft?.agent)
                 return Math.max(naturalHeight, thread.y + footerEditor.y + height);
@@ -420,7 +435,7 @@ Item {
                 Item {visible:parent.columns===3;Layout.fillWidth:true}
                 RowLayout {id: sendActions; Layout.alignment:Qt.AlignRight;spacing:reader.t.space.xxl
                 MailAction {objectName:"discardDraft";text:"Move draft to Trash";onActivated:reader.discardDraft()}
-                K.Slab {tone:"default";objectName:"sendDraft";text:"Send";waiting:!reader.controller.canSend;onActivated:reader.controller.act("send")}
+                K.Slab {tone:"default";objectName:"sendDraft";text:"Send";waiting:!reader.controller.canSend;opacity:waiting ? 0.62 : 1;onActivated: reader.editor?.sendDraft()}
                 }
             }
         }
@@ -429,13 +444,31 @@ Item {
     Component {
         id: editorComponent
         MailEditor {
+            id: draftEditor
             objectName: "mailEditor"
             controller: reader.controller
             newMessage: reader.composing
+            animationsPaused: reader.attachmentDialogOpen
             replySourceName: reader.replySourceName
             footerComponent: editorFooterComponent
-            availableHeight: 0
-            height: implicitHeight
+            availableHeight: newMessage ? Math.max(0, paper.height - thread.y - footerEditor.y - reader.t.space.l) : 0
+            maximumImageHeight: Math.max(1, paper.height * 0.45)
+            maximumWritingHeight: Math.max(120, availableHeight - 160)
+            height: Math.max(implicitHeight, availableHeight)
+            onInsertionFinished: input => Qt.callLater(() => {
+                if (reader.editor !== draftEditor || reader.composing)
+                    return;
+                messageBlocks.forceLayout();
+                thread.forceLayout();
+                const caret = input.cursorRectangle;
+                const top = input.mapToItem(paper.contentItem, 0, caret.y).y;
+                const bottom = top + caret.height + reader.t.space.m;
+                if (top < paper.contentY || bottom > paper.contentY + paper.height) {
+                    scrollTo.stop();
+                    const target = top < paper.contentY ? top : bottom - paper.height;
+                    paper.contentY = Math.max(0, Math.min(target, paper.contentHeight - paper.height));
+                }
+            })
             onAttachRequested: reader.attachRequested()
         }
     }

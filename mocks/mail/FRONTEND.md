@@ -25,7 +25,9 @@ The **Preview** menu can simulate incoming mail, connectivity and sign-in, undo 
 - Expanded messages with HTML use Qt WebEngine and an in-memory profile. If the inbox contains HTML mail, the app warms the engine once with an empty local document. Scripts, external resources, downloads and embedded navigation are blocked. Clicking an HTTP(S) link opens it in the default browser. Plain text remains the fallback if the HTML module or rendering is unavailable.
 - Quickshell starts the prototype through `mail.qml`. The shell owns sign-in, notifications and send-status UI. Integrations can listen for `authorizationRequested`, `notificationRequested` and `sendStatusChanged` on `MailState`. Call `completeAuthorization(email)`, `notificationAction(action)` or `act("undoSend")` to return the user's action.
 
-For local Quickshell development, build the standalone HTML module with `cmake -S html-engine -B mac-preview/build-html-engine` and `cmake --build mac-preview/build-html-engine`. Add the absolute path to that build's `qml/` directory to `QML_IMPORT_PATH` when starting Quickshell. The Mac launcher sets up its own import path.
+The editor supports bold, italic, links and bulleted lists. Drafts and the local send queue keep both plain text and formatted HTML. Paste uses plain text to keep the editor's typography consistent.
+
+For local Quickshell development, build `html-engine` and `editor-engine` with CMake and add each build's absolute `qml/` path to `QML_IMPORT_PATH`. For example, `cmake -S editor-engine -B mac-preview/build-editor-engine` followed by `cmake --build mac-preview/build-editor-engine`. The Mac launcher builds both modules and sets its own import path. Without the editor module, the composer remains usable in plain text.
 
 ## Checks
 

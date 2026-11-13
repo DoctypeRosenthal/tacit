@@ -63,6 +63,31 @@ function initial(surface) {
         "Personal", "12 Oct", "10:30", false);
     roastmarket.bodyHtmlFixture = "roastmarket";
     messages.push(roastmarket);
+    const richText = message("rich-text", "Moss Studio", "Rich-Text-Beispiel · Notizen zur Designrunde",
+        "Hallo Lorenz,\n\nDie Designrunde ist am Donnerstag. Bitte prüfe bis dahin den Mail-Editor.\n\n"
+        + "1. Öffne einen Entwurf.\n2. Prüfe Listen, Links und Schriftgrößen.\n\n"
+        + "Merker: Der Fokus soll beim Schreiben sichtbar bleiben.\n\n"
+        + "Vorschau: tacit-mail --preview\nDesignsystem: https://design.tacitos.co/\n\nDanke!\nMoss Studio",
+        "Work", "Yesterday", "12:30", false);
+    richText.bodyHtml = [
+        "<p>Hallo Lorenz,</p>",
+        "<p>Die Designrunde ist am <strong>Donnerstag</strong>. Bitte prüfe bis dahin den <em>Mail-Editor</em>.</p>",
+        "<ol><li>Öffne einen Entwurf.</li><li>Prüfe Listen, Links und Schriftgrößen.</li></ol>",
+        "<blockquote><mark>Merker:</mark> Der Fokus soll beim Schreiben sichtbar bleiben.</blockquote>",
+        "<p>Vorschau: <code>tacit-mail --preview</code><br>Designsystem: <a href='https://design.tacitos.co/'>Tacit</a></p>",
+        "<p><img width='470' height='278' alt='Katze mit Lauchstange' src='tacit-fixture:funny-cat-52'></p>",
+        "<p>Danke!<br>Moss Studio</p>"
+    ].join("");
+    richText.bodyHtmlFixture = "rich-text";
+    richText.files = [{
+        id: "rich-text-cat",
+        inline: true,
+        name: "funny-cat-52.gif",
+        path: "fixtures/funny-cat-52.gif",
+        kind: "image",
+        bytes: 410569
+    }];
+    messages.push(richText);
     if(surface==="switch")s.ui.rail=true;
     if(surface==="plain"){s.ui.selected="studio";messages[1].unread=false;}
     if(surface==="html"){s.ui.selected="newsletter";messages[4].unread=false;}
@@ -141,7 +166,7 @@ function results(s){
     if(s.ui.sort==="Unread first")list.sort(function(a,b){return Number(b.unread)-Number(a.unread);});
     return list;
 }
-function folderCount(s,folder,account){var c=copy(s);c.ui.searching=false;c.ui.filter="All mail";c.ui.folder=folder;c.ui.account=account||"All accounts";var rows=results(c);return folder==="Inbox"?rows.filter(function(m){return m.unread;}).length:rows.length;}
+function folderCount(s,folder,account){var c={messages:s.messages,drafts:s.drafts,ui:Object.assign({},s.ui)};c.ui.searching=false;c.ui.filter="All mail";c.ui.folder=folder;c.ui.account=account||"All accounts";var rows=results(c);return folder==="Inbox"?rows.filter(function(m){return m.unread;}).length:rows.length;}
 function remember(s){s.ui.undo={messages:copy(s.messages),drafts:copy(s.drafts),jobs:copy(s.jobs),accounts:copy(s.accounts),selected:s.ui.selected};}
 function restoreJob(s,job){var m=find(s,job.conversation);if(m)m.replies=m.replies.filter(function(r){return r.id!==job.id;});if(!s.drafts.some(function(d){return d.id===job.draft.id;}))s.drafts.push(copy(job.draft));s.ui.draftId=job.draft.id;s.ui.selected=job.conversation;s.ui.view=job.draft.conversation?"draft":"compose";s.jobs=s.jobs.filter(function(j){return j.id!==job.id;});if(job.created){s.messages=s.messages.filter(function(m){return m.id!==job.conversation;});s.ui.selected="";}}
 function reduce(previous,action,p){
@@ -161,15 +186,19 @@ function reduce(previous,action,p){
         if(!m)break;if(p.agent&&s.settings.agentScope!=="All accounts"&&s.settings.agentScope!==m.account+" only"){u.notice="This account is outside your agent’s allowed mail. Change it in Settings.";break;}var mode=p.mode||"Reply";var existing=p.agent?agentDraft(s,m.id):null;var reply=existing||makeDraft(s,m.id,mode,!!p.agent,p.sourceId);if(!existing)s.drafts.push(reply);u.draftId=reply.id;u.view="draft";break;
     case "mode":if(d){var thread=find(s,d.conversation);var source=replySource(s,thread,d.sourceId);d.mode=p.value;if(source){d.to=p.value==="Forward"?"":(source.replyAddress ?? source.address);d.cc=p.value==="Reply all"?(source.cc||""):"";d.showCc=p.value==="Reply all";d.subject=(p.value==="Forward"?"Fwd: ":"Re: ")+thread.subject;}}break;
     case "later":if(m){remember(s);m.folder="Later";m.returnAt=s.now+p.delay;u.notice="Moved to Later";var available=results(s);u.selected=available.length?available[0].id:"";}break;
-    case "draft":if(d){Object.keys(p).forEach(function(key){if(key!=="now")d[key]=p[key];});d.edited=p.edited===undefined?true:p.edited;}break;
+    case "draft":if(d){if(p.body!==undefined&&p.bodyHtml===undefined)d.bodyHtml="";Object.keys(p).forEach(function(key){if(key!=="now")d[key]=p[key];});d.edited=p.edited===undefined?true:p.edited;}break;
     case "keepDraft":u.view="read";u.notice="Draft kept. Nothing was sent.";break;
     case "discard":if(d){remember(s);s.drafts=s.drafts.filter(function(x){return x.id!==d.id;});u.draftId="";u.view="read";u.notice="Draft moved to Trash";}break;
-    case "attach":if(d){d.files.push({id:"local-"+(++s.sequence),name:p.name||"Notes.md",detail:p.url?"Local file":"Preview attachment",kind:"document",url:p.url||"",content:p.url?"A local file chosen for this draft.":"# Notes\n\nA local mock attachment. No file was uploaded."});u.notice="Attached "+(p.name||"Notes.md");}break;
+    case "attach":if(d){d.files.push({id:"local-"+(++s.sequence),name:p.name||"Notes.md",detail:p.url?"Local file":"Preview attachment",kind:"document",inline:!!p.inline,url:p.url||"",content:p.url?"A local file chosen for this draft.":"# Notes\n\nA local mock attachment. No file was uploaded."});}break;
     case "detach":if(d)d.files=d.files.filter(function(f){return f.id!==p.id;});break;
     case "send":
+        if (d && typeof p.body === "string" && typeof p.bodyHtml === "string") {
+            d.body = p.body;
+            d.bodyHtml = p.bodyHtml;
+        }
         if(!canSend(d)){u.notice="Add valid recipients and a message or attachment.";break;}
         var originalDraft=copy(d);var created=!d.conversation;if(created){var own=message("sent-"+(++s.sequence),"You",d.subject||"No subject",d.body,d.account,"Today","Now",false);own.folder="Sent";own.outgoing=true;own.address=d.to;own.files=[];s.messages.unshift(own);d.conversation=own.id;u.selected=own.id;m=own;}else m=find(s,d.conversation);
-        var sendId="send-"+(++s.sequence),expires=s.now+s.settings.undoSeconds*1000;var sent={id:sendId,body:d.body,to:d.to,cc:d.cc,files:copy(d.files),agent:d.agent,edited:d.edited,status:u.online?"sending":"queued",date:"Now"};m.replies.push(sent);s.jobs.push({id:sendId,conversation:m.id,draft:originalDraft,expires:expires,created:created});s.drafts=s.drafts.filter(function(x){return x.id!==d.id;});u.view="read";u.notice=u.online?"Sending · you can still undo":"No connection. Your message is waiting safely.";u.undo=null;break;
+        var sendId="send-"+(++s.sequence),expires=s.now+s.settings.undoSeconds*1000;var sent={id:sendId,body:d.body,bodyHtml:d.bodyHtml??"",to:d.to,cc:d.cc,files:copy(d.files),agent:d.agent,edited:d.edited,status:u.online?"sending":"queued",date:"Now"};m.replies.push(sent);s.jobs.push({id:sendId,conversation:m.id,draft:originalDraft,expires:expires,created:created});s.drafts=s.drafts.filter(function(x){return x.id!==d.id;});u.view="read";u.notice=u.online?"Sending · you can still undo":"No connection. Your message is waiting safely.";u.undo=null;break;
     case "tick":
         s.messages.forEach(function(mail){if(mail.folder==="Later"&&mail.returnAt&&s.now>=mail.returnAt){mail.folder="Inbox";delete mail.returnAt;mail.unread=true;u.notice="A message returned from Later";}});
         s.jobs=s.jobs.filter(function(j){if(s.now<j.expires||!u.online)return true;var thread=find(s,j.conversation);if(thread){var r=thread.replies.find(function(x){return x.id===j.id;});if(r)r.status="sent";}u.notice="Message sent (local preview)";return false;});

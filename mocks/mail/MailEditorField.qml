@@ -57,7 +57,7 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         height: 1
-        visible: field.error || (input.activeFocus && K.Kit.focusVisible)
+        visible: field.error || input.activeFocus
         color: field.error ? field.t.risk : field.t.accent
         Accessible.ignored: true
     }

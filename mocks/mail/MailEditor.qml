@@ -7,12 +7,16 @@ Item {
     required property var controller
     readonly property var draft:controller.draft
     readonly property var t:K.Kit.tokens
+    property alias animationsPaused: body.animationsPaused
     property bool newMessage:false
     property string replySourceName
     property Component footerComponent
     property real availableHeight:0
+    property alias maximumImageHeight: body.maximumImageHeight
+    property real maximumWritingHeight: 480
     readonly property real labelWidth: t.space.page + t.space.s
     readonly property real labelGap: t.space.s
+    signal insertionFinished(Item input)
     signal attachRequested()
     readonly property real panelPadding: newMessage ? 0 : t.space.l
     implicitHeight: content.implicitHeight + 2 * panelPadding + t.space.l
@@ -36,6 +40,10 @@ Item {
         Accessible.ignored: true
     }
 
+    function sendDraft() {
+        controller.act("send", body.snapshot());
+    }
+
     function focusBody(){if(newMessage&&!draft.to.includes("@"))recipients.focusIn();else body.focusIn();}
     component Label: K.TacitText {
         Layout.preferredWidth: editor.labelWidth
@@ -54,6 +62,7 @@ Item {
         x: editor.panelPadding
         y: editor.panelPadding
         width: Math.max(0, editor.width - 2 * editor.panelPadding)
+        height: Math.max(implicitHeight, editor.availableHeight - 2 * editor.panelPadding - editor.t.space.l)
         spacing: editor.t.space.s
 
         ColumnLayout {
@@ -191,19 +200,82 @@ Item {
         MailEditorBody {
             id:body;objectName:"draftBody"
             Layout.fillWidth: true
-            Layout.topMargin: editor.t.space.s
-            text:editor.draft?.body ?? ""
-            onEdited:{const value=text;const id=editor.controller.ui.draftId;const c=editor.controller;Qt.callLater(function(){if(id&&c.draft?.id===id)c.act("draft",{body:value});});}
-            onSubmitted:if(editor.controller.canSend)editor.controller.act("send")
+            Layout.fillHeight: editor.newMessage
+            Layout.minimumHeight: implicitHeight
+            growWithContent: !editor.newMessage
+            maximumWritingHeight: editor.maximumWritingHeight
+            onDropFinished: editor.insertionFinished(body.input)
+            onFileDropped: (file, position) => {
+                const path = String(file);
+                editor.controller.act("attach", {
+                    url: path,
+                    inline: true,
+                    name: decodeURIComponent(path.split("/").pop())
+                });
+                body.insertAttachment(file, editor.draft.files[editor.draft.files.length - 1], position);
+            }
+            draftId: editor.draft?.id ?? ""
+            draftText: editor.draft?.body ?? ""
+            draftHtml: editor.draft?.bodyHtml ?? ""
+            onEdited: {
+                const id = draftId;
+                const c = editor.controller;
+                const value = body.snapshot();
+                Qt.callLater(function() {
+                    if (id && c.draft?.id === id)
+                        c.act("draft", value);
+                });
+            }
+            onSubmitted: editor.sendDraft()
             onDismissed:editor.controller.act("keepDraft")
         }
-        Repeater {
-            model:editor.draft?.files ?? []
-            delegate:RowLayout {
-                required property var modelData
-                Layout.fillWidth:true;spacing:editor.t.space.xxl
-                K.TacitText {Layout.fillWidth:true;Layout.minimumWidth:0;text:modelData.name;elide:Text.ElideRight}
-                MailAction {text:"Remove";onActivated:editor.controller.act("detach",{id:modelData.id})}
+        Flow {
+            Layout.fillWidth: true
+            spacing: editor.t.space.s
+            Repeater {
+                model: editor.draft?.files ?? []
+                delegate: Rectangle {
+                    id: chip
+                    required property var modelData
+                    width: Math.min(parent.width, chipRow.implicitWidth + editor.t.space.m)
+                    height: chipRow.implicitHeight
+                    radius: height / 2
+                    color: Qt.alpha(editor.t.inkMain, editor.t.wash.current)
+
+                    RowLayout {
+                        id: chipRow
+                        anchors.fill: parent
+                        anchors.leftMargin: editor.t.space.m
+                        spacing: editor.t.space.xs
+
+                        MailAction {
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            text: chip.modelData.name
+                            Accessible.name: chip.modelData.inline ? qsTr("%1, In text").arg(text) : text
+                            enabled: !!chip.modelData.url
+                            clip: true
+                            onActivated: Qt.openUrlExternally(chip.modelData.url)
+                        }
+                        K.TacitText {
+                            visible: !!chip.modelData.inline
+                            Layout.leftMargin: editor.t.space.s - editor.t.space.xs
+                            text: qsTr("In text")
+                            size: "meta"
+                            ink: "past"
+                            Accessible.ignored: true
+                        }
+                        K.IconButton {
+                            symbol: "close"
+                            label: qsTr("Remove %1").arg(chip.modelData.name)
+                            onActivated: {
+                                const id = chip.modelData.id;
+                                body.removeAttachment(id);
+                                editor.controller.act("detach", {id: id});
+                            }
+                        }
+                    }
+                }
             }
         }
         Loader {

@@ -1,7 +1,7 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const context=vm.createContext({});vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../mail-store.js'),'utf8'),context);
 const {initial,reduce,results,draft,canSend,current,folderCount}=context;
-let s=initial('read');assert.equal(results(s).length,10);assert.equal(folderCount(s,'Inbox'),4);
+let s=initial('read');assert.equal(results(s).length,11);assert.equal(folderCount(s,'Inbox'),4);
 assert.equal(current(initial('roastmarket')).bodyHtmlFixture,'roastmarket');
 s=reduce(s,'select',{id:'studio'});assert.equal(current(s).unread,false);assert.equal(folderCount(s,'Inbox'),3);
 s=reduce(s,'search',{text:'palettes'});assert.equal(results(s).length,3);s=reduce(s,'closeSearch');
@@ -21,3 +21,13 @@ let scope=initial('read');scope=reduce(scope,'select',{id:'anna'});scope=reduce(
 let settings=initial('read');settings=reduce(settings,'setting',{key:'notifications',value:'Off'});settings=reduce(settings,'notify');assert.equal(settings.ui.notification,false);
 
 console.log('Frontend state: all workflow checks passed');
+
+for (const action of ["new", "reply"]) {
+    let mail = reduce(initial("read"), action, {mode:"Reply"});
+    mail = reduce(mail, "draft", {to:"a@example.com", body:"Earlier text"});
+    const html = '<p><strong>GIF</strong><img src="data:image/gif;base64,R0lGODlh"></p>';
+    mail = reduce(mail, "send", {body:"GIF", bodyHtml:html});
+    const sent = current(mail).replies.at(-1);
+    assert.equal(sent.body, "GIF");
+    assert.equal(sent.bodyHtml, html);
+}
