@@ -143,7 +143,7 @@ Item {
             }
 
             Repeater {
-                model: ["Inbox", "Later", "Starred", "Drafts", "Sent", "Archive", "Junk", "Trash"]
+                model: ["Inbox", "Starred", "Drafts", "Sent", "Archive", "Junk", "Trash"]
                 FolderRow {
                     required property string modelData
                     label: modelData

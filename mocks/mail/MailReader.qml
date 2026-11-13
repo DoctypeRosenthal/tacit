@@ -69,14 +69,34 @@ Item {
     function toggleMessage(id){var next=Object.assign({},collapsedMessages);next[id]=!next[id];collapsedMessages=next;}
     property bool attachmentDialogOpen: false
     signal attachRequested()
-    onShownMessageChanged:{paper.contentY=0;collapsedMessages=({});}
+    onShownMessageChanged: {
+        collapsedMessages = {};
+        focusEditor();
+    }
     property real readingPosition: 0
+    property bool editorRevealPending: false
+    readonly property bool preparingReply: !composing && editorRevealPending
+    readonly property bool threadLayoutPending: {
+        if (composing)
+            return false;
+        if (controller.threadQuery?.loading)
+            return true;
+        const revision = threadRows.revision;
+        for (let index = 0; index < threadRows.count; ++index) {
+            if (threadRows.itemAt(index)?.layoutPending)
+                return true;
+        }
+        return false;
+    }
+    onThreadLayoutPendingChanged: if (editorRevealPending && !threadLayoutPending) Qt.callLater(revealEditor)
+    onEditorChanged: if (editorRevealPending) Qt.callLater(revealEditor)
 
     onEditingChanged: {
         if (editing) {
             readingPosition = paper.contentY;
             focusEditor();
         } else {
+            editorRevealPending = false;
             returnToReading.stop();
         }
     }
@@ -88,7 +108,6 @@ Item {
             controller.act("discard");
             return;
         }
-        scrollTo.stop();
         returnToReading.from = paper.contentY;
         returnToReading.to = Math.min(paper.contentY, readingPosition);
         returnToReading.start();
@@ -106,8 +125,8 @@ Item {
     Component.onCompleted: {
         if (editing)
             focusEditor();
-        else
-            revealPendingReply();
+        else if (message)
+            focusEditor();
     }
 
     property string revealedReplyId: ""
@@ -137,20 +156,25 @@ Item {
         });
     }
     function focusEditor() {
-        Qt.callLater(function() {
-            if (!editor?.visible)
-                return;
-            thread.forceLayout();
+        editorRevealPending = true;
+        Qt.callLater(revealEditor);
+    }
+
+    function revealEditor() {
+        if (!editorRevealPending || (editing && !editor?.visible) || threadLayoutPending)
+            return;
+        paper.cancelFlick();
+        messageBlocks.forceLayout();
+        thread.forceLayout();
+        if (editing)
             editor.focusBody();
-            Qt.callLater(function() {
-                if (!editor?.visible)
-                    return;
-                scrollTo.stop();
-                scrollState.origin = paper.contentY;
-                scrollState.progress = 0;
-                scrollTo.start();
-            });
-        });
+        const limit = Math.max(0, paper.contentHeight - paper.height);
+        const target = editing ? editor : threadRows.itemAt(entries.length - 1);
+        const top = target?.mapToItem(paper.contentItem, 0, 0).y ?? 0;
+        const position = editing && target
+            ? Math.min(top, top + target.height - paper.height) : top;
+        paper.contentY = composing ? 0 : Math.max(0, Math.min(limit, position));
+        editorRevealPending = false;
     }
     Connections {
         target: reader.controller
@@ -168,7 +192,7 @@ Item {
         RowLayout {
             id: messageToolbar
             objectName: "messageToolbar"
-            visible: (reader.compact && (!reader.showConversationHeader || reader.editing)) || (reader.editing && !reader.showConversationHeader) || !!reader.controller.ui.attachment
+            visible: (reader.compact && !reader.showConversationHeader) || (reader.editing && !reader.showConversationHeader) || !!reader.controller.ui.attachment
             Layout.fillWidth: true
             Layout.leftMargin: reader.textInset + reader.focusRoom
             Layout.rightMargin: reader.focusRoom
@@ -189,52 +213,32 @@ Item {
             Layout.topMargin: messageToolbar.visible ? reader.t.space.l : 0
             spacing: reader.t.space.xs
             RowLayout {
-                visible: reader.editing
-                Layout.fillWidth: true
-                Layout.rightMargin: reader.focusRoom
-                spacing: reader.t.space.l
-                Layout.leftMargin: reader.textInset + reader.focusRoom
-                MailAction {
-                    objectName: reader.editing && reader.showConversationHeader ? "keepDraft" : ""
-                    text: qsTr("Close, keep the draft")
-                    onActivated: reader.controller.act("keepDraft")
-                }
-                K.TacitText {
-                    Layout.fillWidth: true
-                    Layout.minimumWidth: 0
-                    size: "meta"
-                    ink: "sec"
-                    elide: Text.ElideRight
-                    horizontalAlignment: Text.AlignRight
-                    text: reader.replySourceName
-                          ? qsTr("%1 · %2").arg(reader.message?.subject ?? "").arg(reader.replySourceName)
-                          : reader.message?.subject ?? ""
-                }
-                K.TacitText {
-                    visible: !!reader.controller.draft?.agent
-                    text: qsTr("Drafted by your agent")
-                    size: "meta"
-                    color: reader.controller.agentInk
-                }
-            }
-            RowLayout {
-                visible: !reader.editing
                 Layout.fillWidth: true
                 Layout.leftMargin: reader.textInset + reader.focusRoom
                 Layout.rightMargin: reader.focusRoom + reader.t.space.m
                 spacing: reader.t.space.xl
                 K.IconButton {
                     objectName: visible ? "backToInbox" : ""
-                    visible: reader.compact && reader.showConversationHeader && !reader.editing
+                    visible: reader.compact && reader.showConversationHeader
                     symbol: "chevron_left"
                     label: qsTr("Back to Inbox")
                     tip: label
                     onActivated: reader.backRequested()
                 }
                 Item { Layout.fillWidth: true }
-                MailAction {id:archiveAction;objectName:"archive";visible:!!reader.message&&!reader.editing&&!reader.controller.ui.attachment;text:"Archive";onActivated:reader.controller.act("move",{folder:"Archive"})}
-                MailAction {visible:!!reader.message&&!reader.editing&&!reader.controller.ui.attachment;text:"Later";onActivated:laterMenu.openAt(this,width-laterMenu.implicitWidth,height)}
-                MailAction {objectName:"messageMore";visible:!!reader.message&&!reader.editing&&!reader.controller.ui.attachment;text:"More";onActivated:more.openAt(this,width-more.implicitWidth,height)}
+                MailAction {id:archiveAction;objectName:"archive";visible:reader.message?.folder !== "Trash" && !!reader.message&&!reader.controller.ui.attachment;text:"Archive";onActivated:reader.controller.act("move",{folder:"Archive"})}
+                MailAction {objectName:"messageMore";visible:reader.message?.folder !== "Trash" && !!reader.message&&!reader.controller.ui.attachment;text:"More";onActivated:more.openAt(this,width-more.implicitWidth,height)}
+                MailAction {
+                    visible: reader.message?.folder === "Trash"
+                    text: qsTr("Restore to %1").arg(reader.message?.trashOrigin ?? "Inbox")
+                    onActivated: reader.controller.act("restoreTrash")
+                }
+                MailAction {
+                    visible: reader.message?.folder === "Trash"
+                    text: qsTr("Delete for good")
+                    risk: true
+                    onActivated: reader.controller.act("deleteTrash")
+                }
             }
             Rule {
                 Layout.fillWidth: true
@@ -247,6 +251,7 @@ Item {
         Layout.topMargin: reader.composing ? reader.t.space.l - reader.t.space.xs : 0
     Flickable {
         id:paper;objectName:"readingScroll"
+        opacity: reader.preparingReply ? 0 : 1
         anchors.fill:parent
         contentWidth: width
         contentHeight: {
@@ -337,7 +342,13 @@ Item {
                             controller: reader.controller
                             entry: modelData
                             textInset: reader.textInset
-                            expanded: modelData.historical && !modelData.backendAccount ? !!modelData.expanded : (modelData.historical ? !!reader.collapsedMessages[modelData.id] : reader.isExpanded(modelData.id)) && !(modelData.context && reader.queued)
+                            expanded: reader.editing && !reader.composing
+                                ? (index === (reader.replySourceIndex >= 0 ? reader.replySourceIndex : reader.entries.length - 1))
+                                    !== !!reader.collapsedMessages[modelData.id]
+                                : modelData.historical && !modelData.backendAccount ? !!modelData.expanded
+                                : (modelData.historical ? !!reader.collapsedMessages[modelData.id] : reader.isExpanded(modelData.id))
+                                    && !(modelData.context && reader.queued)
+                            animateExpansion: !reader.preparingReply
                             hasPrevious: index > 0
                             hasNext: index + 1 < reader.entries.length
                             followingTickOffset: {
@@ -345,12 +356,12 @@ Item {
                                     const next = threadRows.revision > 0 ? threadRows.itemAt(index + 1) : null;
                                     return next?.tickY ?? -1;
                                 }
-                                return agentEntry.visible ? agentEntry.tickOffset : -1;
+                                return agentEntry.visible ? agentEntry.tickOffset : draftTimeline.visible ? footerEditor.item.fromCenter : -1;
                             }
                             replyEditorComponent: index === reader.replySourceIndex && !reader.controller.ui.attachment ? editorComponent : null
-                            actionsVisible: !modelData.context && !reader.editing && modelData.status !== "queued"
+                            actionsVisible: reader.message?.folder !== "Trash" && !modelData.context && !reader.editing && modelData.status !== "queued"
                             onToggleRequested: {
-                                if (entry.historical && !entry.backendAccount)
+                                if (!reader.editing && entry.historical && !entry.backendAccount)
                                     reader.controller.act("expand", {id: entry.id});
                                 else
                                     reader.toggleMessage(entry.id);
@@ -397,6 +408,26 @@ Item {
                             }
                         }
                     }
+                }
+            }
+            Rectangle {
+                id: draftTimeline
+                parent: paper.contentItem
+                objectName: "draftTimeline"
+                visible: reader.timelineVisible && footerEditor.visible && !!footerEditor.item
+                x: thread.x + reader.t.space.l
+                y: thread.y + footerEditor.y + Math.round(footerEditor.item?.fromCenter ?? 0)
+                width: 1
+                height: Math.max(0, (footerEditor.item?.writingBottom ?? 0) - Math.round(footerEditor.item?.fromCenter ?? 0))
+                color: reader.t.accent
+                Accessible.ignored: true
+
+                Rectangle {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: reader.t.space.l
+                    height: draftTimeline.width
+                    color: draftTimeline.color
+                    Accessible.ignored: true
                 }
             }
             Loader {
@@ -464,48 +495,12 @@ Item {
                 const top = input.mapToItem(paper.contentItem, 0, caret.y).y;
                 const bottom = top + caret.height + reader.t.space.m;
                 if (top < paper.contentY || bottom > paper.contentY + paper.height) {
-                    scrollTo.stop();
-                    const target = top < paper.contentY ? top : bottom - paper.height;
+                            const target = top < paper.contentY ? top : bottom - paper.height;
                     paper.contentY = Math.max(0, Math.min(target, paper.contentHeight - paper.height));
                 }
             })
             onAttachRequested: reader.attachRequested()
         }
     }
-    K.Menu {id:laterMenu;items:[{label:"This evening"},{label:"Tomorrow morning"},{label:"Next week"}];onPicked:i=>reader.controller.act("later",{delay:[4*60*60*1000,24*60*60*1000,7*24*60*60*1000][i]})}
-    K.Menu {id:more;items:[{label:reader.message?.unread?"Mark read":"Mark unread"},{label:reader.message?.starred?"Remove star":"Star"},{label:"Move to Inbox"},{label:"Move to Junk"},{rule:true},{label:"Move to Trash",risk:true}];onPicked:i=>{if(i===0)reader.controller.act("unread");else if(i===1)reader.controller.act("star");else if(i===2)reader.controller.act("move",{folder:"Inbox"});else if(i===3)reader.controller.act("move",{folder:"Junk"});else if(i===5)reader.controller.act("move",{folder:"Trash"});}}
-    function replyScrollBoundary(target, limit, editorTop) {
-        const boundaries = [0, thread.y + conversationHeading.height, editorTop];
-        for (let index = 0; index < threadRows.count; ++index) {
-            const row = threadRows.itemAt(index);
-            if (row)
-                boundaries.push(row.mapToItem(paper.contentItem, 0, 0).y);
-        }
-        const usable = boundaries.filter(y => y >= target && y <= Math.min(limit, editorTop));
-        return usable.length ? Math.min(...usable) : target;
-    }
-
-    QtObject {
-        id:scrollState
-        property real origin:0
-        property real progress:0
-        onProgressChanged: {
-            if (!reader.editor)
-                return;
-            const limit = Math.max(0, paper.contentHeight - paper.height);
-            const editorTop = editor.mapToItem(thread, 0, 0).y;
-            let end = reader.composing ? 0
-                                       : thread.y + editorTop + editor.height - paper.height;
-            if (!reader.composing) {
-                const top = thread.y + editorTop;
-                const target = Math.min(top, Math.max(origin, end + reader.t.space.s));
-                end = reader.controller.draft?.agent ? top : target;
-                if (!reader.controller.draft?.agent && !reader.compact && target > origin && editor.height <= paper.height)
-                    end = reader.replyScrollBoundary(target, limit, top);
-            }
-            end = Math.max(0, Math.min(limit, end));
-            paper.contentY = Math.max(0, Math.min(limit, origin + (end - origin) * progress));
-        }
-    }
-    NumberAnimation {id:scrollTo;target:scrollState;property:"progress";from:0;to:1;duration:K.Kit.ms(K.Kit.motion("arrive").ms);easing.type:Easing.BezierSpline;easing.bezierCurve:K.Kit.motion("arrive").curve}
+    K.Menu {id:more;items:[{label:reader.message?.unread?"Mark read":"Mark unread"},{label:reader.message?.starred?"Remove star":"Star"},{label:"Move to Inbox"},{label:"Move to Junk"},{rule:true},{label:"Move to Trash",risk:true},{label:qsTr("Move conversation to Trash"),risk:true,visible:!!reader.message?.backendConversation}];onPicked:i=>{if(i===0)reader.controller.act("unread");else if(i===1)reader.controller.act("star");else if(i===2)reader.controller.act("move",{folder:"Inbox"});else if(i===3)reader.controller.act("move",{folder:"Junk"});else if(i===5)reader.controller.act("move",{folder:"Trash"});else if(i===6)reader.controller.act("trashConversation");}}
 }

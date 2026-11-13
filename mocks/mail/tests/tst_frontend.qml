@@ -17,7 +17,7 @@ Item {
         function button(name){var found=findChild(workspace,name);verify(found!==null,"Missing "+name);return found;}
         function click(name){var b=button(name);mouseClick(b,b.width/2,b.height/2);wait(30);}
         function test_selectMessage(){var list=button("messageList");var row=list.view.itemAtIndex(1);verify(row!==null);mouseClick(row,row.width/2,row.height/2);compare(state.ui.selected,"studio");compare(state.selected.unread,false);}
-        function test_replyKeepsDraft(){click("replyAll");compare(state.ui.view,"draft");verify(state.draft.showCc);click("keepDraft");compare(state.ui.view,"read");verify(state.data.drafts.length>=2);}
+        function test_replyKeepsDraft(){click("replyAll");compare(state.ui.view,"draft");verify(state.draft.showCc);verify(button("archive").visible);verify(!findChild(workspace,"keepDraft"));state.act("select",{id:"studio"});state.act("select",{id:"mara"});compare(state.ui.view,"draft");}
         function test_newMessageTyping(){click("newMessage");compare(state.ui.view,"compose");var to=button("draftTo");to.input.forceActiveFocus();keyClicks("anna.richter@example.net");compare(state.draft.to,"anna.richter@example.net");var body=button("draftBody");body.input.forceActiveFocus();keyClicks("A local message");compare(state.draft.body,"A local message");verify(state.canSend);click("sendDraft");compare(state.data.jobs.length,1);state.act("undoSend");compare(state.ui.view,"compose");compare(state.draft.body,"A local message");}
         function test_recipientSuggestionKeyboard(){
             click("newMessage");
@@ -118,6 +118,39 @@ Item {
             compare(editor.replySourceName,"Lena Fischer");
             verify(editor.mapToItem(workspace,0,0).y>=source.mapToItem(workspace,0,source.height).y);
             verify(editor.mapToItem(workspace,0,editor.height).y<=next.mapToItem(workspace,0,0).y);
+        }
+        function test_threadOpensAtHistoricalDraft() {
+            state.reply("Reply", false, "lena-first");
+            const draftId = state.draft.id;
+            state.act("select", {id: "studio"});
+            state.act("select", {id: "mara"});
+            compare(state.draft.id, draftId);
+
+            const scroll = button("readingScroll");
+            const editor = button("mailEditor");
+            const source = button("historyBody-lena-first");
+            tryVerify(() => source.visible);
+            verify(!button("historyBody-nils-first").visible);
+            tryVerify(() => {
+                const top = editor.mapToItem(scroll.contentItem, 0, 0).y;
+                const bottom = top + editor.height;
+                const expected = Math.max(0, Math.min(scroll.contentHeight - scroll.height,
+                    top, bottom - scroll.height));
+                return Math.abs(scroll.contentY - expected) < 1;
+            });
+        }
+
+        function test_threadWithoutDraftOpensAtLastMessage() {
+            state.act("select", {id: "studio"});
+            state.act("select", {id: "mara"});
+            compare(state.ui.view, "read");
+            const scroll = button("readingScroll");
+            const latest = button("messageHeader-mara");
+            tryVerify(() => {
+                const top = latest.mapToItem(scroll.contentItem, 0, 0).y;
+                const expected = Math.max(0, Math.min(scroll.contentHeight - scroll.height, top));
+                return Math.abs(scroll.contentY - expected) < 1;
+            });
         }
         function test_filterMenuKeyboard(){click("viewOptions");wait(200);keyClick(Qt.Key_Down);keyClick(Qt.Key_Down);keyClick(Qt.Key_Return);wait(30);compare(state.ui.filter,"Unread");verify(state.rows.every(function(m){return m.unread;}));}
         function test_editorFooterFollowsBody(){

@@ -194,7 +194,7 @@ func TestMigrationExtractsLegacyAttachmentsFromEveryPayload(t *testing.T) {
 	if _, e = s.db.Exec("DELETE FROM messages WHERE id<>?", d.ID); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.db.Exec("DROP TABLE IF EXISTS attachments; PRAGMA user_version=1;"); e != nil {
+	if _, e = s.db.Exec("DROP TABLE IF EXISTS attachments; ALTER TABLE outbox DROP COLUMN undo_until; PRAGMA user_version=1;"); e != nil {
 		t.Fatal(e)
 	}
 	s.Close()
@@ -221,7 +221,7 @@ func TestMigrationExtractsLegacyAttachmentsFromEveryPayload(t *testing.T) {
 	}
 	var version int
 	s.db.QueryRow("PRAGMA user_version").Scan(&version)
-	if version != 2 {
+	if version != 3 {
 		t.Fatal("schema version", version)
 	}
 }
@@ -276,7 +276,7 @@ func TestMigrationFailureLeavesLegacyPayloadIntact(t *testing.T) {
 	if _, e = s.db.Exec("INSERT INTO mock_incoming(account_id,payload) VALUES('work',?)", raw); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.db.Exec("DROP TABLE attachments; PRAGMA user_version=1"); e != nil {
+	if _, e = s.db.Exec("DROP TABLE attachments; ALTER TABLE outbox DROP COLUMN undo_until; PRAGMA user_version=1"); e != nil {
 		t.Fatal(e)
 	}
 	s.Close()

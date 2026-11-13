@@ -4,6 +4,7 @@ import "mail-store.js" as Store
 QtObject {
     id: sync
 
+    property int undoSeconds: 10
     property var client
     property var savedDraftIds: ({})
     property var pending: ({})
@@ -75,7 +76,10 @@ QtObject {
             .map(email => email.trim()).filter(email => Store.validRecipients(email))
             .map(email => ({email}));
         let html = draft.bodyHtml || "";
-        for (const file of draft.files) {
+        const files = draft.files.filter(file => !file.inline
+            || (file.inlineSource && html.includes(file.inlineSource))
+            || html.includes('href="tacit-attachment:' + file.id + '"'));
+        for (const file of files) {
             if (file.backendId && file.inlineSource)
                 html = html.split(file.inlineSource).join("cid:" + file.backendId);
         }
@@ -88,8 +92,8 @@ QtObject {
             subject: draft.subject,
             body_text: draft.body,
             body_html: html,
-            local_files: draft.files.filter(file => !file.backendId && file.url),
-            attachments: draft.files.filter(file => file.backendId).map(file => ({id: file.backendId}))
+            local_files: files.filter(file => !file.backendId && file.url),
+            attachments: files.filter(file => file.backendId).map(file => ({id: file.backendId}))
         });
     }
 
@@ -117,7 +121,7 @@ QtObject {
             if (sync.sendingId === localId && !sync.pending[localId]) {
                 if (remoteId) {
                     sync.submittingId = remoteId;
-                    sync.client.sendDraft(remoteId);
+                    sync.client.sendDraft(remoteId, sync.undoSeconds);
                 } else {
                     sync.sendingId = "";
                 }

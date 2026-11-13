@@ -22,6 +22,7 @@ type Attachment struct {
 	Data []byte `json:"-"`
 }
 type Message struct {
+	TrashOrigin    string       `json:"trash_origin,omitempty"`
 	ID             string       `json:"id"`
 	AccountID      string       `json:"account_id"`
 	RemoteID       string       `json:"remote_id,omitempty"`
@@ -74,6 +75,7 @@ type SyncResult struct {
 	HasMore  bool   `json:"has_more"`
 }
 type Job struct {
+	UndoUntil int64   `json:"undo_until,omitempty"`
 	ID        string  `json:"id"`
 	MessageID string  `json:"message_id"`
 	Key       string  `json:"idempotency_key"`

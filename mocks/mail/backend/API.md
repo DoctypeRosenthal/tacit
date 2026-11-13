@@ -16,9 +16,10 @@ Transport: HTTP/JSON over a Unix domain socket. No TCP port. Use `http://localho
 | GET / HEAD | `/v1/messages/{id}/attachments/{attachment_id}` | Stream original bytes; supports HTTP Range (206) |
 | POST | `/v1/drafts` | Create draft; returns 201 |
 | PUT | `/v1/drafts/{id}` | Replace draft; returns 200 |
-| POST | `/v1/send` | `draft_id`, `idempotency_key`; returns durable job, 202 |
+| POST | `/v1/send` | `draft_id`, `idempotency_key`, optional `undo_seconds` (0–60); returns durable job, 202 |
 | GET | `/v1/outbox` | Active and retryable jobs as `{jobs:[...]}` |
 | GET | `/v1/outbox/{id}` | Job state, attempts and last error |
+| POST | `/v1/outbox/{id}/undo` | `{}`; restore a queued message to Drafts before its undo deadline |
 | POST | `/v1/outbox/{id}/retry` | `{}`; retry `failed` or `uncertain` job |
 | POST | `/v1/sync` | `account_id`; receive one batch (up to 100 events) |
 | POST | `/v1/mock/incoming` | `account_id`, `message`; append a mock remote event, 201 |

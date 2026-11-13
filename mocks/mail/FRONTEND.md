@@ -52,4 +52,4 @@ for test in tst_frontend tst_responsive; do
 done
 ```
 
-The walkthrough test (`tests/tst_walkthrough.qml`) loads the Quickshell entry point and needs Quickshell and the Tacit shell imports.
+Run the backend walkthrough with `sh tests/run_maild_frontend.sh` after building the Mac preview. It exercises the shared workspace with a real maild, saved replies, inline GIFs and PDF attachments across restarts.

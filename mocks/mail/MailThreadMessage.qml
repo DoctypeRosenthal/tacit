@@ -28,6 +28,8 @@ Column {
             easing.bezierCurve: K.Kit.motion(message.expanded ? "arriveSmall" : "leave").curve
         }
     }
+    property bool animateExpansion: true
+    readonly property bool layoutPending: htmlBody.loading || htmlArrival.running
     readonly property real tickY: Math.round(senderRowHeight / 2)
     readonly property string senderInk: expanded ? "main" : "meta"
     readonly property string recipientText: {
@@ -173,6 +175,7 @@ Column {
     MailMessageBody {
         objectName: (message.entry.historical ? "historyBody-" : "messageBody-") + message.entry.id
         expanded: message.expanded
+        animateExpansion: message.animateExpansion
 
         Column {
             x: message.textInset
@@ -227,14 +230,6 @@ Column {
                         spacing: message.t.space.l
 
                         MailAction { text: qsTr("Retry sending"); onActivated: message.controller.act("retry") }
-                        MailAction { text: qsTr("Edit"); onActivated: message.controller.act("editQueued") }
-                        MailAction {
-                            text: qsTr("Keep it in Drafts")
-                            onActivated: {
-                                message.controller.act("editQueued");
-                                message.controller.act("keepDraft");
-                            }
-                        }
                     }
                 }
             }
@@ -341,6 +336,8 @@ Column {
                 ]
 
                 transitions: Transition {
+                    id: htmlArrival
+                    enabled: message.animateExpansion
                     from: "loading"
                     to: "ready"
                     SequentialAnimation {
@@ -379,7 +376,7 @@ Column {
 
             MailAttachmentStrip {
                 width: parent.width
-                files: message.entry.files ?? []
+                files: Array.from(message.entry.files ?? []).filter(file => !file.inline)
                 onPreviewRequested: file => message.controller.act("preview", {file: file})
                 onSaveRequested: files => message.controller.saveAttachment(files)
                 visible: !message.entry.context && files.length > 0

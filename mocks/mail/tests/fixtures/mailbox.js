@@ -97,7 +97,7 @@ function initial(surface) {
     if(surface==="draft"){s.ui.view="draft";s.ui.draftId=d.id;}
     if(surface==="compose"){var n=Store.makeDraft(s,"","New message",false);n.to="Anna Ri";s.drafts.push(n);s.ui.draftId=n.id;s.ui.view="compose";}
     if(surface==="search"){s.ui.query="palettes";s.ui.searching=true;}
-    if(surface==="empty"){s.ui.folder="Later";s.ui.selected="";}
+    if(surface==="empty"){s.ui.folder="Junk";s.ui.selected="";}
     if(surface==="setup"||surface==="settings")s.ui.view=surface;
 
     if(surface==="importing"){s.ui.view="importing";s.ui.imported=1240;}
@@ -123,7 +123,6 @@ function reduce(previous, action, p) {
         var originalDraft=Store.copy(d);var created=!d.conversation;if(created){var own=Store.message("sent-"+(++s.sequence),"You",d.subject||"No subject",d.body,d.account,"Today","Now",false);own.folder="Sent";own.outgoing=true;own.address=d.to;own.files=[];s.messages.unshift(own);d.conversation=own.id;u.selected=own.id;m=own;}else m=Store.find(s,d.conversation);
         var sendId="send-"+(++s.sequence),expires=s.now+s.settings.undoSeconds*1000;var sent={id:sendId,body:d.body,bodyHtml:d.bodyHtml??"",to:d.to,cc:d.cc,files:Store.copy(d.files),agent:d.agent,edited:d.edited,status:u.online?"sending":"queued",date:"Now"};m.replies.push(sent);s.jobs.push({id:sendId,conversation:m.id,draft:originalDraft,expires:expires,created:created});s.drafts=s.drafts.filter(function(x){return x.id!==d.id;});u.view="read";u.notice=u.online?"Sending · you can still undo":"No connection. Your message is waiting safely.";u.undo=null;break;
     case "tick":
-        s.messages.forEach(function(mail){if(mail.folder==="Later"&&mail.returnAt&&s.now>=mail.returnAt){mail.folder="Inbox";delete mail.returnAt;mail.unread=true;u.notice="A message returned from Later";}});
         s.jobs=s.jobs.filter(function(j){if(s.now<j.expires||!u.online)return true;var thread=Store.find(s,j.conversation);if(thread){var r=thread.replies.find(function(x){return x.id===j.id;});if(r)r.status="sent";}u.notice="Message sent (local preview)";return false;});
         if(u.view==="importing"){u.imported=Math.min(8600,u.imported+1240);if(u.imported===8600){u.view="read";u.account="All accounts";u.selected="studio";s.messages[1].unread=false;u.notice="Your mail is ready (local preview)";}}break;
     case "undoSend":if(s.jobs.length){var last=s.jobs[s.jobs.length-1];if(s.now<=last.expires||!u.online){restoreJob(s,last);u.notice="Sending cancelled. Your draft is ready.";}}break;

@@ -3,6 +3,7 @@ import Tacit.Kit as K
 
 Item {
     id: body
+    property bool animateExpansion: true
     property bool expanded: true
     default property alias contents: content.data
     width: parent.width
@@ -16,6 +17,7 @@ Item {
     }
     // Animate toggles; the HTML presentation already animates its own height.
     transitions: Transition {
+        enabled: body.animateExpansion
         NumberAnimation {
             target: body
             property: "height"

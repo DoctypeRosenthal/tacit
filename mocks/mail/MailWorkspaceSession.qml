@@ -32,6 +32,8 @@ QtObject {
     readonly property bool canReplyAll: Store.canReplyAll(selected, accounts)
     readonly property var draft: Store.draft(data)
     property var mailboxClient: null
+    property string conversationUndoToken: ""
+    property bool conversationTrashBusy: false
     property var outbox: ({})
     property Connections outboxResponses: Connections {
         target: state.mailboxClient
@@ -48,8 +50,29 @@ QtObject {
                 }))
             });
         }
+        function onConversationTrashed(token) {
+            state.conversationTrashBusy = false;
+            if (token) {
+                state.conversationUndoToken = token;
+                state.act("notice", {text: qsTr("Conversation moved to Trash.")});
+                onMailboxInvalidated();
+            } else {
+                state.act("notice", {text: qsTr("Could not move the conversation to Trash.")});
+            }
+        }
+        function onConversationTrashUndone(ok) {
+            state.conversationTrashBusy = false;
+            if (ok) {
+                state.conversationUndoToken = "";
+                state.act("notice", {text: qsTr("Conversation restored.")});
+                onMailboxInvalidated();
+            } else {
+                state.act("notice", {text: qsTr("Could not restore the conversation.")});
+            }
+        }
         function onMessageUpdated(id, ok) {
             if (ok) {
+                state.draftQuery.refresh();
                 if (state.folderQuery.key)
                     state.folderQuery.refresh();
                 state.threadQuery.refresh();
@@ -73,13 +96,19 @@ QtObject {
                 });
             }
             const next = Object.assign({}, state.outbox);
-            if (job.state === "sent") {
+            if (["sent", "cancelled"].includes(job.state)) {
                 delete next[job.id];
                 state.draftQuery.refresh();
             }
             else
                 next[job.id] = job;
             state.outbox = next;
+            if (job.state === "queued" && job.undo_until > Date.now())
+                state.act("notice", {text: qsTr("Sending soon")});
+            if (job.state === "sent" && state.ui.notice === qsTr("Sending soon") && !state.undoAvailable)
+                state.act("notice", {text: qsTr("Message sent.")});
+            if (job.state === "cancelled")
+                state.act("notice", {text: qsTr("Sending cancelled. Draft restored.")});
             if (job.state === "failed" || job.state === "uncertain")
                 state.act("notice", {text: job.last_error || qsTr("Message delivery failed.")});
         }
@@ -91,14 +120,18 @@ QtObject {
             const working = state.data.drafts.filter(draft =>
                 !draft.backendId || draft.id === state.ui.draftId && ["draft", "compose"].includes(state.ui.view));
             const represented = new Set(working.map(draft => state.savedDraftIds[draft.id] || draft.backendId));
-            state.data = Object.assign({}, state.data, {
+            const updated = Object.assign({}, state.data, {
+                ui: Object.assign({}, state.ui),
                 drafts: working.concat(loaded.filter(draft => !represented.has(draft.id)))
             });
+            Store.showReplyDraft(updated);
+            state.data = updated;
         }
         onErrorChanged: if (error) state.act("notice", {text: error})
     }
     property MailDraftSync draftSync: MailDraftSync {
         client: state.mailboxClient
+        undoSeconds: state.settings.undoSeconds
         onFailed: message => state.act("notice", {text: message})
     }
     readonly property var savedDraftIds: draftSync.savedDraftIds
@@ -134,6 +167,8 @@ QtObject {
                 || account && row.backendAccount !== account).concat(fresh);
             if (!updated.ui.selected && fresh.length && updated.ui.view === "read")
                 updated.ui = Object.assign({}, updated.ui, {selected: fresh[0].id});
+            if (updated.ui.selected && !updated.messages.some(row => row.id === updated.ui.selected))
+                updated.ui = Object.assign({}, updated.ui, {selected: fresh[0]?.id ?? ""});
             updated.drafts = updated.drafts.map(draft => {
                 if (draft.conversation || !draft.backendConversation)
                     return draft;
@@ -141,6 +176,8 @@ QtObject {
                     && row.account === draft.account && row.folder !== "Sent");
                 return source ? Object.assign({}, draft, {conversation: source.id, mode: "Reply"}) : draft;
             });
+            updated.ui = Object.assign({}, updated.ui);
+            Store.showReplyDraft(updated);
             state.data = updated;
         }
     }
@@ -150,7 +187,10 @@ QtObject {
     readonly property var accounts: data.accounts
     readonly property bool canSend: !draftSync.sendingId && Store.canSend(draft)
     readonly property bool hasPending: mailboxClient ? Object.keys(outbox).length > 0 : data.jobs.length > 0
-    readonly property bool undoAvailable: !mailboxClient && hasPending && (data.now <= data.jobs[data.jobs.length-1].expires || !ui.online)
+    readonly property var undoJob: Object.values(outbox).reverse().find(job =>
+        job.state === "queued" && job.undo_until > Date.now())
+    readonly property bool undoAvailable: mailboxClient ? !!undoJob
+        : hasPending && (data.now <= data.jobs[data.jobs.length - 1].expires || !ui.online)
     // These are requests to the future system integration, not app-owned surfaces.
     signal authorizationRequested(string provider)
     signal notificationRequested(var message)
@@ -184,6 +224,42 @@ QtObject {
         var p=payload || {};
         if(action==="draft") {var d=Store.draft(data);if(d&&Object.keys(p).every(function(k){return d[k]===p[k];}))return;}
         if(action==="setting"&&data.settings[p.key]===p.value)return;
+        if (mailboxClient && selected?.folder === "Trash" && ["restoreTrash", "deleteTrash"].includes(action)) {
+            if (action === "restoreTrash")
+                mailboxClient.updateMessage(selected.id, {mailbox: selected.trashOrigin});
+            else
+                mailboxClient.deleteTrashedMessage(selected.id);
+            return;
+        }
+        if (mailboxClient && action === "trashConversation") {
+            if (!conversationTrashBusy && selected?.backendConversation) {
+                conversationTrashBusy = true;
+                mailboxClient.trashConversation(selected.backendAccount, selected.backendConversation);
+            }
+            return;
+        }
+        if (mailboxClient && action === "undo" && conversationUndoToken) {
+            if (!conversationTrashBusy) {
+                conversationTrashBusy = true;
+                mailboxClient.undoConversationTrash(conversationUndoToken);
+            }
+            return;
+        }
+        if (mailboxClient && (action === "undoSend" || action === "undo" && undoJob)) {
+            if (undoJob && undoJob.undo_until > Date.now())
+                mailboxClient.undoSend(undoJob.id);
+            return;
+        }
+        if (mailboxClient && action === "undo" && ui.undo) {
+            const original = ui.undo.messages.find(row => row.id === ui.undo.selected);
+            const current = original && Store.find(data, original.id);
+            if (original && current && original.folder !== current.folder)
+                mailboxClient.updateMessage(original.id, {mailbox: original.folder});
+            const removed = ui.undo.drafts.find(item => !data.drafts.some(draft => draft.id === item.id));
+            const id = removed && (savedDraftIds[removed.id] || removed.backendId);
+            if (id)
+                mailboxClient.updateMessage(id, {mailbox: "Drafts"});
+        }
         if (mailboxClient && action === "retry") {
             for (const job of Object.values(outbox)) {
                 if (job.state === "failed" || job.state === "uncertain")
@@ -258,7 +334,7 @@ QtObject {
         act("reply", {mode: mode, agent: !!agent, sourceId: sourceId});
         editorRequested();
     }
-    property Timer clock: Timer { interval: 500; repeat: true; running: (!state.mailboxClient && state.hasPending) || state.ui.view === "importing" || state.data.messages.some(m=>!!m.returnAt); onTriggered: state.act("tick") }
+    property Timer clock: Timer { interval: 500; repeat: true; running: (!state.mailboxClient && state.hasPending) || state.ui.view === "importing"; onTriggered: state.act("tick") }
     Component.onCompleted: {
         var next=Store.copy(data);next.now=Date.now();next.jobs.forEach(function(j){j.expires=next.now+next.settings.undoSeconds*1000;});data=next;rows=Store.results(data);
     }

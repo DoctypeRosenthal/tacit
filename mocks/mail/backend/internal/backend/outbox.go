@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"strings"
+	"time"
 )
 
 func job(ctx context.Context, q interface {
@@ -12,7 +13,7 @@ func job(ctx context.Context, q interface {
 }, where string, arg string) (Job, error) {
 	var j Job
 	var b []byte
-	e := q.QueryRowContext(ctx, `SELECT id,message_id,idempotency_key,state,attempts,last_error,payload FROM outbox WHERE `+where+`=?`, arg).Scan(&j.ID, &j.MessageID, &j.Key, &j.State, &j.Attempts, &j.LastError, &b)
+	e := q.QueryRowContext(ctx, `SELECT id,message_id,idempotency_key,state,attempts,last_error,payload,undo_until FROM outbox WHERE `+where+`=?`, arg).Scan(&j.ID, &j.MessageID, &j.Key, &j.State, &j.Attempts, &j.LastError, &b, &j.UndoUntil)
 	if e != nil {
 		return j, mapped(e)
 	}
@@ -23,7 +24,7 @@ func (s *Store) Job(ctx context.Context, id string) (Job, error) { return job(ct
 
 // ActiveJobs includes retryable jobs so the client can recover their status after a restart.
 func (s *Store) ActiveJobs(ctx context.Context) ([]Job, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,message_id,idempotency_key,state,attempts,last_error FROM outbox WHERE state!='sent' ORDER BY rowid`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,message_id,idempotency_key,state,attempts,last_error,undo_until FROM outbox WHERE state NOT IN ('sent','cancelled') ORDER BY rowid`)
 	if err != nil {
 		return nil, err
 	}
@@ -31,7 +32,7 @@ func (s *Store) ActiveJobs(ctx context.Context) ([]Job, error) {
 	jobs := []Job{}
 	for rows.Next() {
 		var job Job
-		if err := rows.Scan(&job.ID, &job.MessageID, &job.Key, &job.State, &job.Attempts, &job.LastError); err != nil {
+		if err := rows.Scan(&job.ID, &job.MessageID, &job.Key, &job.State, &job.Attempts, &job.LastError, &job.UndoUntil); err != nil {
 			return nil, err
 		}
 		jobs = append(jobs, job)
@@ -40,6 +41,13 @@ func (s *Store) ActiveJobs(ctx context.Context) ([]Job, error) {
 }
 
 func (s *Store) Queue(ctx context.Context, draft, key string) (Job, error) {
+	return s.QueueDelayed(ctx, draft, key, 0)
+}
+
+func (s *Store) QueueDelayed(ctx context.Context, draft, key string, seconds int) (Job, error) {
+	if seconds < 0 || seconds > 60 {
+		return Job{}, ErrInvalid
+	}
 	if strings.TrimSpace(key) == "" || len(key) > 200 {
 		return Job{}, ErrInvalid
 	}
@@ -69,11 +77,14 @@ func (s *Store) Queue(ctx context.Context, draft, key string) (Job, error) {
 		return Job{}, ErrInvalid
 	}
 	j := Job{ID: id(), MessageID: m.ID, Key: key, State: "queued", Message: m}
+	if seconds > 0 {
+		j.UndoUntil = time.Now().Add(time.Duration(seconds) * time.Second).UnixMilli()
+	}
 	b, e := json.Marshal(m)
 	if e != nil {
 		return j, e
 	}
-	_, e = tx.ExecContext(ctx, `INSERT INTO outbox(id,message_id,idempotency_key,state,payload) VALUES(?,?,?,?,?)`, j.ID, m.ID, key, j.State, b)
+	_, e = tx.ExecContext(ctx, `INSERT INTO outbox(id,message_id,idempotency_key,state,payload,undo_until) VALUES(?,?,?,?,?,?)`, j.ID, m.ID, key, j.State, b, j.UndoUntil)
 	if e != nil {
 		return j, e
 	}
@@ -90,7 +101,7 @@ func (s *Store) Claim(ctx context.Context) (Job, error) {
 	}
 	defer tx.Rollback()
 	var next string
-	if e = tx.QueryRowContext(ctx, `SELECT id FROM outbox WHERE state='queued' ORDER BY rowid LIMIT 1`).Scan(&next); e != nil {
+	if e = tx.QueryRowContext(ctx, `SELECT id FROM outbox WHERE state='queued' AND undo_until<=? ORDER BY rowid LIMIT 1`, time.Now().UnixMilli()).Scan(&next); e != nil {
 		return Job{}, mapped(e)
 	}
 	if _, e = tx.ExecContext(ctx, `UPDATE outbox SET state='sending',attempts=attempts+1 WHERE id=?`, next); e != nil {
@@ -152,4 +163,29 @@ func (s *Store) Retry(ctx context.Context, id string) error {
 func (s *Store) Recover(ctx context.Context) error {
 	_, e := s.db.ExecContext(ctx, `UPDATE outbox SET state='uncertain',last_error='Delivery outcome unknown after interruption; explicit retry required' WHERE state='sending'`)
 	return e
+}
+
+func (s *Store) UndoSend(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	j, err := job(ctx, tx, "id", id)
+	if err != nil {
+		return err
+	}
+	if j.State == "cancelled" {
+		return nil
+	}
+	if j.State != "queued" || j.UndoUntil <= time.Now().UnixMilli() {
+		return ErrConflict
+	}
+	if err = s.write(ctx, tx, j.Message); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE outbox SET state='cancelled' WHERE id=?", id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

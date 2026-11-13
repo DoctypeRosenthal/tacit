@@ -145,6 +145,7 @@ FocusScope {
     }
     Shortcut {
         sequences: [StandardKey.New]
+        enabled: workspace.controller.ui.folder !== "Trash"
         onActivated: workspace.controller.act("new")
     }
     Shortcut {
@@ -166,7 +167,7 @@ FocusScope {
     }
     Shortcut {
         sequences: [StandardKey.Undo]
-        enabled: !["draft", "compose"].includes(workspace.controller.ui.view) && (workspace.controller.undoAvailable || !!workspace.controller.ui.undo)
+        enabled: !["draft", "compose"].includes(workspace.controller.ui.view) && (workspace.controller.undoAvailable || !!workspace.controller.ui.undo || !!workspace.controller.conversationUndoToken)
         onActivated: workspace.controller.undoAvailable ? workspace.controller.act("undoSend") : workspace.controller.act("undo")
     }
     Shortcut {
@@ -260,6 +261,7 @@ FocusScope {
                         }
                         MailAction {
                             objectName: "newMessage"
+                            visible: workspace.controller.ui.searching || workspace.controller.ui.folder !== "Trash"
                             text: workspace.controller.ui.searching ? "Close search" : "New message"
                             onActivated: {
                                 workspace.compactReading = true;
@@ -314,7 +316,7 @@ FocusScope {
                         }
                         Item {
                             id: sortMenu
-                            visible: !workspace.controller.ui.searching && workspace.controller.ui.folder !== "Later"
+                            visible: !workspace.controller.ui.searching
                             implicitWidth: sortWords.implicitWidth + workspace.t.icon.rail + workspace.t.space.xs
                             implicitHeight: workspace.t.height.field
                             Layout.alignment: Qt.AlignRight
@@ -505,8 +507,6 @@ FocusScope {
                 y: reading.statusTop
                 maxWidth: reader.textWidth
                 text: workspace.controller.rows.length ? qsTr("Choose a message to read.")
-                    : workspace.controller.ui.folder === "Later"
-                    ? qsTr("Nothing in Later. Mail you set aside returns to Inbox at the time you chose.")
                     : qsTr("Nothing in %1. Your messages will appear here.").arg(workspace.controller.ui.folder)
                 action: qsTr("Back to Inbox")
                 onActivated: workspace.controller.act("folder", {folder: "Inbox"})
@@ -525,7 +525,7 @@ FocusScope {
     }
     K.Menu {
         id: folderPicker
-        items: ["Inbox", "Later", "Starred", "Drafts", "Sent", "Archive", "Junk", "Trash"].map(v => ({
+        items: ["Inbox", "Starred", "Drafts", "Sent", "Archive", "Junk", "Trash"].map(v => ({
                     label: v,
                     folder: v
                 })).concat([
@@ -563,7 +563,11 @@ FocusScope {
     }
     K.Menu {
         id: messageMenu
-        items: [
+        readonly property bool inTrash: workspace.controller.selected?.folder === "Trash"
+        items: inTrash ? [
+            {label: qsTr("Restore to %1").arg(workspace.controller.selected?.trashOrigin ?? "Inbox")},
+            {label: qsTr("Delete for good"), risk: true}
+        ] : [
             {
                 label: "Reply"
             },
@@ -588,6 +592,13 @@ FocusScope {
             }
         ]
         onPicked: i => {
+            if (inTrash) {
+                if (i === 0)
+                    workspace.controller.act("restoreTrash");
+                else
+                    workspace.controller.act("deleteTrash");
+                return;
+            }
             if (i < 3)
                 workspace.controller.reply(items[i].label, false);
             else if (i === 3)
@@ -614,7 +625,7 @@ FocusScope {
 
         function onDataChanged() {
             if (workspace.controller.ui.notice && workspace.controller.ui.notice !== notice.text)
-                notice.show(workspace.controller.ui.notice, workspace.controller.ui.undo ? "Undo" : "");
+                notice.show(workspace.controller.ui.notice, (workspace.controller.ui.undo || workspace.controller.undoAvailable || workspace.controller.conversationUndoToken) ? "Undo" : "");
         }
     }
 }

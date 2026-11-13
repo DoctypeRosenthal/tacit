@@ -368,24 +368,6 @@ public:
         return selected.position();
     }
 
-    Q_INVOKABLE void removeAttachment(const QString &id)
-    {
-        const auto href = "tacit-attachment:" + id;
-        QList<QPair<int, int>> ranges;
-        for (auto block = doc()->begin(); block.isValid(); block = block.next()) {
-            for (auto it = block.begin(); !it.atEnd(); ++it) {
-                const auto part = it.fragment();
-                if (part.charFormat().anchorHref() == href)
-                    ranges.append({part.position(), part.position() + part.length()});
-            }
-        }
-        auto edit = cursor(0, 0);
-        edit.beginEditBlock();
-        for (auto it = ranges.crbegin(); it != ranges.crend(); ++it)
-            cursor(it->first, it->second).removeSelectedText();
-        edit.endEditBlock();
-    }
-
     Q_INVOKABLE int dropImage(const QUrl &url, int position, int availableWidth, int availableHeight)
     {
         if (!url.isLocalFile())

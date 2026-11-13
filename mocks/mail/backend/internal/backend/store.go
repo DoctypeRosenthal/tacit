@@ -61,14 +61,20 @@ func (s *Store) init() error {
 	if e := s.db.QueryRow(`PRAGMA user_version`).Scan(&v); e != nil {
 		return e
 	}
-	if v > 2 {
-		return fmt.Errorf("database schema %d is newer than supported version 2", v)
+	if v > 3 {
+		return fmt.Errorf("database schema %d is newer than supported version 3", v)
 	}
-	if v == 2 {
+	if v == 3 {
 		return nil
 	}
+	if v == 2 {
+		return s.migrateUndoSend()
+	}
 	if v == 1 {
-		return s.migrateAttachments()
+		if e := s.migrateAttachments(); e != nil {
+			return e
+		}
+		return s.migrateUndoSend()
 	}
 	tx, e := s.db.Begin()
 	if e != nil {
@@ -94,7 +100,10 @@ func (s *Store) init() error {
 	if e = tx.Commit(); e != nil {
 		return e
 	}
-	return s.migrateAttachments()
+	if e := s.migrateAttachments(); e != nil {
+		return e
+	}
+	return s.migrateUndoSend()
 }
 func mapped(e error) error {
 	if errors.Is(e, sql.ErrNoRows) {
@@ -273,12 +282,17 @@ func (s *Store) Patch(ctx context.Context, id string, p MessagePatch) (Message, 
 	}
 	if p.Mailbox != "" {
 		switch p.Mailbox {
-		case "Inbox", "Archive", "Trash", "Junk":
+		case "Inbox", "Archive", "Trash", "Junk", "Sent", "Drafts":
 		default:
 			return m, ErrInvalid
 		}
-		if m.Mailbox == "Outbox" || (m.Mailbox == "Drafts" && p.Mailbox != "Trash") {
+		if m.Mailbox == "Outbox" || (m.Mailbox == "Drafts" && p.Mailbox != "Trash") || (p.Mailbox == "Drafts" && (m.Mailbox != "Trash" || m.RemoteID != "")) || (p.Mailbox == "Sent" && m.RemoteID == "") {
 			return m, ErrConflict
+		}
+		if p.Mailbox == "Trash" && m.Mailbox != "Trash" {
+			m.TrashOrigin = m.Mailbox
+		} else if p.Mailbox != "Trash" {
+			m.TrashOrigin = ""
 		}
 		m.Mailbox = p.Mailbox
 	}
@@ -412,4 +426,16 @@ func (s *Store) CacheBatch(ctx context.Context, account string, b Batch) (SyncRe
 		return r, e
 	}
 	return r, tx.Commit()
+}
+
+func (s *Store) migrateUndoSend() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("ALTER TABLE outbox ADD COLUMN undo_until INTEGER NOT NULL DEFAULT 0; PRAGMA user_version=3"); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

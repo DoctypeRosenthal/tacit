@@ -35,6 +35,8 @@ Item {
             session.act("select", {id: "seed-rich-text"});
             tryVerify(() => findChild(workspace, "mailHtmlBrowser")?.loaded === true, 10000);
             verify(session.selected.files.some(file => file.name === "funny-cat-52.gif" && file.inline));
+            const chip = findChild(workspace, "attachment-seed-rich-text-gif");
+            verify(!chip || !chip.visible);
         }
 
         function test_replyWithGifAndPdf() {
@@ -54,7 +56,14 @@ Item {
                 keyClick(Qt.Key_O);
                 keyClick(Qt.Key_L);
                 session.act("attach", {url: String(pdf), name: "review-summary.pdf"});
-                tryVerify(() => !!session.savedDraftIds[session.draft.id] && !session.draftSaving, 15000);
+                const draftId = session.draft.id;
+                const conversation = session.ui.selected;
+                session.act("select", {id: "seed-02"});
+                session.act("select", {id: conversation});
+                compare(session.ui.view, "draft");
+                compare(session.draft.id, draftId);
+                verify(control("archive").visible);
+                tryVerify(() => !!session.savedDraftIds[draftId] && !session.draftSaving, 15000);
                 return;
             }
 
@@ -73,6 +82,7 @@ Item {
                 verify(waitForRendering(send));
                 mouseClick(send);
                 tryVerify(() => session.ui.view === "read", 15000);
+                tryVerify(() => !session.hasPending, 20000);
                 return;
             }
 

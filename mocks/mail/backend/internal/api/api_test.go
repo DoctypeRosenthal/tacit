@@ -164,3 +164,61 @@ func TestPrivateUnixSocketAndActualHTTPClient(t *testing.T) {
 		t.Fatalf("real socket: %d %s", response.StatusCode, b)
 	}
 }
+
+func TestUndoDelayedSend(t *testing.T) {
+	h, _ := apiTest(t)
+	d := decode[backend.Message](t, request(t, h, "POST", "/v1/drafts", map[string]any{
+		"account_id": "work", "to": []map[string]string{{"email": "mara@example.com"}}, "body_text": "Keep this draft",
+	}, 201))
+	j := decode[backend.Job](t, request(t, h, "POST", "/v1/send", map[string]any{
+		"draft_id": d.ID, "idempotency_key": "undo-delayed", "undo_seconds": 60,
+	}, 202))
+	request(t, h, "POST", "/v1/mock/flush", map[string]any{}, 200)
+	route := "/v1/outbox/" + j.ID
+	queued := decode[backend.Job](t, request(t, h, "GET", route, nil, 200))
+	if queued.State != "queued" || queued.UndoUntil <= time.Now().UnixMilli() {
+		t.Fatalf("expected an undoable job: %+v", queued)
+	}
+	request(t, h, "POST", route+"/undo", map[string]any{}, 200)
+	restored := decode[backend.Message](t, request(t, h, "GET", "/v1/messages/"+d.ID, nil, 200))
+	if restored.Mailbox != "Drafts" || restored.BodyText != d.BodyText {
+		t.Fatalf("draft not restored: %+v", restored)
+	}
+}
+
+func TestTrashConversationAndUndo(t *testing.T) {
+	h, _ := apiTest(t)
+	request(t, h, "PATCH", "/v1/messages/seed-00", map[string]string{"mailbox": "Archive"}, 200)
+	request(t, h, "PATCH", "/v1/messages/seed-01", map[string]string{"mailbox": "Trash"}, 200)
+	result := decode[map[string]string](t, request(t, h, "POST", "/v1/conversations/review/trash",
+		map[string]string{"account_id": "work"}, 200))
+	folder := func(id string) string {
+		return decode[backend.Message](t, request(t, h, "GET", "/v1/messages/"+id, nil, 200)).Mailbox
+	}
+	for _, id := range []string{"seed-00", "seed-01", "seed-02", "seed-12"} {
+		if got := folder(id); got != "Trash" {
+			t.Fatalf("%s in %s after trash", id, got)
+		}
+	}
+	request(t, h, "POST", "/v1/conversation-trash/"+result["undo_token"]+"/undo", map[string]any{}, 200)
+	for id, want := range map[string]string{"seed-00": "Archive", "seed-01": "Trash", "seed-02": "Inbox", "seed-12": "Sent"} {
+		if got := folder(id); got != want {
+			t.Fatalf("%s in %s after undo, want %s", id, got, want)
+		}
+	}
+}
+
+func TestTrashOriginAndPermanentDelete(t *testing.T) {
+	h, _ := apiTest(t)
+	const route = "/v1/messages/seed-02"
+	request(t, h, "DELETE", route, nil, 409)
+	request(t, h, "PATCH", route, map[string]string{"mailbox": "Archive"}, 200)
+	trashed := decode[backend.Message](t, request(t, h, "PATCH", route, map[string]string{"mailbox": "Trash"}, 200))
+	if trashed.TrashOrigin != "Archive" {
+		t.Fatalf("trash origin = %q", trashed.TrashOrigin)
+	}
+	request(t, h, "PATCH", route, map[string]string{"mailbox": trashed.TrashOrigin}, 200)
+	request(t, h, "PATCH", route, map[string]string{"mailbox": "Trash"}, 200)
+	request(t, h, "DELETE", route, nil, 200)
+	request(t, h, "GET", route, nil, 404)
+}

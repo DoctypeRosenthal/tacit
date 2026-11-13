@@ -155,9 +155,9 @@ public:
         uploadDraftFiles(localId, remoteId, draft, files, 0);
     }
 
-    Q_INVOKABLE void sendDraft(const QString &id)
+    Q_INVOKABLE void sendDraft(const QString &id, int undoSeconds)
     {
-        requestJson("POST", "/v1/send", {{"draft_id", id}, {"idempotency_key", "preview-" + id}},
+        requestJson("POST", "/v1/send", {{"draft_id", id}, {"idempotency_key", QUuid::createUuid().toString()}, {"undo_seconds", undoSeconds}},
             [this, id](const QJsonObject &job, bool ok) {
                 const auto jobId = job.value("id").toString();
                 if (!ok || jobId.isEmpty()) {
@@ -166,6 +166,17 @@ public:
                 }
                 publishJob(job.toVariantMap());
                 pollJob(jobId);
+            });
+    }
+
+    Q_INVOKABLE void undoSend(const QString &jobId)
+    {
+        requestJson("POST", "/v1/outbox/" + encode(jobId) + "/undo", {},
+            [this, jobId](const QJsonObject &, bool ok) {
+                if (ok)
+                    pollJob(jobId);
+                else
+                    emit failed();
             });
     }
 
@@ -195,6 +206,26 @@ public:
                     pollJob(job.value("id").toString());
             }
         });
+    }
+
+    Q_INVOKABLE void trashConversation(const QString &account, const QString &conversation)
+    {
+        requestJson("POST", "/v1/conversations/" + encode(conversation) + "/trash",
+            {{"account_id", account}}, [this](const QJsonObject &result, bool ok) {
+                emit conversationTrashed(ok ? result.value("undo_token").toString() : QString());
+            });
+    }
+
+    Q_INVOKABLE void undoConversationTrash(const QString &token)
+    {
+        requestJson("POST", "/v1/conversation-trash/" + encode(token) + "/undo", {},
+            [this](const QJsonObject &, bool ok) { emit conversationTrashUndone(ok); });
+    }
+
+    Q_INVOKABLE void deleteTrashedMessage(const QString &id)
+    {
+        requestJson("DELETE", "/v1/messages/" + encode(id), {},
+            [this, id](const QJsonObject &, bool ok) { emit messageUpdated(id, ok); });
     }
 
     Q_INVOKABLE void updateMessage(const QString &id, const QVariantMap &changes)
@@ -452,6 +483,8 @@ private:
     }
 
 signals:
+    void conversationTrashed(const QString &token);
+    void conversationTrashUndone(bool ok);
     void accountsLoaded(const QVariantList &accounts, bool ok);
     void draftsLoaded(int revision, const QVariantList &messages, bool ok);
     void mailboxLoaded(int revision, const QVariantList &messages, bool ok);

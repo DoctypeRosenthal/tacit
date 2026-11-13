@@ -74,11 +74,6 @@ Item {
         edited();
     }
 
-    function removeAttachment(id) {
-        documentTools.item?.removeAttachment(id);
-        edited();
-    }
-
     function focusIn() { input.forceActiveFocus(); }
 
     function applyFormat(option) {

@@ -5,7 +5,6 @@ import ".." as Mail
 FocusScope {
     id: scene
 
-    property string initialScreen: "read"
     readonly property var controller: workspace.controller
     readonly property real groundRadius: K.Kit.tokens.radius.window
     focus: true

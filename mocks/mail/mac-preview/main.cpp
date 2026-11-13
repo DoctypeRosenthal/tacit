@@ -90,7 +90,6 @@ int main(int argc, char *argv[])
     QtWebEngineQuick::initialize();
     QApplication app(argc, argv);
     QQuickStyle::setStyle("Basic");
-    const auto screen = app.arguments().value(1, "read");
     const QDir source(PREVIEW_SOURCE_DIR);
     const QDir mail(source.absoluteFilePath(".."));
     const QDir imports(PREVIEW_IMPORT_DIR);
@@ -103,7 +102,7 @@ int main(int argc, char *argv[])
     QQuickWindow::setDefaultAlphaBuffer(true);
     PreviewWindow window;
     window.setColor(Qt::transparent);
-    window.setTitle(QStringLiteral("Tacit Mail · %1 · Mac preview").arg(screen));
+    window.setTitle(QStringLiteral("Tacit Mail · Mac preview"));
     window.setMinimumSize(QSize(400, 400));
     window.resize(1320, 780);
 
@@ -130,7 +129,7 @@ int main(int argc, char *argv[])
             readJson(QFileInfo(palette).dir().filePath("seethrough.json")).value("scale", 1.0));
 
         QQmlComponent component(nextEngine.get(), QUrl::fromLocalFile(source.filePath("PreviewScene.qml")));
-        std::unique_ptr<QObject> object(component.createWithInitialProperties({{"initialScreen", screen}}));
+        std::unique_ptr<QObject> object(component.create());
         auto *next = qobject_cast<QQuickItem *>(object.get());
         if (!next) {
             qWarning().noquote() << component.errorString();

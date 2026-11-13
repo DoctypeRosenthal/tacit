@@ -57,6 +57,7 @@ function fromMailbox(state, messages, sourceRows) {
             row.backendConversation = entry.conversation_id;
             row.cc = (entry.cc || []).map(address => address.email).join(", ");
             row.folder = entry.mailbox;
+            row.trashOrigin = entry.trash_origin || "Inbox";
             row.starred = entry.flagged;
             row.bodyHtml = entry.body_html || "";
             row.files = (entry.attachments || []).map(file => ({
@@ -116,12 +117,25 @@ function results(s){
 }
 function folderCount(s,folder,account){var c={messages:s.messages,drafts:s.drafts,ui:Object.assign({},s.ui)};c.ui.searching=false;c.ui.filter="All mail";c.ui.folder=folder;c.ui.account=account||"All accounts";var rows=results(c);return folder==="Inbox"?rows.filter(function(m){return m.unread;}).length:rows.length;}
 function remember(s){s.ui.undo={messages:copy(s.messages),drafts:copy(s.drafts),jobs:copy(s.jobs),accounts:copy(s.accounts),selected:s.ui.selected};}
+function showReplyDraft(state) {
+    const row = current(state);
+    if (!row || state.ui.view !== "read")
+        return;
+    const saved = state.drafts.find(draft => !draft.agent && (
+        draft.conversation === row.id || (draft.backendConversation
+            && draft.backendConversation === row.backendConversation && draft.account === row.account)));
+    if (saved && row.folder !== "Trash") {
+        saved.conversation = row.id;
+        state.ui.draftId = saved.id;
+        state.ui.view = "draft";
+    }
+}
 function reduce(previous,action,p){
     p=p||{};var s=copy(previous),u=s.ui,m=current(s),d=draft(s);s.now=p.now===undefined?s.now:p.now;
     switch(action){
     case "select":
         var chosen=s.drafts.find(function(x){return x.id===p.id;});
-        if(chosen){u.draftId=chosen.id;u.selected=chosen.conversation;u.view=chosen.conversation?"draft":"compose";}else{u.selected=p.id;u.view="read";var selected=find(s,p.id);if(selected)selected.unread=false;}break;
+        if(chosen){u.draftId=chosen.id;u.selected=chosen.conversation;u.view=chosen.conversation?"draft":"compose";}else{u.selected=p.id;u.view="read";var selected=find(s,p.id);if(selected)selected.unread=false;showReplyDraft(s);}break;
     case "folder":u.folder=p.folder;u.account=p.account||"All accounts";u.searching=false;u.query="";u.view="read";u.selected="";var next=results(s)[0];if(next){if(next.draft){u.draftId=next.id;u.view=next.id&&next.id.indexOf("draft-")===0?"compose":"read";var dd=s.drafts.find(function(x){return x.id===next.id;});u.selected=dd.conversation;u.view=dd.conversation?"draft":"compose";}else{u.selected=next.id;find(s,next.id).unread=false;}}break;
     case "rail":u.rail=!u.rail;break;
     case "search":u.query=p.text;u.searching=true;u.view="read";break;
@@ -130,9 +144,8 @@ function reduce(previous,action,p){
     case "sort":u.sort=p.value;break;
     case "new":var fresh=makeDraft(s,"","New message",false);s.drafts.push(fresh);u.draftId=fresh.id;u.view="compose";break;
     case "reply":
-        if(!m)break;if(p.agent&&s.settings.agentScope!=="All accounts"&&s.settings.agentScope!==m.account+" only"){u.notice="This account is outside your agent’s allowed mail. Change it in Settings.";break;}var mode=p.mode||"Reply";var existing=p.agent?agentDraft(s,m.id):null;var reply=existing||makeDraft(s,m.id,mode,!!p.agent,p.sourceId);if(!existing)s.drafts.push(reply);u.draftId=reply.id;u.view="draft";break;
+        if(!m)break;if(p.agent&&s.settings.agentScope!=="All accounts"&&s.settings.agentScope!==m.account+" only"){u.notice="This account is outside your agent’s allowed mail. Change it in Settings.";break;}var mode=p.mode||"Reply";var existing=p.agent?agentDraft(s,m.id):s.drafts.find(x=>!x.agent&&x.conversation===m.id);var reply=existing||makeDraft(s,m.id,mode,!!p.agent,p.sourceId);if(!existing)s.drafts.push(reply);u.draftId=reply.id;u.view="draft";break;
     case "mode":if(d){var thread=find(s,d.conversation);var source=replySource(s,thread,d.sourceId);d.mode=p.value;if(source){d.to=p.value==="Forward"?"":(source.replyAddress ?? source.address);d.cc=p.value==="Reply all"?(source.cc||""):"";d.showCc=p.value==="Reply all";d.subject=(p.value==="Forward"?"Fwd: ":"Re: ")+thread.subject;}}break;
-    case "later":if(m){remember(s);m.folder="Later";m.returnAt=s.now+p.delay;u.notice="Moved to Later";var available=results(s);u.selected=available.length?available[0].id:"";}break;
     case "draft":if(d){if(p.body!==undefined&&p.bodyHtml===undefined)d.bodyHtml="";Object.keys(p).forEach(function(key){if(key!=="now")d[key]=p[key];});d.edited=p.edited===undefined?true:p.edited;}break;
     case "keepDraft":u.view="read";u.notice="Draft kept. Nothing was sent.";break;
     case "discard":if(d){remember(s);s.drafts=s.drafts.filter(function(x){return x.id!==d.id;});u.draftId="";u.view="read";u.notice="Draft moved to Trash";}break;

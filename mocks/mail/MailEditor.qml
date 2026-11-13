@@ -10,6 +10,8 @@ Item {
     property alias animationsPaused: body.animationsPaused
     property bool newMessage:false
     property string replySourceName
+    readonly property real fromCenter: content.y + fields.y + fromRow.y + fromRow.height / 2
+    readonly property real writingBottom: content.y + body.y + body.height
     property Component footerComponent
     property real availableHeight:0
     property alias maximumImageHeight: body.maximumImageHeight
@@ -70,6 +72,7 @@ Item {
             Layout.fillWidth:true;spacing:0
             RowLayout {
                 Layout.fillWidth:true;spacing:editor.labelGap
+                id: fromRow
                 Label {text:qsTr("From")}
                 K.MenuButton {
                     objectName: "draftFrom"
@@ -233,7 +236,7 @@ Item {
             Layout.fillWidth: true
             spacing: editor.t.space.s
             Repeater {
-                model: editor.draft?.files ?? []
+                model: Array.from(editor.draft?.files ?? []).filter(file => !file.inline)
                 delegate: Rectangle {
                     id: chip
                     required property var modelData
@@ -252,25 +255,15 @@ Item {
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
                             text: chip.modelData.name
-                            Accessible.name: chip.modelData.inline ? qsTr("%1, In text").arg(text) : text
                             enabled: !!chip.modelData.url
                             clip: true
                             onActivated: Qt.openUrlExternally(chip.modelData.url)
-                        }
-                        K.TacitText {
-                            visible: !!chip.modelData.inline
-                            Layout.leftMargin: editor.t.space.s - editor.t.space.xs
-                            text: qsTr("In text")
-                            size: "meta"
-                            ink: "past"
-                            Accessible.ignored: true
                         }
                         K.IconButton {
                             symbol: "close"
                             label: qsTr("Remove %1").arg(chip.modelData.name)
                             onActivated: {
                                 const id = chip.modelData.id;
-                                body.removeAttachment(id);
                                 editor.controller.act("detach", {id: id});
                             }
                         }

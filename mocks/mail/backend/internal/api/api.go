@@ -92,6 +92,9 @@ func New(s *backend.Service, p *backend.MockProvider) http.Handler {
 		v, e := store.Get(r.Context(), r.PathValue("id"))
 		respond(w, metadata(v), e)
 	})
+	mux.HandleFunc("DELETE /v1/messages/{id}", func(w http.ResponseWriter, r *http.Request) {
+		respond(w, map[string]bool{"ok": true}, store.DeleteTrashedMessage(r.Context(), r.PathValue("id")))
+	})
 	mux.HandleFunc("PATCH /v1/messages/{id}", func(w http.ResponseWriter, r *http.Request) {
 		var patch backend.MessagePatch
 		if !parse(w, r, &patch) {
@@ -106,6 +109,23 @@ func New(s *backend.Service, p *backend.MockProvider) http.Handler {
 			v[i] = metadata(v[i])
 		}
 		respond(w, v, e)
+	})
+	mux.HandleFunc("POST /v1/conversations/{id}/trash", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Account string `json:"account_id"`
+		}
+		if !parse(w, r, &in) {
+			return
+		}
+		token, err := store.TrashConversation(r.Context(), in.Account, r.PathValue("id"))
+		respond(w, map[string]string{"undo_token": token}, err)
+	})
+	mux.HandleFunc("POST /v1/conversation-trash/{token}/undo", func(w http.ResponseWriter, r *http.Request) {
+		var in struct{}
+		if !parse(w, r, &in) {
+			return
+		}
+		respond(w, map[string]bool{"ok": true}, store.UndoConversationTrash(r.Context(), r.PathValue("token")))
 	})
 	mux.HandleFunc("POST /v1/accounts/{account}/attachments", func(w http.ResponseWriter, r *http.Request) {
 		kind, params, e := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -169,13 +189,14 @@ func New(s *backend.Service, p *backend.MockProvider) http.Handler {
 	mux.HandleFunc("PUT /v1/drafts/{id}", save)
 	mux.HandleFunc("POST /v1/send", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
-			DraftID string `json:"draft_id"`
-			Key     string `json:"idempotency_key"`
+			DraftID     string `json:"draft_id"`
+			Key         string `json:"idempotency_key"`
+			UndoSeconds int    `json:"undo_seconds"`
 		}
 		if !parse(w, r, &in) {
 			return
 		}
-		v, e := s.SendDraft(r.Context(), in.DraftID, in.Key)
+		v, e := store.QueueDelayed(r.Context(), in.DraftID, in.Key, in.UndoSeconds)
 		if e != nil {
 			respond(w, nil, e)
 			return
@@ -183,6 +204,13 @@ func New(s *backend.Service, p *backend.MockProvider) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(202)
 		json.NewEncoder(w).Encode(v)
+	})
+	mux.HandleFunc("POST /v1/outbox/{id}/undo", func(w http.ResponseWriter, r *http.Request) {
+		var in struct{}
+		if !parse(w, r, &in) {
+			return
+		}
+		respond(w, map[string]bool{"ok": true}, store.UndoSend(r.Context(), r.PathValue("id")))
 	})
 	mux.HandleFunc("GET /v1/outbox", func(w http.ResponseWriter, r *http.Request) {
 		jobs, err := store.ActiveJobs(r.Context())
