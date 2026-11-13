@@ -28,6 +28,7 @@ type Message struct {
 	RemoteID       string       `json:"remote_id,omitempty"`
 	ConversationID string       `json:"conversation_id"`
 	MessageID      string       `json:"message_id,omitempty"`
+	ReplySourceID  string       `json:"reply_source_id,omitempty"`
 	InReplyTo      string       `json:"in_reply_to,omitempty"`
 	References     []string     `json:"references,omitempty"`
 	From           Address      `json:"from"`

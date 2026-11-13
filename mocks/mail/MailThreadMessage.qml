@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import Tacit.Kit as K
+import "mail-store.js" as MailStore
 
 Column {
     id: message
@@ -84,9 +85,9 @@ Column {
             visible: message.hasPrevious || message.hasNext || message.followingTickOffset >= 0
             x: Math.round(message.t.space.l - (width - 1) / 2) - header.x
             y: message.tickY
-            width: message.entry.historical ? message.t.space.s : message.t.space.l
+            width: message.hasNext ? message.t.space.s : message.t.space.l
             height: 1
-            color: message.entry.historical ? message.t.inkMeta : message.t.inkMain
+            color: message.hasNext ? message.t.inkMeta : message.t.inkMain
             Accessible.ignored: true
         }
 
@@ -125,7 +126,12 @@ Column {
                     case "queued": return message.entry.date ?? "";
                     case "sending": return qsTr("%1 · Sending").arg(message.entry.date);
                     case "sent": return qsTr("%1 · Sent").arg(message.entry.date);
-                    default: return message.entry.date ?? "";
+                    default: {
+                        if (!Number.isFinite(message.entry.timestamp))
+                            return message.entry.date ?? "";
+                        const date = new Date(message.entry.timestamp);
+                        return MailStore.threadDay(date, new Date()) + " " + Qt.formatTime(date, "HH:mm");
+                    }
                     }
                 }
                 size: "meta"

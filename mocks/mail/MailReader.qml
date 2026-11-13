@@ -7,6 +7,9 @@ Item {
     required property var controller
     readonly property var t:K.Kit.tokens
     readonly property var message:controller.selected
+    readonly property bool inTrash: message?.folder === "Trash"
+    readonly property bool inSpam: message?.folder === "Spam"
+    readonly property bool restrictedFolder: inTrash || inSpam
     readonly property bool composing:controller.ui.view==="compose"
     readonly property bool showConversationHeader: !!message && !composing && !controller.ui.attachment
     readonly property bool editing:controller.ui.view==="draft"||composing
@@ -54,6 +57,8 @@ Item {
             }));
         }
         history.push(...(message.replies ?? []).map(entry => Object.assign({outgoing: true, from: qsTr("You")}, entry)));
+        if (message.backendAccount)
+            history.sort((left, right) => left.timestamp - right.timestamp);
         return history;
     }
     readonly property int replySourceIndex: !editing || composing || controller.draft?.agent ? -1
@@ -226,18 +231,27 @@ Item {
                     onActivated: reader.backRequested()
                 }
                 Item { Layout.fillWidth: true }
-                MailAction {id:archiveAction;objectName:"archive";visible:reader.message?.folder !== "Trash" && !!reader.message&&!reader.controller.ui.attachment;text:"Archive";onActivated:reader.controller.act("move",{folder:"Archive"})}
-                MailAction {objectName:"messageMore";visible:reader.message?.folder !== "Trash" && !!reader.message&&!reader.controller.ui.attachment;text:"More";onActivated:more.openAt(this,width-more.implicitWidth,height)}
+                MailAction {id:archiveAction;objectName:"archive";visible:!reader.restrictedFolder && !!reader.message&&!reader.controller.ui.attachment;text:"Archive";onActivated:reader.controller.act("move",{folder:"Archive"})}
+                MailAction {objectName:"messageMore";visible:!reader.restrictedFolder && !!reader.message&&!reader.controller.ui.attachment;text:"More";onActivated:more.openAt(this,width-more.implicitWidth,height)}
                 MailAction {
-                    visible: reader.message?.folder === "Trash"
-                    text: qsTr("Restore to %1").arg(reader.message?.trashOrigin ?? "Inbox")
+                    visible: reader.inTrash
+                    text: qsTr("Restore thread")
                     onActivated: reader.controller.act("restoreTrash")
                 }
                 MailAction {
-                    visible: reader.message?.folder === "Trash"
-                    text: qsTr("Delete for good")
+                    visible: reader.inSpam
+                    text: qsTr("Mark as no spam")
+                    onActivated: reader.controller.act("move", {folder: "Inbox"})
+                }
+                MailAction {
+                    visible: reader.restrictedFolder
+                    enabled: targets.length > 0 && !reader.controller.threadQuery?.loading
+                    readonly property var targets: reader.entries.filter(entry => entry.folder === reader.message?.folder).map(entry => entry.id)
+                    text: reader.inSpam ? qsTr("Delete") : qsTr("Delete thread")
+                    confirm: targets.length === 1 ? qsTr("Delete 1 message for good?")
+                        : qsTr("Delete %1 messages for good?").arg(targets.length)
                     risk: true
-                    onActivated: reader.controller.act("deleteTrash")
+                    onActivated: reader.controller.act("deleteFolderThread", {ids: targets})
                 }
             }
             Rule {
@@ -345,7 +359,9 @@ Item {
                             expanded: reader.editing && !reader.composing
                                 ? (index === (reader.replySourceIndex >= 0 ? reader.replySourceIndex : reader.entries.length - 1))
                                     !== !!reader.collapsedMessages[modelData.id]
-                                : modelData.historical && !modelData.backendAccount ? !!modelData.expanded
+                                : modelData.backendAccount
+                                    ? (index === reader.entries.length - 1) !== !!reader.collapsedMessages[modelData.id]
+                                : modelData.historical ? !!modelData.expanded
                                 : (modelData.historical ? !!reader.collapsedMessages[modelData.id] : reader.isExpanded(modelData.id))
                                     && !(modelData.context && reader.queued)
                             animateExpansion: !reader.preparingReply
@@ -359,7 +375,7 @@ Item {
                                 return agentEntry.visible ? agentEntry.tickOffset : draftTimeline.visible ? footerEditor.item.fromCenter : -1;
                             }
                             replyEditorComponent: index === reader.replySourceIndex && !reader.controller.ui.attachment ? editorComponent : null
-                            actionsVisible: reader.message?.folder !== "Trash" && !modelData.context && !reader.editing && modelData.status !== "queued"
+                            actionsVisible: !reader.restrictedFolder && !modelData.context && !reader.editing && modelData.status !== "queued"
                             onToggleRequested: {
                                 if (!reader.editing && entry.historical && !entry.backendAccount)
                                     reader.controller.act("expand", {id: entry.id});
@@ -453,19 +469,24 @@ Item {
     Component {
         id: editorFooterComponent
         ColumnLayout {
+            id: editorFooter
             objectName:"editorFooter"
+            readonly property real availableWidth: Math.max(0, (reader.editor?.width ?? reader.textWidth)
+                - 2 * (reader.editor?.panelPadding ?? 0))
+            readonly property bool shortLabels: availableWidth < reader.t.width.panel + reader.t.space.page * 3
+            readonly property real actionSpacing: shortLabels ? reader.t.space.m : reader.t.space.xxl
             spacing:reader.t.space.s
             GridLayout {
                 Layout.fillWidth:true;Layout.minimumWidth:0
-                columns: reader.textWidth - 2 * (reader.editor?.panelPadding ?? 0) >= attachActions.Layout.leftMargin + attachFileAction.implicitWidth + (agentDraftAction.visible ? agentDraftAction.implicitWidth + attachActions.spacing : 0) + sendActions.implicitWidth + columnSpacing * 2 ? 3 : 1
-                columnSpacing:reader.t.space.xxl;rowSpacing:reader.t.space.s
-                RowLayout {id: attachActions; Layout.leftMargin: reader.t.space.m; spacing:reader.t.space.xxl
-                MailAction {id: attachFileAction; objectName:"attachFile";text:"Attach a file";onActivated:reader.attachRequested()}
-                MailAction {id: agentDraftAction; visible:reader.composing&&!reader.controller.draft?.agent;text:"Ask your agent to draft it";onActivated:{if(!reader.controller.draft.to.trim()){reader.controller.act("notice",{text:"Add a recipient first."});return;}reader.controller.act("draft",{agent:true,edited:false,body:"Hello,\n\nThank you for your time. I would like to follow up with you.\n\n"+(reader.controller.draft.account==="Work"?reader.controller.settings.workSignature:reader.controller.settings.personalSignature)});}}
+                columns: editorFooter.availableWidth >= attachActions.Layout.leftMargin + attachFileAction.implicitWidth + (agentDraftAction.visible ? agentDraftAction.implicitWidth + attachActions.spacing : 0) + sendActions.implicitWidth + columnSpacing * 2 ? 3 : 1
+                columnSpacing:editorFooter.actionSpacing;rowSpacing:reader.t.space.s
+                RowLayout {id: attachActions; Layout.leftMargin: reader.t.space.m; spacing:editorFooter.actionSpacing + reader.t.space.xs
+                MailAction {id: attachFileAction; objectName:"attachFile";text:editorFooter.shortLabels ? qsTr("Attach file") : qsTr("Attach a file");onActivated:reader.attachRequested()}
+                MailAction {id: agentDraftAction; visible:!reader.controller.draft?.agent;text:qsTr("Draft with agent");onActivated:{if(!reader.controller.draft.to.trim()){reader.controller.act("notice",{text:"Add a recipient first."});return;}reader.controller.act("draft",{agent:true,edited:false,body:"Hello,\n\nThank you for your time. I would like to follow up with you.\n\n"+(reader.controller.draft.account==="Work"?reader.controller.settings.workSignature:reader.controller.settings.personalSignature)});}}
                 }
                 Item {visible:parent.columns===3;Layout.fillWidth:true}
-                RowLayout {id: sendActions; Layout.alignment:Qt.AlignRight;spacing:reader.t.space.xxl
-                MailAction {objectName:"discardDraft";text:"Move draft to Trash";onActivated:reader.discardDraft()}
+                RowLayout {id: sendActions; Layout.alignment:Qt.AlignRight;spacing:editorFooter.actionSpacing
+                MailAction {objectName:"discardDraft";text:editorFooter.shortLabels ? qsTr("Move to trash") : qsTr("Move draft to Trash");onActivated:reader.discardDraft()}
                 K.Slab {tone:"default";objectName:"sendDraft";text:"Send";waiting:!reader.controller.canSend;opacity:waiting ? 0.62 : 1;onActivated: reader.editor?.sendDraft()}
                 }
             }
@@ -502,5 +523,22 @@ Item {
             onAttachRequested: reader.attachRequested()
         }
     }
-    K.Menu {id:more;items:[{label:reader.message?.unread?"Mark read":"Mark unread"},{label:reader.message?.starred?"Remove star":"Star"},{label:"Move to Inbox"},{label:"Move to Junk"},{rule:true},{label:"Move to Trash",risk:true},{label:qsTr("Move conversation to Trash"),risk:true,visible:!!reader.message?.backendConversation}];onPicked:i=>{if(i===0)reader.controller.act("unread");else if(i===1)reader.controller.act("star");else if(i===2)reader.controller.act("move",{folder:"Inbox"});else if(i===3)reader.controller.act("move",{folder:"Junk"});else if(i===5)reader.controller.act("move",{folder:"Trash"});else if(i===6)reader.controller.act("trashConversation");}}
+    K.Menu {
+        id: more
+        items: [
+            {label: reader.message?.unread ? qsTr("Mark read") : qsTr("Mark unread"), action: "unread"},
+            {label: reader.message?.starred ? qsTr("Remove star") : qsTr("Star"), action: "star"},
+            {label: qsTr("Move to Inbox"), action: "move", folder: "Inbox", available: reader.message?.folder !== "Inbox"},
+            {label: qsTr("Move to Spam"), action: "move", folder: "Spam"},
+            {rule: true, available: !reader.controller.threadQuery?.loading},
+            {label: qsTr("Move to Trash"), action: "move", folder: "Trash", risk: true,
+                available: reader.entries.length === 1 && !reader.controller.threadQuery?.loading},
+            {label: qsTr("Move conversation to Trash"), action: "trashConversation", risk: true,
+                available: reader.entries.length > 1 && !!reader.message?.backendConversation && !reader.controller.threadQuery?.loading}
+        ].filter(item => item.available !== false)
+        onPicked: index => {
+            const item = items[index];
+            reader.controller.act(item.action, {folder: item.folder});
+        }
+    }
 }

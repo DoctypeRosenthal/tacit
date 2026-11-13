@@ -195,7 +195,7 @@ func TestTrashConversationAndUndo(t *testing.T) {
 	folder := func(id string) string {
 		return decode[backend.Message](t, request(t, h, "GET", "/v1/messages/"+id, nil, 200)).Mailbox
 	}
-	for _, id := range []string{"seed-00", "seed-01", "seed-02", "seed-12"} {
+	for _, id := range []string{"seed-01", "seed-02", "seed-12"} {
 		if got := folder(id); got != "Trash" {
 			t.Fatalf("%s in %s after trash", id, got)
 		}
@@ -221,4 +221,80 @@ func TestTrashOriginAndPermanentDelete(t *testing.T) {
 	request(t, h, "PATCH", route, map[string]string{"mailbox": "Trash"}, 200)
 	request(t, h, "DELETE", route, nil, 200)
 	request(t, h, "GET", route, nil, 404)
+}
+
+func TestDeleteThreadLeavesOtherTrashMessages(t *testing.T) {
+	h, _ := apiTest(t)
+	request(t, h, "PATCH", "/v1/messages/seed-03", map[string]string{"mailbox": "Trash"}, 200)
+	request(t, h, "POST", "/v1/conversations/review/trash", map[string]string{"account_id": "work"}, 200)
+	const route = "/v1/messages/seed-02/delete-trash-thread"
+	request(t, h, "POST", route, map[string][]string{"ids": {"seed-00", "seed-01", "seed-02", "seed-03"}}, 409)
+	request(t, h, "GET", "/v1/messages/seed-00", nil, 200)
+	request(t, h, "POST", route, map[string][]string{"ids": {"seed-00", "seed-01", "seed-02", "seed-12"}}, 200)
+	request(t, h, "GET", "/v1/messages/seed-02", nil, 404)
+	request(t, h, "GET", "/v1/messages/seed-03", nil, 200)
+}
+
+func TestSpamMoveRestoreAndPermanentDelete(t *testing.T) {
+	h, _ := apiTest(t)
+	move := func(id, folder string) backend.Message {
+		t.Helper()
+		return decode[backend.Message](t, request(t, h, "PATCH", "/v1/messages/"+id,
+			map[string]string{"mailbox": folder}, 200))
+	}
+	if got := move("seed-02", "Spam").Mailbox; got != "Spam" {
+		t.Fatalf("move to Spam returned %q", got)
+	}
+	if got := move("seed-02", "Inbox").Mailbox; got != "Inbox" {
+		t.Fatalf("mark as no spam returned %q", got)
+	}
+	move("seed-02", "Spam")
+	move("seed-01", "Spam")
+	move("seed-03", "Spam")
+
+	const route = "/v1/messages/seed-02/delete-spam-thread"
+	request(t, h, "POST", route, map[string][]string{"ids": {"seed-02"}}, 409)
+	request(t, h, "POST", route, map[string][]string{"ids": {"seed-02", "seed-03"}}, 409)
+	request(t, h, "POST", "/v1/messages/seed-02/delete-trash-thread",
+		map[string][]string{"ids": {"seed-02", "seed-01"}}, 409)
+	request(t, h, "POST", route, map[string][]string{"ids": {"seed-02", "seed-01"}}, 200)
+	for _, id := range []string{"seed-02", "seed-01"} {
+		request(t, h, "GET", "/v1/messages/"+id, nil, 404)
+	}
+	for _, id := range []string{"seed-00", "seed-03"} {
+		request(t, h, "GET", "/v1/messages/"+id, nil, 200)
+	}
+}
+
+func TestRestoreThreadPreservesArchiveAndRestoresTrashMembers(t *testing.T) {
+	h, _ := apiTest(t)
+	move := func(id, folder string) {
+		t.Helper()
+		request(t, h, "PATCH", "/v1/messages/"+id, map[string]string{"mailbox": folder}, 200)
+	}
+	folder := func(id string) string {
+		t.Helper()
+		return decode[backend.Message](t, request(t, h, "GET", "/v1/messages/"+id, nil, 200)).Mailbox
+	}
+	move("seed-00", "Archive")
+	move("seed-01", "Archive")
+	move("seed-01", "Trash")
+	move("seed-03", "Trash")
+	request(t, h, "POST", "/v1/conversations/review/trash", map[string]string{"account_id": "work"}, 200)
+	if got := folder("seed-00"); got != "Archive" {
+		t.Fatalf("archived message moved to %s", got)
+	}
+	request(t, h, "POST", "/v1/messages/seed-02/restore-trash-thread", nil, 200)
+	for id, want := range map[string]string{"seed-00": "Archive", "seed-01": "Archive", "seed-02": "Inbox", "seed-12": "Inbox", "seed-03": "Trash"} {
+		if got := folder(id); got != want {
+			t.Errorf("%s restored to %s, want %s", id, got, want)
+		}
+	}
+	request(t, h, "POST", "/v1/conversations/review/trash", map[string]string{"account_id": "work"}, 200)
+	request(t, h, "POST", "/v1/messages/seed-02/delete-trash-thread", map[string][]string{"ids": {"seed-02", "seed-12"}}, 200)
+	for _, id := range []string{"seed-00", "seed-01"} {
+		if got := folder(id); got != "Archive" {
+			t.Errorf("%s in %s after deletion", id, got)
+		}
+	}
 }

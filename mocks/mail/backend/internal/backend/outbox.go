@@ -76,6 +76,9 @@ func (s *Store) QueueDelayed(ctx context.Context, draft, key string, seconds int
 	if len(m.To)+len(m.Cc)+len(m.Bcc) == 0 || validate(m) != nil {
 		return Job{}, ErrInvalid
 	}
+	if m.MessageID == "" {
+		m.MessageID = "<" + id() + "@" + strings.SplitN(m.From.Email, "@", 2)[1] + ">"
+	}
 	j := Job{ID: id(), MessageID: m.ID, Key: key, State: "queued", Message: m}
 	if seconds > 0 {
 		j.UndoUntil = time.Now().Add(time.Duration(seconds) * time.Second).UnixMilli()

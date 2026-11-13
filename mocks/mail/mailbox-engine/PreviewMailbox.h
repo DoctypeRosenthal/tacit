@@ -106,9 +106,12 @@ public:
             "--unix-socket", socket, route});
     }
 
-    Q_INVOKABLE void search(const QString &query, int revision)
+    Q_INVOKABLE void search(const QString &query, const QString &account, const QString &folder, int revision)
     {
-        loadPages("/v1/messages?q=" + encode(query), {}, [this, revision](const QVariantList &messages, bool ok) {
+        const auto route = "/v1/messages?q=" + encode(query) + "&account_id=" + encode(account)
+            + "&mailbox=" + encode(folder == "Starred" || folder == "Family" || folder == "Receipts"
+                || folder == "Clients" || folder == "Invoices" ? QString{} : folder);
+        loadPages(route, {}, [this, revision](const QVariantList &messages, bool ok) {
             emit searched(revision, messages, ok);
         });
     }
@@ -220,6 +223,18 @@ public:
     {
         requestJson("POST", "/v1/conversation-trash/" + encode(token) + "/undo", {},
             [this](const QJsonObject &, bool ok) { emit conversationTrashUndone(ok); });
+    }
+
+    Q_INVOKABLE void restoreTrashedThread(const QString &id)
+    {
+        requestJson("POST", "/v1/messages/" + encode(id) + "/restore-trash-thread", {},
+            [this, id](const QJsonObject &, bool ok) { emit messageUpdated(id, ok); });
+    }
+
+    Q_INVOKABLE void deleteFolderThread(const QString &id, const QVariantList &ids, bool spam)
+    {
+        requestJson("POST", "/v1/messages/" + encode(id) + (spam ? "/delete-spam-thread" : "/delete-trash-thread"), {{"ids", ids}},
+            [this, id](const QJsonObject &, bool ok) { emit messageUpdated(id, ok); });
     }
 
     Q_INVOKABLE void deleteTrashedMessage(const QString &id)

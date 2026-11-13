@@ -72,6 +72,7 @@ QtObject {
         }
         function onMessageUpdated(id, ok) {
             if (ok) {
+                state.railQuery.refresh();
                 state.draftQuery.refresh();
                 if (state.folderQuery.key)
                     state.folderQuery.refresh();
@@ -81,6 +82,7 @@ QtObject {
             }
         }
         function onMailboxInvalidated() {
+            state.railQuery.refresh();
             if (state.folderQuery.key)
                 state.folderQuery.refresh();
             state.threadQuery.refresh();
@@ -97,6 +99,7 @@ QtObject {
             }
             const next = Object.assign({}, state.outbox);
             if (["sent", "cancelled"].includes(job.state)) {
+                state.railQuery.refresh();
                 delete next[job.id];
                 state.draftQuery.refresh();
             }
@@ -138,7 +141,9 @@ QtObject {
     readonly property bool draftSaving: draftSync.saving
     property MailSearchQuery searchQuery: MailSearchQuery {
         client: state.mailboxClient
-        active: state.ui.searching
+        active: state.ui.searching && folder !== "Drafts"
+        account: state.ui.account === "Work" ? "work" : state.ui.account === "Personal" ? "personal" : ""
+        folder: state.ui.folder
         term: state.ui.query
         onCompleted: (messages, ok) => {
             if (!ok) {
@@ -147,8 +152,8 @@ QtObject {
             }
             const updated = Object.assign({}, state.data);
             const hits = Store.fromMailbox(updated, messages).messages;
-            const known = new Set(updated.messages.map(message => message.id));
-            updated.messages = updated.messages.concat(hits.filter(message => !known.has(message.id)));
+            const hitIds = new Set(hits.map(message => message.id));
+            updated.messages = updated.messages.filter(message => !hitIds.has(message.id)).concat(hits);
             updated.searchIds = hits.map(message => message.id);
             state.data = updated;
         }
@@ -156,7 +161,7 @@ QtObject {
     property MailboxQuery folderQuery: MailboxQuery {
         client: state.mailboxClient
         account: state.ui.account === "Work" ? "work" : state.ui.account === "Personal" ? "personal" : ""
-        folder: ["Inbox", "Archive", "Trash", "Junk", "Sent"].includes(state.ui.folder)
+        folder: ["Inbox", "Archive", "Trash", "Spam", "Sent"].includes(state.ui.folder)
             && !state.ui.searching ? state.ui.folder : ""
         onRefreshed: messages => {
             if (!folder)
@@ -226,9 +231,13 @@ QtObject {
         if(action==="setting"&&data.settings[p.key]===p.value)return;
         if (mailboxClient && selected?.folder === "Trash" && ["restoreTrash", "deleteTrash"].includes(action)) {
             if (action === "restoreTrash")
-                mailboxClient.updateMessage(selected.id, {mailbox: selected.trashOrigin});
+                mailboxClient.restoreTrashedThread(selected.id);
             else
                 mailboxClient.deleteTrashedMessage(selected.id);
+            return;
+        }
+        if (mailboxClient && action === "deleteFolderThread" && ["Trash", "Spam"].includes(selected?.folder)) {
+            mailboxClient.deleteFolderThread(selected.id, p.ids, selected.folder === "Spam");
             return;
         }
         if (mailboxClient && action === "trashConversation") {
@@ -314,7 +323,16 @@ QtObject {
         if(action==="notify"&&ui.notification)notificationRequested(Store.find(data,"anna-notification"));
         if(jobsChanged)sendStatusChanged({pending:Store.copy(data.jobs),undoAvailable:undoAvailable});
     }
-    function count(folder,account) { return Store.folderCount(data,folder,account); }
+    property MailboxQuery railQuery: MailboxQuery {
+        client: state.mailboxClient
+        allFolders: true
+    }
+    readonly property var railMessages: Store.fromMailbox(data, railQuery.messages).messages
+    function count(folder, account) {
+        const snapshot = mailboxClient && folder !== "Drafts"
+            ? {messages: railMessages, drafts: data.drafts, ui: data.ui} : data;
+        return Store.folderCount(snapshot, folder, account);
+    }
     function resultSnippet(message) {
         const body = message.body.replace(/\s+/g, " ");
         const query = ui.searching ? ui.query.trim().toLowerCase() : "";

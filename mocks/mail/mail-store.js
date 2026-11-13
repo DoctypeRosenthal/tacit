@@ -45,6 +45,21 @@ function replySource(s, thread, sourceId) {
     var account = s.accounts.find(function(item) { return item.name === thread.account; });
     return Object.assign({}, sent, {from:"You", address:account ? account.email : "", replyAddress:recipients[0] || "", cc:recipients.slice(1).concat(sent.cc || []).join(", ")});
 }
+function threadDay(date, now) {
+    const calendarDay = value => Date.UTC(value.getFullYear(), value.getMonth(), value.getDate());
+    const daysAgo = (calendarDay(now) - calendarDay(date)) / 86400000;
+    const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const weekday = weekdays[date.getDay()];
+    if (daysAgo === 0)
+        return "Today";
+    if (daysAgo === 1)
+        return "Yesterday";
+    if (daysAgo > 1 && daysAgo < 7)
+        return weekday;
+    const year = date.getFullYear() === now.getFullYear() ? "" : " " + date.getFullYear();
+    return weekday + " " + date.getDate() + " " + months[date.getMonth()] + year;
+}
 function fromMailbox(state, messages, sourceRows) {
     const rows = messages.filter(entry => entry.mailbox !== "Drafts" && entry.mailbox !== "Outbox")
         .map(entry => {
@@ -53,6 +68,7 @@ function fromMailbox(state, messages, sourceRows) {
                 entry.body_text || "", entry.account_id === "work" ? "Work" : "Personal",
                 date.toLocaleDateString(), date.toLocaleTimeString().slice(0, 5), entry.unread);
             row.address = entry.from.email;
+            row.timestamp = date.getTime();
             row.backendAccount = entry.account_id;
             row.backendConversation = entry.conversation_id;
             row.cc = (entry.cc || []).map(address => address.email).join(", ");
@@ -72,7 +88,7 @@ function fromMailbox(state, messages, sourceRows) {
             && row.account === (entry.account_id === "work" ? "Work" : "Personal"));
         const addresses = values => (values || []).map(address => address.email).join(", ");
         return {
-            id: entry.id, backendId: entry.id, backendConversation: entry.conversation_id, conversation: source?.id || "",
+            id: entry.id, backendId: entry.id, backendConversation: entry.conversation_id, conversation: source?.id || "", sourceId: entry.reply_source_id || "",
             mode: source ? "Reply" : "New message", account: entry.account_id === "work" ? "Work" : "Personal",
             to: addresses(entry.to), cc: addresses(entry.cc), bcc: addresses(entry.bcc),
             showCc: !!entry.cc?.length, showBcc: !!entry.bcc?.length, subject: entry.subject,
@@ -98,24 +114,56 @@ function makeDraft(s,conversation,mode,agent,sourceId){
 function emails(value){return String(value||"").split(/[,;]/).map(function(v){return v.trim();}).filter(Boolean);}
 function validRecipients(value){var all=emails(value);return all.length>0&&all.every(function(v){return /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(v);});}
 function canSend(d){return !!d&&validRecipients(d.to)&&(!d.cc||validRecipients(d.cc))&&(!d.bcc||validRecipients(d.bcc))&&(d.body.trim()!==""||d.files.length>0);}
-function results(s){
-    if(s.ui.folder==="Drafts"&&!s.ui.searching)return s.drafts.filter(function(d){return s.ui.account==="All accounts"||d.account===s.ui.account;}).map(function(d){return {id:d.id,draft:true,from:d.agent?"Your agent":"You",subject:d.subject||"No subject",body:d.body,account:d.account,day:"Drafts",time:"Not sent",unread:false,files:d.files};});
-    var q=s.ui.query.toLowerCase().trim();var list=s.messages.filter(function(m){
-        if(s.ui.searching){if(m.folder==="Trash"||m.folder==="Junk")return false;if(s.searchIds)return s.searchIds.includes(m.id);return (m.from+" "+m.address+" "+m.subject+" "+m.body+" "+m.files.map(function(f){return f.name;}).join(" ")).toLowerCase().includes(q);}
+function results(s, groupConversations = true){
+    const q = s.ui.query.toLowerCase().trim();
+    function matches(row) {
+        return [row.from, row.address, row.to, row.cc, row.bcc, row.subject, row.body,
+            ...row.files.map(file => file.name)].join(" ").toLowerCase().includes(q);
+    }
+    if(s.ui.folder==="Drafts")return s.drafts.filter(function(d){
+        return (s.ui.account==="All accounts"||d.account===s.ui.account) && (!s.ui.searching || matches(d));
+    }).map(function(d){return {id:d.id,draft:true,from:d.agent?"Your agent":"You",subject:d.subject||"No subject",body:d.body,account:d.account,day:"Drafts",time:"Not sent",unread:false,files:d.files};});
+    var list=s.messages.filter(function(m){
         if(s.ui.account!=="All accounts"&&m.account!==s.ui.account)return false;
         if(s.ui.folder==="Starred"){if(!m.starred||m.folder==="Trash")return false;}
         else if(s.ui.folder==="Sent"){if(!m.replies.some(function(r){return r.status==="sent";})&&m.folder!=="Sent")return false;}
         else if(["Family","Receipts","Clients","Invoices"].includes(s.ui.folder)){if(m.category!==s.ui.folder)return false;}
         else if(m.folder!==s.ui.folder)return false;
+        if (s.ui.searching && !(s.searchIds ? s.searchIds.includes(m.id) : matches(m))) return false;
         if(s.ui.filter==="Unread"&&!m.unread)return false;if(s.ui.filter==="With attachments"&&m.files.length===0)return false;if(s.ui.filter==="Starred"&&!m.starred)return false;
         return true;
     });
+    if (groupConversations && ["Trash", "Archive"].includes(s.ui.folder)) {
+        const threads = new Map();
+        for (const row of list) {
+            const key = JSON.stringify([row.backendAccount, row.backendConversation || row.id]);
+            const group = threads.get(key);
+            if (!group) {
+                threads.set(key, {row: row, count: 1});
+            } else {
+                ++group.count;
+                if (row.timestamp > group.row.timestamp)
+                    group.row = row;
+            }
+        }
+        list = Array.from(threads.values(), group =>
+            Object.assign({}, group.row, {folderMessageCount: group.count}));
+        list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    }
     if(s.ui.sort==="Oldest first")list.reverse();
     if(s.ui.sort==="Sender")list.sort(function(a,b){return a.from.localeCompare(b.from);});
     if(s.ui.sort==="Unread first")list.sort(function(a,b){return Number(b.unread)-Number(a.unread);});
     return list;
 }
-function folderCount(s,folder,account){var c={messages:s.messages,drafts:s.drafts,ui:Object.assign({},s.ui)};c.ui.searching=false;c.ui.filter="All mail";c.ui.folder=folder;c.ui.account=account||"All accounts";var rows=results(c);return folder==="Inbox"?rows.filter(function(m){return m.unread;}).length:rows.length;}
+function folderCount(state, folder, account) {
+    const ui = Object.assign({}, state.ui, {
+        searching: false,
+        filter: "Unread",
+        folder,
+        account: account || "All accounts"
+    });
+    return results(Object.assign({}, state, {ui}), false).filter(row => row.unread).length;
+}
 function remember(s){s.ui.undo={messages:copy(s.messages),drafts:copy(s.drafts),jobs:copy(s.jobs),accounts:copy(s.accounts),selected:s.ui.selected};}
 function showReplyDraft(state) {
     const row = current(state);

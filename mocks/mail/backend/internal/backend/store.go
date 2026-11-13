@@ -61,20 +61,23 @@ func (s *Store) init() error {
 	if e := s.db.QueryRow(`PRAGMA user_version`).Scan(&v); e != nil {
 		return e
 	}
-	if v > 3 {
-		return fmt.Errorf("database schema %d is newer than supported version 3", v)
+	if v > 4 {
+		return fmt.Errorf("database schema %d is newer than supported version 4", v)
 	}
-	if v == 3 {
+	if v == 4 {
 		return nil
 	}
+	if v == 3 {
+		return s.migrateSpam()
+	}
 	if v == 2 {
-		return s.migrateUndoSend()
+		return s.migrateUndoSendAndSpam()
 	}
 	if v == 1 {
 		if e := s.migrateAttachments(); e != nil {
 			return e
 		}
-		return s.migrateUndoSend()
+		return s.migrateUndoSendAndSpam()
 	}
 	tx, e := s.db.Begin()
 	if e != nil {
@@ -103,7 +106,7 @@ func (s *Store) init() error {
 	if e := s.migrateAttachments(); e != nil {
 		return e
 	}
-	return s.migrateUndoSend()
+	return s.migrateUndoSendAndSpam()
 }
 func mapped(e error) error {
 	if errors.Is(e, sql.ErrNoRows) {
@@ -252,6 +255,24 @@ func (s *Store) SaveDraft(ctx context.Context, m Message) (Message, error) {
 			return m, ErrConflict
 		}
 	}
+	if m.ReplySourceID != "" {
+		parent, err := read(ctx, tx, m.ReplySourceID)
+		if err != nil {
+			return m, err
+		}
+		if parent.AccountID != m.AccountID {
+			return m, ErrInvalid
+		}
+		m.ConversationID = parent.ConversationID
+		m.InReplyTo = parent.MessageID
+		m.References = append([]string{}, parent.References...)
+		if len(m.References) == 0 && parent.InReplyTo != "" {
+			m.References = append(m.References, parent.InReplyTo)
+		}
+		if parent.MessageID != "" {
+			m.References = append(m.References, parent.MessageID)
+		}
+	}
 	m = normalise(m)
 	m.Mailbox = "Drafts"
 	m.Unread = false
@@ -282,7 +303,7 @@ func (s *Store) Patch(ctx context.Context, id string, p MessagePatch) (Message, 
 	}
 	if p.Mailbox != "" {
 		switch p.Mailbox {
-		case "Inbox", "Archive", "Trash", "Junk", "Sent", "Drafts":
+		case "Inbox", "Archive", "Trash", "Spam", "Sent", "Drafts":
 		default:
 			return m, ErrInvalid
 		}
@@ -407,10 +428,21 @@ func (s *Store) CacheBatch(ctx context.Context, account string, b Batch) (SyncRe
 			m.Unread = old.Unread
 			m.Flagged = old.Flagged
 			m.Mailbox = old.Mailbox
+			m.TrashOrigin = old.TrashOrigin
+			if m.ConversationID == "" {
+				m.ConversationID = old.ConversationID
+			}
 		} else if !errors.Is(e, sql.ErrNoRows) {
 			return r, e
 		} else {
 			m.ID = id()
+		}
+		if m.ConversationID == "" {
+			var err error
+			m.ConversationID, err = conversationFor(ctx, tx, m)
+			if err != nil {
+				return r, err
+			}
 		}
 		m = normalise(m)
 		if m.Mailbox == "" {
@@ -435,6 +467,32 @@ func (s *Store) migrateUndoSend() error {
 	}
 	defer tx.Rollback()
 	if _, err = tx.Exec("ALTER TABLE outbox ADD COLUMN undo_until INTEGER NOT NULL DEFAULT 0; PRAGMA user_version=3"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) migrateUndoSendAndSpam() error {
+	if err := s.migrateUndoSend(); err != nil {
+		return err
+	}
+	return s.migrateSpam()
+}
+
+func (s *Store) migrateSpam() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`UPDATE messages SET mailbox='Spam' WHERE mailbox='Junk';
+        UPDATE messages SET payload=CAST(json_set(payload,'$.mailbox','Spam') AS BLOB)
+            WHERE json_extract(payload,'$.mailbox')='Junk';
+        UPDATE messages SET payload=CAST(json_set(payload,'$.trash_origin','Spam') AS BLOB)
+            WHERE json_extract(payload,'$.trash_origin')='Junk';
+        UPDATE metadata SET value=replace(value,'"Junk"','"Spam"') WHERE key LIKE 'trash-undo:%';
+        PRAGMA user_version=4;`)
+	if err != nil {
 		return err
 	}
 	return tx.Commit()

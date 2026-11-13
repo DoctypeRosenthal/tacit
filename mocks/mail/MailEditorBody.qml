@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Controls as Controls
 import Tacit.Kit as K
 
 Item {
@@ -192,24 +193,47 @@ Item {
     Item {
         id: toolbar
         width: parent.width
-        height: body.editingLink ? body.t.height.field : toolbarLayout.implicitHeight
+        height: body.editingLink ? body.t.height.field : toolbarLayout.height
         visible: documentTools.status === Loader.Ready
 
-        GridLayout {
+        Flickable {
             id: toolbarLayout
+            readonly property bool compactSpacing: width < formatTools.children.reduce(
+                (total, control) => total + control.width, 0)
+                + (formatTools.children.length + 2) * body.t.space.m
+                + clearFormatting.implicitWidth
+            readonly property real actionGap: compactSpacing ? body.t.space.xs : body.t.space.m
             width: parent.width
-            columns: width >= formatTools.implicitWidth + clearFormatting.implicitWidth + columnSpacing
-                + body.t.space.m ? 2 : 1
-            columnSpacing: body.t.space.m
-            rowSpacing: body.t.space.xs
+            implicitHeight: toolbarRow.implicitHeight
+            height: implicitHeight
+            contentWidth: toolbarRow.width
+            contentHeight: height
+            clip: contentWidth > width
+            interactive: contentWidth > width
+            boundsBehavior: Flickable.StopAtBounds
+            flickableDirection: Flickable.HorizontalFlick
             visible: !body.editingLink
 
-        Flow {
+            Controls.ScrollBar.horizontal: Controls.ScrollBar {
+                id: toolbarBar
+                parent: toolbar
+                anchors.left: toolbar.left
+                anchors.right: toolbar.right
+                anchors.top: toolbarLayout.bottom
+                anchors.topMargin: (body.t.space.s - height) / 2
+                height: 2
+                padding: 0
+                policy: toolbarLayout.interactive ? Controls.ScrollBar.AsNeeded : Controls.ScrollBar.AlwaysOff
+            }
+
+            RowLayout {
+                id: toolbarRow
+                width: Math.max(toolbarLayout.width, implicitWidth)
+                spacing: toolbarLayout.actionGap
+
+        Row {
             id: formatTools
-            Layout.fillWidth: true
-            Layout.minimumWidth: 0
-            spacing: body.t.space.m
-            visible: !body.editingLink
+            spacing: toolbarLayout.actionGap
 
             MailFormatMenu {
                 text: qsTr("Type")
@@ -304,11 +328,13 @@ Item {
             }
         }
 
+            Item { Layout.fillWidth: true }
+
             Item {
                 implicitWidth: clearFormatting.implicitWidth
                 implicitHeight: clearFormatting.implicitHeight
                 Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
-                Layout.rightMargin: body.t.space.m
+                Layout.rightMargin: toolbarLayout.actionGap
 
                 MailAction {
                     id: clearFormatting
@@ -324,6 +350,8 @@ Item {
                 }
             }
         }
+
+            }
 
         RowLayout {
             anchors.fill: parent

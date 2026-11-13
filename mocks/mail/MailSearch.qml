@@ -11,7 +11,8 @@ FocusScope {
     signal down()
 
     readonly property var t: K.Kit.tokens
-    readonly property string label: qsTr("Search all mail")
+    property string folder: "Inbox"
+    readonly property string label: qsTr("Search %1").arg(folder)
     implicitHeight: t.height.field
     activeFocusOnTab: true
     Accessible.ignored: true

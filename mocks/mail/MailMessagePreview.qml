@@ -77,8 +77,10 @@ K.ListRow {
                 elide: Text.ElideRight
             }
             K.TacitText {
-                visible: ((preview.modelData.history?.length ?? 0) + (preview.modelData.replies?.length ?? 0)) > 0
-                text: ((preview.modelData.history?.length ?? 0) + (preview.modelData.replies?.length ?? 0) + 1) + " messages"
+                readonly property int messageCount: preview.modelData.folderMessageCount
+                    ?? ((preview.modelData.history?.length ?? 0) + (preview.modelData.replies?.length ?? 0) + 1)
+                visible: messageCount > 1
+                text: qsTr("%1 messages").arg(messageCount)
                 size: "meta"
                 ink: preview.chosen ? "sec" : (preview.modelData.unread ? "meta" : "quiet")
             }

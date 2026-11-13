@@ -13,6 +13,9 @@ FocusScope {
         mailboxClient: workspace.mailboxClient
         agentInk: workspace.t.accent
     }
+    readonly property bool initialMailboxLoading: !!controller.mailboxClient
+        && !controller.folderQuery.initialLoadFinished && controller.folderQuery.loading
+    readonly property bool showingMailLoading: initialMailboxLoading || controller.ui.view === "importing"
     property bool prewarmHtml: false
     readonly property var t: K.Kit.tokens
     readonly property real listMinimum: t.width.rail + t.space.xl
@@ -278,7 +281,7 @@ FocusScope {
                         size: "meta"
                         ink: "quiet"
                         wrapMode: Text.Wrap
-                        text: workspace.controller.ui.searching ? workspace.controller.rows.length + " results in every account and mailbox" : workspace.controller.ui.account + (workspace.controller.ui.folder === "Inbox" ? "  ·  " + workspace.controller.count("Inbox", workspace.controller.ui.account) + " unread" : "")
+                        text: workspace.controller.ui.searching ? qsTr("%1 results in %2").arg(workspace.controller.rows.length).arg(workspace.controller.ui.folder) : workspace.controller.ui.account + (workspace.controller.ui.folder === "Inbox" ? "  ·  " + workspace.controller.count("Inbox", workspace.controller.ui.account) + " unread" : "")
                     }
                 }
                 ColumnLayout {
@@ -302,6 +305,7 @@ FocusScope {
                                 id: search
                                 objectName: "mailSearch"
                                 anchors.fill: parent
+                                folder: workspace.controller.ui.folder
                                 text: workspace.controller.ui.query
                                 onTextChanged: if (text !== workspace.controller.ui.query)
                                     workspace.controller.act("search", {
@@ -408,14 +412,95 @@ FocusScope {
                     view.anchors.bottomMargin: 0
                     view.bottomMargin: ringSpace + workspace.t.space.m
                     label: "Messages in " + workspace.controller.ui.folder
-                    model: workspace.controller.rows
-                    onActivated: i => workspace.openMessage(workspace.controller.rows[i].id)
+                    property var departing: []
+                    property string displayedScope: ""
+                    readonly property string scope: JSON.stringify([
+                        workspace.controller.ui.folder, workspace.controller.ui.account,
+                        workspace.controller.ui.query, workspace.controller.ui.searching,
+                        workspace.controller.ui.filter, workspace.controller.ui.sort
+                    ])
+                    readonly property var sourceRows: workspace.controller.rows
+                    onSourceRowsChanged: syncRows()
+                    onScopeChanged: syncRows()
+                    Component.onCompleted: syncRows()
+                    model: displayedRows
+                    ListModel { id: displayedRows }
+
+                    function syncRows() {
+                        if (displayedScope !== scope) {
+                            displayedScope = scope;
+                            departure.stop();
+                            departing = [];
+                            displayedRows.clear();
+                            applyRows();
+                            return;
+                        }
+                        const ids = new Set(sourceRows.map(row => row.id));
+                        const removed = [];
+                        for (let i = 0; i < displayedRows.count; ++i) {
+                            const id = displayedRows.get(i).messageId;
+                            if (!ids.has(id))
+                                removed.push(id);
+                        }
+                        if (removed.length && departure.interval > 0) {
+                            if (JSON.stringify(removed) !== JSON.stringify(departing)) {
+                                departing = removed;
+                                departure.restart();
+                            }
+                        } else {
+                            departure.stop();
+                            departing = [];
+                            applyRows();
+                        }
+                    }
+
+                    function applyRows() {
+                        const ids = new Set(sourceRows.map(row => row.id));
+                        for (let i = displayedRows.count - 1; i >= 0; --i) {
+                            if (!ids.has(displayedRows.get(i).messageId))
+                                displayedRows.remove(i);
+                        }
+                        sourceRows.forEach((row, index) => {
+                            const item = {messageId: row.id, day: row.day};
+                            let previous = index;
+                            while (previous < displayedRows.count && displayedRows.get(previous).messageId !== row.id)
+                                ++previous;
+                            if (previous === displayedRows.count)
+                                displayedRows.insert(index, item);
+                            else {
+                                if (previous !== index)
+                                    displayedRows.move(previous, index, 1);
+                                displayedRows.setProperty(index, "day", row.day);
+                            }
+                        });
+                    }
+
+                    Timer {
+                        id: departure
+                        interval: K.Kit.ms(workspace.t.motion.fadeFast.ms)
+                        onTriggered: {
+                            mailList.applyRows();
+                            mailList.departing = [];
+                        }
+                    }
+                    view.removeDisplaced: Transition {
+                        NumberAnimation {
+                            properties: "x,y"
+                            duration: K.Kit.ms(K.Kit.motion("arrive").ms)
+                            easing.type: Easing.BezierSpline
+                            easing.bezierCurve: K.Kit.motion("arrive").curve
+                        }
+                    }
+                    onActivated: i => {
+                        const id = displayedRows.get(i)?.messageId;
+                        if (id && !departing.includes(id))
+                            workspace.openMessage(id);
+                    }
                     onCursorChanged: {
-                        if (cursor >= 0 && cursor < workspace.controller.rows.length) {
-                            const id = workspace.controller.rows[cursor].id;
-                            Qt.callLater(function () {
-                                workspace.openMessage(id);
-                            });
+                        if (cursor >= 0 && cursor < displayedRows.count) {
+                            const id = displayedRows.get(cursor).messageId;
+                            if (!departing.includes(id))
+                                Qt.callLater(() => workspace.openMessage(id));
                         }
                     }
                     section.property: "day"
@@ -433,6 +518,20 @@ FocusScope {
                     delegate: MailMessagePreview {
                         id: preview
                         required property int index
+                        required property string messageId
+                        property var lastRow
+                        readonly property var liveRow: mailList.sourceRows.find(row => row.id === messageId)
+                        onLiveRowChanged: if (liveRow) lastRow = liveRow
+                        modelData: liveRow ?? lastRow
+                        opacity: mailList.departing.includes(messageId) ? 0 : 1
+                        enabled: opacity === 1
+                        Behavior on opacity {
+                            NumberAnimation {
+                                duration: departure.interval
+                                easing.type: Easing.BezierSpline
+                                easing.bezierCurve: workspace.t.motion.fadeFast.curve
+                            }
+                        }
 
                         controller: workspace.controller
                         width: mailList.rowWidth
@@ -469,7 +568,7 @@ FocusScope {
             Layout.preferredWidth: workspace.t.width.list
             MailReader {
                 id: reader
-                visible: workspace.controller.ui.view !== "importing" && (!!workspace.controller.selected || ["draft", "compose"].includes(workspace.controller.ui.view))
+                visible: !workspace.showingMailLoading && (!!workspace.controller.selected || ["draft", "compose"].includes(workspace.controller.ui.view))
                 anchors.fill: parent
                 controller: workspace.controller
                 compact: workspace.compact
@@ -478,7 +577,7 @@ FocusScope {
                 onAttachRequested: files.open()
             }
             Column {
-                visible: workspace.controller.ui.view === "importing"
+                visible: workspace.showingMailLoading
                 x: reader.textX
                 y: reading.statusTop
                 width: reader.textWidth
@@ -488,6 +587,7 @@ FocusScope {
                     text: qsTr("Getting your mail")
                 }
                 K.TacitText {
+                    visible: !workspace.initialMailboxLoading
                     text: qsTr("%1 of %2 messages imported from Personal.")
                           .arg(workspace.controller.ui.imported.toLocaleString(Qt.locale(), "f", 0))
                           .arg((8600).toLocaleString(Qt.locale(), "f", 0))
@@ -498,11 +598,11 @@ FocusScope {
                 K.Progress {
                     width: parent.width
                     value: workspace.controller.ui.imported / 8600
-                    label: "Importing mock mail"
+                    label: workspace.initialMailboxLoading ? qsTr("Loading mailbox") : qsTr("Importing mail")
                 }
             }
             K.PageState {
-                visible: !reader.visible && workspace.controller.ui.view !== "importing"
+                visible: !reader.visible && !workspace.showingMailLoading
                 x: reader.textX
                 y: reading.statusTop
                 maxWidth: reader.textWidth
@@ -525,7 +625,7 @@ FocusScope {
     }
     K.Menu {
         id: folderPicker
-        items: ["Inbox", "Starred", "Drafts", "Sent", "Archive", "Junk", "Trash"].map(v => ({
+        items: ["Inbox", "Starred", "Drafts", "Sent", "Archive", "Spam", "Trash"].map(v => ({
                     label: v,
                     folder: v
                 })).concat([
@@ -565,8 +665,7 @@ FocusScope {
         id: messageMenu
         readonly property bool inTrash: workspace.controller.selected?.folder === "Trash"
         items: inTrash ? [
-            {label: qsTr("Restore to %1").arg(workspace.controller.selected?.trashOrigin ?? "Inbox")},
-            {label: qsTr("Delete for good"), risk: true}
+            {label: qsTr("Restore thread")}
         ] : [
             {
                 label: "Reply"
@@ -587,16 +686,19 @@ FocusScope {
                 label: "Archive"
             },
             {
+                label: qsTr("Move to Spam"),
+                available: workspace.controller.selected?.folder === "Inbox"
+            },
+            {
                 label: "Move to Trash",
                 risk: true
             }
-        ]
-        onPicked: i => {
+        ].map((item, index) => Object.assign({originalIndex: index}, item)).filter(item => item.available !== false)
+        onPicked: index => {
+            const i = inTrash ? index : items[index].originalIndex;
             if (inTrash) {
                 if (i === 0)
                     workspace.controller.act("restoreTrash");
-                else
-                    workspace.controller.act("deleteTrash");
                 return;
             }
             if (i < 3)
@@ -609,7 +711,7 @@ FocusScope {
                 workspace.controller.act("star");
             else
                 workspace.controller.act("move", {
-                    folder: i === 5 ? "Archive" : "Trash"
+                    folder: i === 5 ? "Archive" : i === 6 ? "Spam" : "Trash"
                 });
         }
     }

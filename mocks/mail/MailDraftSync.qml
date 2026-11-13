@@ -86,6 +86,7 @@ QtObject {
         client.saveDraft(id, savedDraftIds[id] || draft.backendId || "", {
             account_id: draft.account === "Work" ? "work" : "personal",
             conversation_id: item.conversation,
+            reply_source_id: draft.mode === "Forward" ? "" : draft.sourceId || draft.conversation || "",
             to: addresses(draft.to),
             cc: addresses(draft.cc),
             bcc: addresses(draft.bcc),

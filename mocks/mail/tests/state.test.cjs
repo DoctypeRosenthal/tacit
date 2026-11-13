@@ -5,7 +5,7 @@ const {initial,reduce,results,draft,canSend,current,folderCount}=context;
 let s=initial('read');assert.equal(results(s).length,11);assert.equal(folderCount(s,'Inbox'),4);
 assert.equal(current(initial('roastmarket')).bodyHtmlFixture,'roastmarket');
 s=reduce(s,'select',{id:'studio'});assert.equal(current(s).unread,false);assert.equal(folderCount(s,'Inbox'),3);
-s=reduce(s,'search',{text:'palettes'});assert.equal(results(s).length,3);s=reduce(s,'closeSearch');
+s=reduce(s,'search',{text:'palettes'});assert.equal(results(s).length,1);assert.equal(results(s)[0].folder,'Inbox');s=reduce(s,'closeSearch');
 s=reduce(s,'folder',{folder:'Inbox'});s=reduce(s,'select',{id:'mara'});s=reduce(s,'move',{folder:'Archive'});assert(!results(s).some(x=>x.id==='mara'));s=reduce(s,'undo');assert(results(s).some(x=>x.id==='mara'));
 s=reduce(s,'reply',{mode:'Reply all',agent:true});assert(draft(s).agent);s=reduce(s,'draft',{body:'Edited by me'});assert.equal(draft(s).body,'Edited by me');s=reduce(s,'keepDraft');s=reduce(s,'reply',{agent:true});assert.equal(draft(s).body,'Edited by me');
 s=reduce(s,'send',{now:100});assert.equal(current(s).replies[0].status,'sending');s=reduce(s,'undoSend',{now:200});assert.equal(draft(s).body,'Edited by me');assert.equal(current(s).replies.length,0);
@@ -29,4 +29,32 @@ for (const action of ["new", "reply"]) {
     const sent = current(mail).replies.at(-1);
     assert.equal(sent.body, "GIF");
     assert.equal(sent.bodyHtml, html);
+}
+
+{
+    const messages = [
+        {id: "older", folder: "Trash", account: "Work", backendAccount: "work", backendConversation: "review", timestamp: 1, unread: true},
+        {id: "middle", folder: "Trash", account: "Work", backendAccount: "work", backendConversation: "review", timestamp: 2, unread: true},
+        {id: "latest", folder: "Trash", account: "Work", backendAccount: "work", backendConversation: "review", timestamp: 3, unread: false},
+        {id: "other", folder: "Trash", account: "Personal", backendAccount: "personal", backendConversation: "review", timestamp: 4, unread: true},
+        {id: "spam", folder: "Spam", account: "Work", unread: false}
+    ];
+    const mailbox = {messages, drafts: [], ui: {folder: "Trash", account: "All accounts", query: "", filter: "All mail"}};
+    const rows = results(mailbox);
+    assert.equal(rows.length, 2, "Trash groups messages by conversation and account");
+    assert.equal(rows[1].id, "latest");
+    assert.equal(rows[1].folderMessageCount, 3);
+    assert.equal(folderCount(mailbox, "Trash"), 3, "Rail counts unread messages individually");
+    assert.equal(folderCount(mailbox, "Trash", "Work"), 2);
+    assert.equal(folderCount(mailbox, "Spam"), 0, "Read messages do not count toward the badge");
+}
+
+{
+    const messages = [
+        {id: "older", folder: "Archive", account: "Work", backendAccount: "work", backendConversation: "review", timestamp: 1, unread: true},
+        {id: "latest", folder: "Archive", account: "Work", backendAccount: "work", backendConversation: "review", timestamp: 2, unread: true}
+    ];
+    const mailbox = {messages, drafts: [], ui: {folder: "Archive", account: "All accounts", query: "", filter: "All mail"}};
+    assert.deepEqual(Array.from(results(mailbox), row => row.id), ["latest"]);
+    assert.equal(folderCount(mailbox, "Archive"), 2);
 }

@@ -92,6 +92,20 @@ func New(s *backend.Service, p *backend.MockProvider) http.Handler {
 		v, e := store.Get(r.Context(), r.PathValue("id"))
 		respond(w, metadata(v), e)
 	})
+	mux.HandleFunc("POST /v1/messages/{id}/restore-trash-thread", func(w http.ResponseWriter, r *http.Request) {
+		respond(w, map[string]bool{"ok": true}, store.RestoreTrashedThread(r.Context(), r.PathValue("id")))
+	})
+	for route, folder := range map[string]string{"delete-trash-thread": "Trash", "delete-spam-thread": "Spam"} {
+		mux.HandleFunc("POST /v1/messages/{id}/"+route, func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				IDs []string `json:"ids"`
+			}
+			if !parse(w, r, &in) {
+				return
+			}
+			respond(w, map[string]bool{"ok": true}, store.DeleteFolderThread(r.Context(), r.PathValue("id"), in.IDs, folder))
+		})
+	}
 	mux.HandleFunc("DELETE /v1/messages/{id}", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, map[string]bool{"ok": true}, store.DeleteTrashedMessage(r.Context(), r.PathValue("id")))
 	})

@@ -97,7 +97,7 @@ function initial(surface) {
     if(surface==="draft"){s.ui.view="draft";s.ui.draftId=d.id;}
     if(surface==="compose"){var n=Store.makeDraft(s,"","New message",false);n.to="Anna Ri";s.drafts.push(n);s.ui.draftId=n.id;s.ui.view="compose";}
     if(surface==="search"){s.ui.query="palettes";s.ui.searching=true;}
-    if(surface==="empty"){s.ui.folder="Junk";s.ui.selected="";}
+    if(surface==="empty"){s.ui.folder="Spam";s.ui.selected="";}
     if(surface==="setup"||surface==="settings")s.ui.view=surface;
 
     if(surface==="importing"){s.ui.view="importing";s.ui.imported=1240;}

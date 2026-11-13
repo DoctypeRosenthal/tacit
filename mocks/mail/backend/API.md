@@ -32,7 +32,7 @@ Job states: `queued` → `sending` → `sent` or `failed`. Restart changes inter
 
 `Message` uses snake_case fields. Core fields: `id`, `account_id`, `remote_id`, `conversation_id`, `from:{name,email}`, `to`, `cc`, `bcc`, `subject`, `body_text`, `body_html`, `mailbox`, `unread`, `flagged`, `date` (RFC3339), `attachments`. Optional threading fields: `message_id`, `in_reply_to`, `references`. Attachment response fields: `id`, `filename`, `media_type`, `size`. IDs are opaque. Upload a file first, then use `attachments:[{"id":"RETURNED_ATTACHMENT_ID"}]` in a draft or mock incoming message. References must belong to the same account. Supplied metadata is resolved from the stored reference. For draft updates provide the whole draft with the IDs to retain; omitted attachments are detached. Inline `data` in JSON is rejected. Attachment references and their bytes are immutable, so replacing a file means uploading a new reference. From defaults to the account identity; sending as another identity is rejected. Empty draft bodies/recipients are allowed while editing, but sending requires a recipient.
 
-Folder patches accept `Inbox`, `Archive`, `Trash`, `Junk`; queued drafts cannot be moved. Incoming events require a stable non-empty `remote_id` and valid sender. Their supplied local ID is ignored. Updates to an existing remote ID replace cached content while retaining local read/flag/folder state.
+Folder patches accept `Inbox`, `Archive`, `Trash`, `Spam`; queued drafts cannot be moved. Incoming events require a stable non-empty `remote_id` and valid sender. Their supplied local ID is ignored. Updates to an existing remote ID replace cached content while retaining local read/flag/folder state.
 
 ## Try it
 
