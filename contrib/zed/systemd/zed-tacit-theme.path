@@ -1,0 +1,11 @@
+[Unit]
+Description=Make Zed's Tacit theme again when the wallpaper's colours or the see-through setting change
+
+[Path]
+# the files zed-tacit-theme.sh reads: the colours a wallpaper gives (switchwall.sh) and the shell's settings. A change
+# is told once the file is closed, so the generator never reads one half written, and nothing runs in between.
+PathChanged=%S/quickshell/user/generated/colors.json
+PathChanged=%E/illogical-impulse/config.json
+
+[Install]
+WantedBy=default.target

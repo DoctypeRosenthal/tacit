@@ -2148,7 +2148,7 @@ ApplicationWindow {
                     label: "Corners of the screen"
                     value: Config.options.sidebar.cornerOpen.enable ? "On" : "Off"
                     description: Config.options.sidebar.cornerOpen.enable
-                        ? `Bottom left ${dk.cornerName(Config.options.sidebar.cornerOpen.bottomLeftAction)} · bottom right ${dk.cornerName(Config.options.sidebar.cornerOpen.bottomRightAction)}`
+                        ? `Top left ${dk.cornerName(Config.options.sidebar.cornerOpen.topLeftAction)} · top right ${dk.cornerName(Config.options.sidebar.cornerOpen.topRightAction)} · bottom left ${dk.cornerName(Config.options.sidebar.cornerOpen.bottomLeftAction)} · bottom right ${dk.cornerName(Config.options.sidebar.cornerOpen.bottomRightAction)}`
                         : "Push the pointer into a corner to open something"
                     onActivated: dk.viewing = "corners"
                 }
@@ -2255,17 +2255,19 @@ ApplicationWindow {
                     checked: Config.options.sidebar.cornerOpen.enable
                     onToggled: value => Config.options.sidebar.cornerOpen.enable = value
                 }
-                SettingRow {
+                ChoiceRow {
                     label: "Top left"
-                    clickable: false
                     enabled: Config.options.sidebar.cornerOpen.enable
-                    control: StyledText { text: "Palette"; font.pixelSize: 15; color: Tacit.inkSec }
+                    options: CornerActions.list.map(o => ({ value: o.value, label: o.displayName }))
+                    current: Config.options.sidebar.cornerOpen.topLeftAction
+                    onPicked: value => Config.options.sidebar.cornerOpen.topLeftAction = value
                 }
-                SettingRow {
+                ChoiceRow {
                     label: "Top right"
-                    clickable: false
                     enabled: Config.options.sidebar.cornerOpen.enable
-                    control: StyledText { text: "Notifications"; font.pixelSize: 15; color: Tacit.inkSec }
+                    options: CornerActions.list.map(o => ({ value: o.value, label: o.displayName }))
+                    current: Config.options.sidebar.cornerOpen.topRightAction
+                    onPicked: value => Config.options.sidebar.cornerOpen.topRightAction = value
                 }
                 SwitchRow {
                     label: "Top corners open on touch"
@@ -2287,6 +2289,14 @@ ApplicationWindow {
                     options: CornerActions.list.map(o => ({ value: o.value, label: o.displayName }))
                     current: Config.options.sidebar.cornerOpen.bottomRightAction
                     onPicked: value => Config.options.sidebar.cornerOpen.bottomRightAction = value
+                }
+                // the rounding drawn on the screen's corners, after what they open, as "Use the corners" does not govern
+                // it. Off draws none; on is the default, round whenever not fullscreen (QuickConfig's third choice)
+                SwitchRow {
+                    label: "Round the screen corners"
+                    description: "Off: they stay square"
+                    checked: Config.options.appearance.fakeScreenRounding !== 0
+                    onToggled: value => Config.options.appearance.fakeScreenRounding = value ? 2 : 0
                 }
             }
 

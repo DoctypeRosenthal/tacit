@@ -1,0 +1,6 @@
+[Unit]
+Description=Zed's Tacit theme, made from the wallpaper's colours
+
+[Service]
+Type=oneshot
+ExecStart=%E/zed/scripts/zed-tacit-theme.sh

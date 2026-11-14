@@ -80,8 +80,10 @@ echo shown
     const f = qmlFunction(src, name);
     root[name] = inScope(scope, f.params, f.body);
   }
+  // the wrapper offers its dialog again with the same id and since (the time it was first asked)
+  const since = Date.now() - 120000;
   const offer = () => ({ id: "4242", cls: "org.example.Notes", title: "Notes", pid: 606, fifo: "/run/user/1000/tacit-anr-4242",
-    buttons: ["Terminate", "Wait"], since: Date.now() - 120000 });
+    buttons: ["Terminate", "Wait"], since });
   root.showNotAnswering(offer());
   check("a shell just started shows the prompt with how long the app has been stopped", shown.length === 1 && Date.now() - root.notAnswering?.since >= 119000,
     `shown ${shown.length}, stopped ${Math.round((Date.now() - root.notAnswering?.since) / 1000)} s ago`);

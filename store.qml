@@ -445,17 +445,19 @@ ApplicationWindow {
         property string text; property string glyph: ""; property color ink: root.inkSec
         signal picked()
         implicitWidth: wr.implicitWidth; implicitHeight: 28
-        scale: wa.pressed ? 0.94 : 1
+        scale: wd.enabled && wa.pressed ? 0.94 : 1
         Behavior on scale { Spring {} }
         activeFocusOnTab: true
         Keys.onPressed: event => { if (root.isPick(event)) { event.accepted = true; wd.picked(); } }
         FocusMark { inset: 6; radius: 10 }
         Row { id: wr; anchors.verticalCenter: parent.verticalCenter; spacing: 8
             MaterialSymbol { visible: wd.glyph !== ""; text: wd.glyph; iconSize: 18; anchors.verticalCenter: parent.verticalCenter
-                color: wa.containsMouse ? root.inkMain : wd.ink; Behavior on color { ColorAnimation { duration: 120 } } }
+                color: !wd.enabled ? root.inkSec
+                                   : wa.containsMouse ? root.inkMain : wd.ink; Behavior on color { ColorAnimation { duration: 120 } } }
             Body { text: wd.text; anchors.verticalCenter: parent.verticalCenter; font.weight: Font.Medium
-                color: wa.containsMouse && wd.ink === root.inkSec ? root.inkMain : wd.ink; Behavior on color { ColorAnimation { duration: 120 } } } }
-        MouseArea { id: wa; anchors.fill: parent; anchors.margins: -8; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: wd.picked() }
+                color: !wd.enabled ? root.inkSec
+                                   : wa.containsMouse && wd.ink === root.inkSec ? root.inkMain : wd.ink; Behavior on color { ColorAnimation { duration: 120 } } } }
+        MouseArea { enabled: wd.enabled; id: wa; anchors.fill: parent; anchors.margins: -8; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: wd.picked() }
     }
     // the one action of an app, as a capsule: Get in the accent, Open in the main ink; while getting it, it fills
     component Capsule: Item {
@@ -1376,12 +1378,17 @@ ApplicationWindow {
                         id: getCol
                         anchors.right: parent.right; anchors.bottom: parent.bottom; spacing: 10
                         Capsule { a: appPage.a; solid: true; large: true; anchors.right: parent.right }
-                        Small { anchors.right: parent.right; horizontalAlignment: Text.AlignRight
-                            text: appPage.st === "getting" ? (root.work?.phase ?? "") : root.justGot === appPage.a?.pkg ? "It's in your apps now."
-                                  : appPage.st === "installed" ? "On this computer"
-                                  : appPage.st === "get" && root.work ? `After ${root.appOf(root.work.pkg)?.name ?? root.work.pkg}`
-                                  : [appPage.a?.plan?.download ? `${appPage.a.plan.download} MB` : appPage.a?.plan?.appMB ? `${appPage.a.plan.appMB} MB` : "",
-                                     appPage.a?.free === false ? "Free to use" : "Free"].filter(x => x).join(" · ") }
+                        // one thing is got or removed at a time: while another app is, Remove waits like Get does
+                        Row { visible: appPage.st === "installed" && root.justGot !== appPage.a?.pkg; anchors.right: parent.right; spacing: 6
+                            Small { text: "On this computer"; anchors.verticalCenter: parent.verticalCenter }
+                            Small { visible: !!appPage.a?.removable; text: "·"; anchors.verticalCenter: parent.verticalCenter }
+                            Word { visible: !!appPage.a?.removable; enabled: !root.work; text: "Remove"; ink: root.inkSec; onPicked: root.removeApp(appPage.a.pkg) } }
+                        Small { visible: (appPage.st !== "installed" && appPage.st !== "removing") || root.justGot === appPage.a?.pkg; anchors.right: parent.right; horizontalAlignment: Text.AlignRight
+                            text: appPage.st === "getting" ? (root.work?.phase ?? "")
+                                            : root.justGot === appPage.a?.pkg ? "It's in your apps now."
+                                            : appPage.st === "get" && root.work ? `After ${root.appOf(root.work.pkg)?.name ?? root.work.pkg}`
+                                            : [appPage.a?.plan?.download ? `${appPage.a.plan.download} MB` : appPage.a?.plan?.appMB ? `${appPage.a.plan.appMB} MB` : "",
+                                                appPage.a?.free === false ? "Free to use" : "Free"].filter(x => x).join(" · ") }
                         // the whole home folder, the network, the camera and the microphone, which its sandbox reaches
                         // (assets/store/permissions.json)
                         Small { visible: (appPage.a?.can?.length ?? 0) > 0; anchors.right: parent.right

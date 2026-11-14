@@ -1007,6 +1007,8 @@ Singleton {
                     property bool clickless: false
                     property int cornerRegionWidth: 250
                     property int cornerRegionHeight: 5
+                    property string topLeftAction: "overviewOpen"
+                    property string topRightAction: "notificationCenterOpen"
                     property string bottomLeftAction: "overviewOpen"
                     property string bottomRightAction: "sidebarRightOpen"
                     property bool visualize: false
