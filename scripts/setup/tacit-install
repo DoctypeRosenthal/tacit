@@ -431,6 +431,29 @@ def boot_entries(partuuid, offset):
         f.write(f"title Tacit (safe start)\nlinux /vmlinuz-linux\ninitrd /initramfs-linux.img\noptions root=PARTUUID={partuuid} rw{resume}\n")
 
 
+def mirrors():
+    """Tacit's tested copy of Arch (mirror.tacitos.co: Arch as it was on the day Tacit's update was tested): an update, from
+    Restart or from pacman in a terminal, installs that set and nothing newer. Below it, for when it is slow or down, Arch's
+    own archive of that same day (tacit-session's arch-day, which its update keeps the line on), never a live mirror: one
+    there took Hyprland past what the plugins are built for (Discord, 2026-11-14: 0.57.2, no line on windows). The list
+    Arch's package installs has every server commented out, and the stick's list was one of the live system's files:
+    without this no update could come."""
+    if os.uname().machine == "aarch64":
+        text = "Server = http://mirror.archlinuxarm.org/$arch/$repo\n"
+    else:
+        text = ("# Tacit: Arch as Tacit tested it. Updates come through here, from Restart or from pacman.\n"
+                "Server = https://mirror.tacitos.co/$repo/os/$arch\n")
+        try:
+            day = open(f"{TARGET}/usr/share/tacit/arch-day").read().strip()
+        except OSError:
+            day = ""
+        if re.fullmatch(r"20\d\d/[01]\d/[0-3]\d", day):
+            text += ("# Tacit: when it is slow or down, Arch's own archive of that same day. Each update keeps it on Tacit's day.\n"
+                     f"Server = https://archive.archlinux.org/repos/{day}/$repo/os/$arch\n")
+    with open(f"{TARGET}/etc/pacman.d/mirrorlist", "w") as f:
+        f.write(text)
+
+
 def install(disk, place, keep, manual=None):
     efi_disk = disk
     if place == "manual":
@@ -624,13 +647,7 @@ def install(disk, place, keep, manual=None):
                  "Server = https://tacit-packages-56470275759.europe-north1.run.app/$arch\n\n")
         with open(f"{TARGET}/etc/pacman.conf", "w") as f:
             f.write(conf.replace("[core]\n", tacit + "[core]\n", 1) if "\n[core]\n" in conf else conf + "\n" + tacit)
-    # Tacit's tested copy of Arch (mirror.tacitos.co: Arch as it was on the day Tacit's update was tested): an update, from
-    # Restart or from pacman in a terminal, installs that set and nothing newer. The list Arch's package installs has every
-    # server commented out, and the stick's list was one of the live system's files: without this no update could come.
-    with open(f"{TARGET}/etc/pacman.d/mirrorlist", "w") as f:
-        f.write("Server = http://mirror.archlinuxarm.org/$arch/$repo\n" if os.uname().machine == "aarch64" else
-                "# Tacit: Arch as Tacit tested it. Updates come through here, from Restart or from pacman.\n"
-                "Server = https://mirror.tacitos.co/$repo/os/$arch\n")
+    mirrors()
     # today's package lists, when online: without them Apps had nothing to offer until the first background update,
     # 20 minutes after the first start (the VM install test, 2026-10-17); offline, that update brings them
     # timeout runs inside the chroot, so pacman itself is stopped (arch-chroot's own timeout would leave it running there)
