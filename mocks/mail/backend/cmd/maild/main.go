@@ -75,9 +75,6 @@ func run() error {
 		return e
 	}
 	provider := &backend.MockProvider{Store: store}
-<<<<<<< HEAD
-	service := backend.NewService(store, provider)
-=======
 	managed := backend.NewManagedAccounts(store, backend.SystemCredentials{})
 	transports := backend.AccountProviders{"mock": provider, backend.ManagedIMAP: managed}
 	email := os.Getenv("TACIT_MAIL_EMAIL")
@@ -102,7 +99,6 @@ func run() error {
 	}
 	service := backend.NewService(store, transports)
 	service.LocalAgentModel = *localModel
->>>>>>> da7d2df (feat(#44): add backend)
 	workerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
@@ -122,17 +118,11 @@ func run() error {
 			}
 		}
 	}()
-<<<<<<< HEAD
-	server := &http.Server{Handler: api.New(service, provider), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
-	finished := make(chan error, 1)
-	go func() { finished <- server.Serve(listener) }()
-	log.Printf("mock mail backend ready; socket=%s database=%s", socket, filepath.Join(data, "mail.sqlite"))
-=======
+
 	server := &http.Server{Handler: api.New(service, provider, managed), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	finished := make(chan error, 1)
 	go func() { finished <- server.Serve(listener) }()
 	log.Printf("mail backend ready; socket=%s database=%s", socket, filepath.Join(data, "mail.sqlite"))
->>>>>>> da7d2df (feat(#44): add backend)
 	select {
 	case e = <-finished:
 		stop()
