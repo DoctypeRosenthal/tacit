@@ -43,16 +43,15 @@ The values come from [Tacit's kit](https://github.com/ciscobugger/tacit-kit) and
 
 ## Running it
 
-`mail.qml` is a Quickshell file that runs inside Tacit's shell tree: it imports the shell's modules and `Tacit.Kit`,
-which resolve from the top of the shell folder. Copy it there (the top of this repo, or `/usr/share/tacit/shell` on a
-Tacit install) and draw one screen to a picture:
+See the [frontend guide](frontend/FRONTEND.md) for the macOS preview, Quickshell setup and tests.
+
+With Tacit's shell and the native QML modules available on the import path, run the Quickshell entry point from this directory:
 
 ```sh
-DUNE_SURFACE=read DUNE_WALL=/path/to/wallpaper.jpg DUNE_SHOT=$PWD/read.png qs -p /usr/share/tacit/shell/mail.qml
+DUNE_SHOT="$PWD/read.png" qs -p frontend/mail.qml
 ```
 
-`DUNE_SURFACE` is one of `read draft switch plain compose search empty sent setup importing settings notify offline`.
-The window is 1920 x 1080 (`DUNE_W`, `DUNE_H`); the picture is saved after 4.5 seconds and the mock quits.
+Use `DUNE_W` and `DUNE_H` to set the window size and `DUNE_SHOT_DELAY` to set the capture delay in milliseconds.
 
 ## Notes
 
